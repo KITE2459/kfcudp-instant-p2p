@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "package": "kfc.udp.client.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "minVersion": "0.8",
+  "refmap": "kfcudp.client.refmap.json",
+  "client": [
+    "ConnectScreenMixin",
+    "ServerAddressMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "kfcudp.invite": "Invite",
+
+  "kfcudp.custom_room.title": "Create Room",
+  "kfcudp.custom_room.game_mode": "Game Mode",
+  "kfcudp.custom_room.max_players": "Max Players",
+  "kfcudp.custom_room.start": "Start",
+  "kfcudp.custom_room.allow_commands": "Allow Commands",
+
+  "kfcudp.join_room.title": "Join Room",
+  "kfcudp.join_room.code_label": "Invite Code",
+  "kfcudp.join_room.join": "Join",
+  "kfcudp.join_room.code_placeholder": "Enter invite code...",
+  "kfcudp.join_room.server_name": "Custom Room",
+
+  "kfcudp.msg.invite_prefix": "§b[Invite Code] §f",
+  "kfcudp.msg.invite_suffix": " §7(Click to copy, valid 2 min)",
+  "kfcudp.msg.click_to_copy": "§7Click to copy",
+  "kfcudp.msg.invite_expired": "§cThe invite has expired.",
+  "kfcudp.msg.room_full": "§cThe room is full. (Max %s players)",
+  "kfcudp.msg.singleplay_only": "§cOnly available in singleplayer.",
+  "kfcudp.msg.prev_invite_expired": "§cPrevious invite (%s) has expired.",
+  "kfcudp.msg.host_failed": "§cFailed to start host."
+}

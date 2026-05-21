@@ -1,0 +1,24 @@
+{
+  "kfcudp.invite": "초대하기",
+
+  "kfcudp.custom_room.title": "커스텀 방 만들기",
+  "kfcudp.custom_room.game_mode": "게임 모드",
+  "kfcudp.custom_room.max_players": "최대 인원",
+  "kfcudp.custom_room.start": "시작",
+  "kfcudp.custom_room.allow_commands": "명령어 허용",
+
+  "kfcudp.join_room.title": "커스텀 방 입장하기",
+  "kfcudp.join_room.code_label": "초대 코드",
+  "kfcudp.join_room.join": "접속",
+  "kfcudp.join_room.code_placeholder": "초대 코드 입력...",
+  "kfcudp.join_room.server_name": "커스텀 방",
+
+  "kfcudp.msg.invite_prefix": "§b[초대코드] §f",
+  "kfcudp.msg.invite_suffix": " §7(클릭하여 복사, 2분 유효)",
+  "kfcudp.msg.click_to_copy": "§7클릭해서 복사",
+  "kfcudp.msg.invite_expired": "§c초대장이 만료되었습니다.",
+  "kfcudp.msg.room_full": "§c방이 가득 찼습니다. (최대 %s명)",
+  "kfcudp.msg.singleplay_only": "§c싱글플레이에서만 사용 가능합니다.",
+  "kfcudp.msg.prev_invite_expired": "§c이전 초대장(%s)이 만료되었습니다.",
+  "kfcudp.msg.host_failed": "§c호스트 실행에 실패했습니다."
+}
