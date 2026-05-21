@@ -4,6 +4,12 @@
 build/
 out/
 classes/
+gradle.*
+*.zip
+kartriderpack*
+*.md
+bin
+.claude/
 
 # eclipse
 
