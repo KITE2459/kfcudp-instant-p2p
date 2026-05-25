@@ -6,7 +6,8 @@
   "refmap": "kfcudp.client.refmap.json",
   "client": [
     "ConnectScreenMixin",
-    "ServerAddressMixin"
+    "ServerAddressMixin",
+    "ClientConnectionMixin"
   ],
   "injectors": {
     "defaultRequire": 1

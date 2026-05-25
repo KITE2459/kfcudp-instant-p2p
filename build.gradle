@@ -26,6 +26,13 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+
+    // WebRTC Java — dev.onvoid.webrtc 0.14.0
+    implementation 'dev.onvoid.webrtc:webrtc-java:0.14.0'
+    implementation group: 'dev.onvoid.webrtc', name: 'webrtc-java', version: '0.14.0', classifier: 'windows-x86_64'
+    implementation group: 'dev.onvoid.webrtc', name: 'webrtc-java', version: '0.14.0', classifier: 'linux-x86_64'
+    implementation group: 'dev.onvoid.webrtc', name: 'webrtc-java', version: '0.14.0', classifier: 'macos-x86_64'
+    implementation group: 'dev.onvoid.webrtc', name: 'webrtc-java', version: '0.14.0', classifier: 'macos-aarch64'
 }
 
 processResources {

@@ -22,8 +22,8 @@ public class ServerAddressMixin {
         String realAddress = null;
         if (entry.address.startsWith("webrtc.")) {
             realAddress = entry.address.substring("webrtc.".length());
-        } else if (entry.address.startsWith("quic.")) {
-            realAddress = entry.address.substring("quic.".length());
+        } else if (entry.address.startsWith("kcp.")) {
+            realAddress = entry.address.substring("kcp.".length());
         }
 
         if (realAddress == null) return;

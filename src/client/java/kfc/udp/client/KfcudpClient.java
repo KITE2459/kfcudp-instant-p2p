@@ -3,6 +3,7 @@ package kfc.udp.client;
 import kfc.udp.client.gui.CustomRoomScreen;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
@@ -116,10 +117,24 @@ public class KfcudpClient implements ClientModInitializer {
             }
         });
 
+        // 서버 연결 해제 시 KCP/QUIC 프로세스 종료.
+        // 즉시 kill하면 0x1B Disconnect 패킷이 유실되어 서버에 고스트 잔류.
+        // 1초 대기 후 종료 — 패킷 전송 완료 후 kill.
+        ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            Thread t = new Thread(() -> {
+                // DISCONNECT 시점에 0x1B는 이미 로컬 TCP에 쓰임.
+                // 1초 대기로 KCP가 서버에 전달할 시간 확보 후 kill.
+                try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
+                WebRtcBridge.stopProtocol();
+            }, "kcp-delayed-stop");
+            t.setDaemon(true);
+            t.start();
+        });
+
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             WebRtcBridge.stop();
             WebRtcBridge.stopHost();
-            WebRtcBridge.stopQuic();
+            WebRtcBridge.stopProtocol();
             WebRtcBridge.cleanup();
         }, "kfcudp-shutdown"));
     }
