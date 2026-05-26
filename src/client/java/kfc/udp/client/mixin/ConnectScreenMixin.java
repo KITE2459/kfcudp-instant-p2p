@@ -1,6 +1,6 @@
 package kfc.udp.client.mixin;
 
-import kfc.udp.client.WebRtcBridge;
+import kfc.udp.client.webrtc.WebRtcBridge;
 import kfc.udp.client.kcp.KcpAddressRegistry;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.Screen;

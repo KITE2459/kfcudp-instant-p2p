@@ -18,6 +18,7 @@ import io.netty.buffer.ByteBufAllocator;
  */
 public final class KcpCore {
 
+
     private static final int OVERHEAD      = 24;
     private static final int MTU           = 1450;
     private static final int MSS           = MTU - OVERHEAD; // 1426
@@ -31,12 +32,12 @@ public final class KcpCore {
     // nodelay+interval=2ms 환경에서 RTO가 빠르게 누적되어
     // 기본값 20이면 30~40초만에 state=-1 발생.
     // MC 서버 keepalive 타임아웃(30s) 이전에 끊기는 문제 방지.
-    private static final int DEADLINK      = 40;
+    private static final int DEADLINK      = 80;   // 40→80: fastack xmit 소진 여유
     private static final int PROBE_INIT    = 500;   // kcp-go 기본값과 동일 (7000→500)
     private static final int PROBE_LIM     = 120_000;
     private static final int ASK_SEND      = 1;
     private static final int ASK_TELL      = 2;
-    private static final int FASTACK_LIMIT = 5;
+    private static final int FASTACK_LIMIT = 15;  // 5→15: ACK 순간 단절 시 조기 종료 방지
 
     private static final byte CMD_PUSH = 81;
     private static final byte CMD_ACK  = 82;
@@ -170,17 +171,18 @@ public final class KcpCore {
         long maxack = 0;
         boolean hasAck = false;
 
-        while (data.readableBytes() != 0) {
-            if (data.readableBytes() < OVERHEAD) return -1;
+        while (true) {
+            if (data.readableBytes() == 0) break;
+            if (data.readableBytes() < OVERHEAD) break; // kcp-go와 동일: 남은 바이트 무시하고 정상 종료
 
-            int pktConv = data.readIntLE();
-            byte cmd = data.readByte();
-            int frg = data.readUnsignedByte();
-            int wnd = data.readUnsignedShortLE();
-            int ts = data.readIntLE();
-            long sn = data.readUnsignedIntLE();
-            long una = data.readUnsignedIntLE();
-            int len = data.readIntLE();
+            int  pktConv = data.readIntLE();
+            byte cmd     = data.readByte();
+            int  frg     = data.readUnsignedByte();
+            int  wnd     = data.readUnsignedShortLE();
+            int  ts      = data.readIntLE();
+            long sn      = data.readUnsignedIntLE();
+            long una     = data.readUnsignedIntLE();
+            int  len     = data.readIntLE();
 
             if (data.readableBytes() < len || len < 0) return -2;
             if (pktConv != conv) return -4;
@@ -197,10 +199,7 @@ public final class KcpCore {
                     if (rtt >= 0) updateAck(rtt);
                     parseAck(sn);
                     shrinkBuf();
-                    if (!hasAck || itimediff(sn, maxack) > 0) {
-                        hasAck = true;
-                        maxack = sn;
-                    }
+                    if (!hasAck || itimediff(sn, maxack) > 0) { hasAck = true; maxack = sn; }
                     break;
                 }
                 case CMD_PUSH: {
@@ -210,23 +209,15 @@ public final class KcpCore {
                             Seg seg = new Seg();
                             seg.data = len > 0 ? data.readRetainedSlice(len) : alloc.ioBuffer(0, 0);
                             consumed = true;
-                            seg.conv = pktConv;
-                            seg.cmd = cmd;
-                            seg.frg = frg;
-                            seg.wnd = wnd;
-                            seg.ts = ts;
-                            seg.sn = sn;
-                            seg.una = una;
+                            seg.conv = pktConv; seg.cmd = cmd; seg.frg = frg;
+                            seg.wnd  = wnd;     seg.ts  = ts;  seg.sn  = sn; seg.una = una;
                             parseData(seg);
                         }
                     }
                     break;
                 }
-                case CMD_WASK:
-                    probe |= ASK_TELL;
-                    break;
-                case CMD_WINS:
-                    break;
+                case CMD_WASK: probe |= ASK_TELL; break;
+                case CMD_WINS: break;
             }
             if (!consumed) data.skipBytes(len);
         }
@@ -322,8 +313,11 @@ public final class KcpCore {
         return current + Math.min(Math.min(tmPacket, tmFlush), interval);
     }
 
-    public int     getState() { return state; }
-    public int     waitSnd()  { return sndBuf.size + sndQueue.size; }
+    public int     getState()     { return state; }
+    public int     getConv()      { return conv; }
+    public int     waitSnd()      { return sndBuf.size + sndQueue.size; }
+    public int     sndQueueSize() { return sndQueue.size; }
+    public int     rmtWnd()       { return rmtWnd; }
 
     public boolean canSend(boolean curCanSend) {
         int max     = WND_SND * 2;
@@ -369,6 +363,7 @@ public final class KcpCore {
         } else {
             tsProbe = 0; probeWait = 0;
         }
+
 
         if ((probe & ASK_SEND) != 0) {
             ctrl.cmd = CMD_WASK;
@@ -527,13 +522,16 @@ public final class KcpCore {
 
     private void parseData(Seg newSeg) {
         long sn = newSeg.sn;
+        // 수신 윈도우 초과 또는 이미 소비된 패킷 → DROP
         if (itimediff(sn, rcvNxt + WND_RCV) >= 0 || itimediff(sn, rcvNxt) < 0) {
             newSeg.release(); return;
         }
+        // head부터 순방향 탐색으로 삽입 위치 결정 (kcp-go 원본과 동일)
+        // 역방향 탐색은 sn이 현재 최솟값보다 작을 때 맨 뒤에 잘못 삽입되는 버그 있음
         Seg insertBefore = rcvBuf.tail;
-        for (Seg s = rcvBuf.tail.prev; s != rcvBuf.head; s = s.prev) {
+        for (Seg s = rcvBuf.head.next; s != rcvBuf.tail; s = s.next) {
             if (s.sn == sn) { newSeg.release(); return; }
-            if (itimediff(sn, s.sn) > 0) { insertBefore = s.next; break; }
+            if (itimediff(sn, s.sn) < 0) { insertBefore = s; break; }
         }
         newSeg.next = insertBefore;
         newSeg.prev = insertBefore.prev;
@@ -552,7 +550,9 @@ public final class KcpCore {
                 rcvQueue.addLast(s);
                 rcvNxt++;
                 s = nx;
-            } else break;
+            } else {
+                break;
+            }
         }
     }
 

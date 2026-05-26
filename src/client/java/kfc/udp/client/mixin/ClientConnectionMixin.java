@@ -25,15 +25,6 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-/**
- * ClientConnection.connect() 인터셉트.
- * kcp-netty 라이브러리 완전 제거 — KcpChannel(커스텀)으로 대체.
- * 변경사항:
- *   - UkcpClientChannel → KcpChannel (직접 구현)
- *   - UkcpChannelOption 전부 제거 (KcpCore에 하드코딩)
- *   - ChannelOptionHelper.nodelay() 제거 (KcpCore에 하드코딩)
- *   - SO_RCVBUF/SO_SNDBUF 제거 (KcpUdpChannel 생성자에 하드코딩)
- */
 @Mixin(ClientConnection.class)
 public abstract class ClientConnectionMixin {
 
@@ -50,7 +41,6 @@ public abstract class ClientConnectionMixin {
         }
     });
 
-    /** conv 시퀀스 — 충돌 최소화를 위해 랜덤 시작 */
     @Unique
     private static final AtomicLong CONV_SEQ = new AtomicLong(
             (long)(Math.random() * 0xFFFFFFFFL) & 0xFFFFFFFFL
@@ -75,16 +65,13 @@ public abstract class ClientConnectionMixin {
         Bootstrap bootstrap = new Bootstrap();
         bootstrap
                 .group(KCP_GROUP)
-                .channelFactory(() -> new KcpChannel(conv))  // conv 하드코딩 생성
+                .channelFactory(() -> new KcpChannel(conv))
                 .handler(new ChannelInitializer<KcpChannel>() {
                     @Override
                     protected void initChannel(KcpChannel ch) {
                         ChannelPipeline p = ch.pipeline();
-                        // MC 기본 핸들러 (LengthFieldDecoder 등)
                         ClientConnection.addHandlers(p, NetworkSide.CLIENTBOUND, false, null);
-                        // flow control
                         connection.addFlowControlHandler(p);
-                        // KCP state=-1 예외 처리
                         p.addLast("kcp-exception", KcpExceptionHandler.INSTANCE);
                     }
                 });

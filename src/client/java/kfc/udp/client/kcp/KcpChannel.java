@@ -7,6 +7,8 @@ import io.netty.channel.ChannelException;
 import io.netty.channel.nio.AbstractNioMessageChannel;
 import io.netty.channel.nio.NioEventLoop;
 import io.netty.util.internal.StringUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -34,6 +36,8 @@ import java.util.concurrent.TimeUnit;
  */
 public final class KcpChannel extends AbstractChannel implements Runnable {
 
+    private static final Logger LOG = LoggerFactory.getLogger("kcp-channel");
+
     private static final ChannelMetadata METADATA = new ChannelMetadata(false);
     private static final String EXPECTED_TYPES =
             " (expected: " + StringUtil.simpleClassName(ByteBuf.class) + ')';
@@ -59,6 +63,13 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
     private boolean flushPending;
 
     boolean closeAnother = false;
+
+    // ── 진단용 상태 추적 ──────────────────────────────────────────────────────
+    /** 마지막으로 ACK(수신 데이터 포함)를 처리한 시각 (milliSeconds) */
+    private int lastAckTime = 0;
+    /** sndBuf 경고를 마지막으로 찍은 시각 — 과도한 warn 방지 */
+    private int lastSndBufWarnTime = 0;
+    private static final int SNDBUF_WARN_INTERVAL = 5_000; // 5초마다 1회
 
     public KcpChannel(int conv) {
         super(null);
@@ -102,6 +113,8 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
     @Override
     protected void doClose() {
+        LOG.info("[kcp] doClose — conv=0x{}, sndBuf={}, sndQueue={}",
+                Integer.toHexString(kcp.getConv()), kcp.waitSnd(), kcp.sndQueueSize());
         kcpActive = false;
         kcp.release();
         if (!closeAnother) {
@@ -122,6 +135,8 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                 sent = true;
             } else {
                 flushPending = true;
+                LOG.debug("[kcp][TX] canSend=false, sndBuf={}, sndQueue={}, rmtWnd={}",
+                        kcp.waitSnd(), kcp.sndQueueSize(), kcp.rmtWnd());
                 break;
             }
         }
@@ -153,8 +168,23 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                 nextTs = kcp.check(current);
             } catch (Throwable t) { ex = t; }
 
-            if (kcp.getState() == -1 && ex == null)
+            if (kcp.getState() == -1 && ex == null) {
+                int silenceSec = lastAckTime == 0 ? -1
+                        : (current - lastAckTime) / 1000;
+                LOG.warn("[kcp] run: State=-1, sndBuf={}, sndQueue={}, rmtWnd={}, ackSilence={}s",
+                        kcp.waitSnd(), kcp.sndQueueSize(), kcp.rmtWnd(), silenceSec);
                 ex = new KcpException("State=-1 after update()");
+            } else {
+                // sndBuf 적체 주기적 경고 (State=-1 전에 미리 감지)
+                int sndBuf = kcp.waitSnd();
+                if (sndBuf > 100 && itimediff(current, lastSndBufWarnTime) >= SNDBUF_WARN_INTERVAL) {
+                    int silenceSec = lastAckTime == 0 ? -1
+                            : (current - lastAckTime) / 1000;
+                    LOG.warn("[kcp] sndBuf buildup: sndBuf={}, sndQueue={}, rmtWnd={}, ackSilence={}s",
+                            sndBuf, kcp.sndQueueSize(), kcp.rmtWnd(), silenceSec);
+                    lastSndBufWarnTime = current;
+                }
+            }
         }
 
         if (ex != null) {
@@ -172,12 +202,34 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
     // ── KCP 헬퍼 — 모두 eventLoop 스레드에서만 호출됨 ────────────────────────
 
     void kcpInput(ByteBuf buf) throws IOException {
+        int readable = buf.readableBytes();
+        // KCP 헤더(24바이트) 미만 패킷 — 서버사이드 kcp-go와 동일하게 무시
+        if (readable < 24) {
+            LOG.warn("[kcp][PARSE] skip short packet, len={} (< OVERHEAD 24)", readable);
+            return;
+        }
+
+        lastAckTime = milliSeconds();
+
         int ret = kcp.input(buf);
         switch (ret) {
-            case -1: throw new IOException("No enough bytes of head");
-            case -2: throw new IOException("No enough bytes of data");
-            case -3: throw new IOException("Mismatch cmd");
-            case -4: throw new IOException("Conv inconsistency");
+            case -1:
+                // 루프 내 잔여 바이트가 OVERHEAD 미만 — 정상 종료 케이스이므로 skip
+                LOG.warn("[kcp][PARSE] -1 (head underflow in loop), skip packet");
+                return;
+            case -2:
+                // 데이터 길이 필드가 실제 바이트보다 큼 — 손상된 패킷, 연결은 유지
+                LOG.warn("[kcp][PARSE] -2 (data underflow), skip packet");
+                return;
+            case -3:
+                // 알 수 없는 cmd — 무시
+                LOG.warn("[kcp][PARSE] -3 (unknown cmd), skip packet");
+                return;
+            case -4:
+                // conv 불일치 — 완전히 다른 연결의 패킷이므로 예외 유지
+                LOG.warn("[kcp][PARSE] -4 conv inconsistency — expected conv=0x{}",
+                        Integer.toHexString(kcp.getConv()));
+                throw new IOException("Conv inconsistency");
         }
     }
 
@@ -186,11 +238,15 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
         try {
             kcp.update(milliSeconds());
         } catch (Throwable t) {
+            LOG.warn("[kcp] doUpdateKcp exception: {}", t.toString());
             fireExceptionAndClose(t);
             return;
         }
-        if (kcp.getState() == -1)
+        if (kcp.getState() == -1) {
+            LOG.warn("[kcp] doUpdateKcp: State=-1, sndBuf={}, sndQueue={}, rmtWnd={}",
+                    kcp.waitSnd(), kcp.sndQueueSize(), kcp.rmtWnd());
             fireExceptionAndClose(new KcpException("State=-1 after update()"));
+        }
     }
 
     boolean kcpIsActive() { return kcpActive; }
@@ -209,11 +265,13 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
     boolean isFlushPending() { return flushPending; }
 
     private void forceClose() {
+        LOG.warn("[kcp] forceClose called — channel registration failed");
         unsafe().closeForcibly();
         ((ChannelPromise) closeFuture()).trySuccess();
     }
 
     private void fireExceptionAndClose(Throwable t) {
+        LOG.warn("[kcp] fireExceptionAndClose: {}", t.toString());
         pipeline().fireExceptionCaught(t);
         if (isActive()) unsafe().close(unsafe().voidPromise());
     }
@@ -378,19 +436,34 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                                 io.netty.util.UncheckedBooleanSupplier.TRUE_SUPPLIER));
                     } catch (Throwable t) { ex = t; }
 
-                    // 2) KCP input
+                    // 2) KCP input — 패킷별 격리: 한 패킷 파싱 오류가 연결 전체를 끊지 않음
                     if (ex == null) {
-                        try {
-                            for (Object o : readBuf) kcpChannel.kcpInput((ByteBuf) o);
-                        } catch (Throwable t) { ex = t; }
+                        for (Object o : readBuf) {
+                            ByteBuf pkt = (ByteBuf) o;
+                            try {
+                                kcpChannel.kcpInput(pkt);
+                            } catch (Throwable t) {
+                                // conv 불일치 같은 치명적 오류만 여기 도달 — 연결 종료
+                                LOG.warn("[kcp][PARSE] fatal kcpInput error, closing: {}", t.toString());
+                                ex = t;
+                                break;
+                            }
+                        }
                     }
 
                     // readBuf 해제
                     for (Object o : readBuf) io.netty.util.ReferenceCountUtil.release(o);
                     readBuf.clear();
                     allocHandle.readComplete();
+                    // OP_READ 재등록을 위해 autoRead=true 강제 후 readComplete 전파.
+                    // FlowControlHandler가 autoRead=false로 설정했을 때
+                    // HeadContext.readIfIsAutoRead()가 OP_READ를 재등록하지 않아
+                    // 이후 UDP 패킷을 수신하지 못하는 문제 방지.
+                    kcpChannel.config().setAutoRead(true);
+                    pipeline().fireChannelReadComplete();
 
                     if (ex != null) {
+                        LOG.warn("[kcp] read() exception: {}", ex.toString());
                         closed = closeOnReadError(ex);
                         kcpChannel.pipeline().fireExceptionCaught(ex);
                     } else {
@@ -398,8 +471,9 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                         kcpChannel.doUpdateKcp();
 
                         // 4) rcvQueue → pipeline 전체 드레인
-                        //    제한 없이 전부 꺼내야 함.
-                        //    rcvQueue에 남기면 새 UDP 패킷이 올 때까지 영원히 대기하게 됨.
+                        //    FlowControlHandler가 autoRead=false를 설정하면 내부 queue에서
+                        //    꺼내기를 멈춤. KCP는 자체 흐름 제어를 하므로 MC의 autoRead 조작이
+                        //    불필요 — 항상 true로 강제해서 FlowControlHandler가 막지 않도록 함.
                         if (kcpChannel.kcpIsActive()) {
                             try {
                                 ByteBufAllocator ba = cfg.getAllocator();
@@ -408,12 +482,18 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                                 boolean recv = false;
                                 while ((peekSize = kcpChannel.kcpPeekSize()) >= 0) {
                                     recv = true;
+                                    if (peekSize == 0) {
+                                        LOG.warn("[kcp][DISPATCH] peekSize=0, skipping empty segment");
+                                        // 빈 세그먼트 — recv 호출 없이 skip (무한루프 방지)
+                                        break;
+                                    }
                                     ByteBuf recvBuf = ba.ioBuffer(peekSize);
                                     kcpChannel.kcpReceive(recvBuf);
                                     pipe.fireChannelRead(recvBuf);
                                 }
                                 if (recv) pipe.fireChannelReadComplete();
                             } catch (Throwable t) {
+                                LOG.warn("[kcp] pipeline dispatch exception: {}", t.toString());
                                 closed = true;
                                 kcpChannel.pipeline().fireExceptionCaught(t);
                             }

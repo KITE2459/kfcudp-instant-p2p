@@ -1,6 +1,8 @@
 package kfc.udp.client;
 
 import kfc.udp.client.gui.CustomRoomScreen;
+import kfc.udp.client.webrtc.P2PBanManager;
+import kfc.udp.client.webrtc.WebRtcBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;

@@ -1,4 +1,4 @@
-package kfc.udp.client;
+package kfc.udp.client.webrtc;
 
 import dev.onvoid.webrtc.*;
 import org.slf4j.Logger;
