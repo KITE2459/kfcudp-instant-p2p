@@ -14,7 +14,9 @@ import io.netty.buffer.ByteBufAllocator;
  *   sndWnd   = 20480
  *   rcvWnd   = 20480
  *   stream   = true       (바이트 스트림 모드 — 서버사이드 kcp-go와 동일)
- *   deadLink = 40         (기본 20에서 상향 — nodelay 환경에서 조기 종료 방지)
+ *   deadLink = 200        (핑 20ms 환경 기준 — 서버→클라이언트 일시 단절 장기 버팀)
+ *   fastackLimit = 30     (fastack xmit 소진 방지)
+ *   RTO_MAX  = 3000ms     (재전송 간격 상한 — 핑 20ms 환경에서 60초는 과도)
  */
 public final class KcpCore {
 
@@ -24,20 +26,16 @@ public final class KcpCore {
     private static final int MSS           = MTU - OVERHEAD; // 1426
     private static final int RTO_NDL       = 30;
     private static final int RTO_DEF       = 200;
-    private static final int RTO_MAX       = 60_000;
+    private static final int RTO_MAX       = 3_000;  // 핑 20ms 환경 — 재전송 간격 상한 3초
     private static final int WND_SND       = 20_480;
     private static final int WND_RCV       = 20_480;
     private static final int INTERVAL      = 2;
-    // deadLink: 20 → 40 으로 상향
-    // nodelay+interval=2ms 환경에서 RTO가 빠르게 누적되어
-    // 기본값 20이면 30~40초만에 state=-1 발생.
-    // MC 서버 keepalive 타임아웃(30s) 이전에 끊기는 문제 방지.
-    private static final int DEADLINK      = 80;   // 40→80: fastack xmit 소진 여유
+    private static final int DEADLINK      = 200;  // 핑 20ms 환경 — 서버→클라이언트 단절 시 장기 생존
     private static final int PROBE_INIT    = 500;   // kcp-go 기본값과 동일 (7000→500)
     private static final int PROBE_LIM     = 120_000;
     private static final int ASK_SEND      = 1;
     private static final int ASK_TELL      = 2;
-    private static final int FASTACK_LIMIT = 15;  // 5→15: ACK 순간 단절 시 조기 종료 방지
+    private static final int FASTACK_LIMIT = 30;  // 핑 20ms 환경 — fastack xmit 소진 여유
 
     private static final byte CMD_PUSH = 81;
     private static final byte CMD_ACK  = 82;

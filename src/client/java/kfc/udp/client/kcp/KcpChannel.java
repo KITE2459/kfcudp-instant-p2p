@@ -201,7 +201,7 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
     // ── KCP 헬퍼 — 모두 eventLoop 스레드에서만 호출됨 ────────────────────────
 
-    void kcpInput(ByteBuf buf) throws IOException {
+    void kcpInput(ByteBuf buf) {
         int readable = buf.readableBytes();
         // KCP 헤더(24바이트) 미만 패킷 — 서버사이드 kcp-go와 동일하게 무시
         if (readable < 24) {
@@ -226,10 +226,10 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                 LOG.warn("[kcp][PARSE] -3 (unknown cmd), skip packet");
                 return;
             case -4:
-                // conv 불일치 — 완전히 다른 연결의 패킷이므로 예외 유지
-                LOG.warn("[kcp][PARSE] -4 conv inconsistency — expected conv=0x{}",
+                // conv 불일치 — 재접속 직후 이전 conv 패킷이 OS 버퍼에 남아있는 경우
+                // 예외로 연결을 끊지 않고 해당 패킷만 버림
+                LOG.warn("[kcp][PARSE] -4 conv inconsistency (skip) — expected conv=0x{}",
                         Integer.toHexString(kcp.getConv()));
-                throw new IOException("Conv inconsistency");
         }
     }
 
