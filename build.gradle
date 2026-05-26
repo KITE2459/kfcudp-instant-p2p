@@ -33,6 +33,9 @@ dependencies {
     implementation group: 'dev.onvoid.webrtc', name: 'webrtc-java', version: '0.14.0', classifier: 'linux-x86_64'
     implementation group: 'dev.onvoid.webrtc', name: 'webrtc-java', version: '0.14.0', classifier: 'macos-x86_64'
     implementation group: 'dev.onvoid.webrtc', name: 'webrtc-java', version: '0.14.0', classifier: 'macos-aarch64'
+
+    // KCP Netty — 검증된 KCP Java 구현
+    implementation 'io.jpower.kcp:kcp-netty:1.5.2'
 }
 
 processResources {
@@ -62,7 +65,7 @@ jar {
     // configurations.compileClasspath에서 webrtc 관련 jar만 추출
     from({
         configurations.compileClasspath.resolvedConfiguration.resolvedArtifacts
-                .findAll { it.moduleVersion.id.group == 'dev.onvoid.webrtc' }
+                .findAll { it.moduleVersion.id.group in ['dev.onvoid.webrtc', 'io.jpower.kcp'] }
                 .collect { zipTree(it.file) }
     }) {
         exclude 'META-INF/*.SF'

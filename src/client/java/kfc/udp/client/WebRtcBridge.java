@@ -29,7 +29,6 @@ public class WebRtcBridge {
     private static volatile Process hostProcess;
 
     // 핑 후 접속 시 roomId 전달용
-    private static final ConcurrentHashMap<String, String> pendingRoomIds = new ConcurrentHashMap<>();
     private static volatile int activeLocalPort = LOCAL_PORT;
 
     private WebRtcBridge() {}
@@ -46,15 +45,6 @@ public class WebRtcBridge {
         if (address == null) return null;
         String trimmed = address.trim();
         return trimmed.startsWith("kcp.") ? trimmed.substring("kcp.".length()).trim() : null;
-    }
-
-    public static String getAndClearPendingRoomId(String address) {
-        if (address == null) return null;
-        for (String key : pendingRoomIds.keySet()) {
-            String stripped = key.startsWith("webrtc.") ? key.substring("webrtc.".length()) : key;
-            if (stripped.equals(address)) return pendingRoomIds.remove(key);
-        }
-        return null;
     }
 
     // ── WebRTC 클라이언트 (Java 네이티브) ──────────────────────────────────────

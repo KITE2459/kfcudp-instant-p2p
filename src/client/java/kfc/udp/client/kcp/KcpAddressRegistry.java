@@ -1,32 +1,23 @@
 package kfc.udp.client.kcp;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 /**
- * ConnectScreenMixin → ClientConnectionMixin 간 KCP 주소 전달.
- * Mixin 클래스 밖에 두어 non-private static 문제 회피.
+ * KCP 연결 플래그.
+ * ConnectScreenMixin → ClientConnectionMixin 간 신호 전달.
+ * DNS/SRV resolve로 주소가 바뀌어도 무관하게 동작.
  */
 public class KcpAddressRegistry {
 
-    private static volatile String host = null;
-    private static volatile int    port = -1;
+    private static final AtomicBoolean pending = new AtomicBoolean(false);
 
-    public static void register(String h, int p) {
-        host = h;
-        port = p;
+    public static void register() {
+        pending.set(true);
     }
 
-    public static String pollHost() {
-        String h = host;
-        host = null;
-        return h;
-    }
-
-    public static int pollPort() {
-        int p = port;
-        port = -1;
-        return p;
-    }
-
-    public static boolean hasPending() {
-        return host != null && port >= 0;
+    /** Server Pinger 스레드 차단, 그 외 스레드에서 플래그 소비 */
+    public static boolean consumeIfKcp() {
+        if (Thread.currentThread().getName().startsWith("Server Pinger")) return false;
+        return pending.compareAndSet(true, false);
     }
 }
