@@ -47,10 +47,11 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
     /**
      * 한 번의 read() 이벤트에서 처리할 최대 UDP 패킷 수.
-     * 초과분은 다음 NIO select 루프에서 처리됨 — eventLoop 점유 시간 분산.
-     * 16개 × MTU(1450) ≈ 23KB/회 → 2ms 인터벌 기준 충분한 처리량.
+     * 청크 로딩 시 수백 개 세그먼트가 한꺼번에 도착 — 너무 작으면 NIO 사이클이
+     * 반복되면서 처리량이 TCP 대비 크게 낮아짐.
+     * 256개 × MTU(1450) ≈ 370KB/회 → 청크 50KB 기준 약 7개 청크를 한 사이클에 처리.
      */
-    private static final int MAX_READ_PER_LOOP = 16;
+    private static final int MAX_READ_PER_LOOP = 256;
 
     // KcpChannel이 단독 소유 — KcpUdpChannel.config()가 직접 참조해 무한재귀 방지
     private final DefaultChannelConfig config;
@@ -436,14 +437,19 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                                 io.netty.util.UncheckedBooleanSupplier.TRUE_SUPPLIER));
                     } catch (Throwable t) { ex = t; }
 
-                    // 2) KCP input — 패킷별 격리: 한 패킷 파싱 오류가 연결 전체를 끊지 않음
+                    // 2) KCP input 전체 처리 후 일괄 드레인
+                    // 패킷별 즉시 드레인은 fireChannelRead를 수백 번 호출해서
+                    // MC 파이프라인(압축해제+디코딩)이 수백 번 실행 → eventLoop 점유 증가
+                    // → 다음 UDP read()가 밀려 처리량 감소
+                    // 전체 kcpInput 완료 후 rcvQueue를 한 번에 드레인하는 게 효율적
                     if (ex == null) {
                         for (Object o : readBuf) {
                             ByteBuf pkt = (ByteBuf) o;
                             try {
                                 kcpChannel.kcpInput(pkt);
+                                // ACKNoDelay: 패킷 수신 즉시 ACK 전송
+                                kcpChannel.kcp.flushAck();
                             } catch (Throwable t) {
-                                // conv 불일치 같은 치명적 오류만 여기 도달 — 연결 종료
                                 LOG.warn("[kcp][PARSE] fatal kcpInput error, closing: {}", t.toString());
                                 ex = t;
                                 break;
@@ -467,31 +473,37 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                         closed = closeOnReadError(ex);
                         kcpChannel.pipeline().fireExceptionCaught(ex);
                     } else {
-                        // 3) ACK 즉시 flush
+                        // 3) update (재전송 타이머, sndQueue flush)
                         kcpChannel.doUpdateKcp();
 
-                        // 4) rcvQueue → pipeline 전체 드레인
-                        //    FlowControlHandler가 autoRead=false를 설정하면 내부 queue에서
-                        //    꺼내기를 멈춤. KCP는 자체 흐름 제어를 하므로 MC의 autoRead 조작이
-                        //    불필요 — 항상 true로 강제해서 FlowControlHandler가 막지 않도록 함.
+                        // 4) rcvQueue → pipeline 드레인
+                        // kcp-go Read()처럼 세그먼트들을 CompositeByteBuf로 합쳐서
+                        // fireChannelRead를 1번만 호출.
+                        // 세그먼트마다 호출하면 splitter가 매번 누적 버퍼를 재할당하고
+                        // zlib inflate 호출 횟수도 늘어남.
                         if (kcpChannel.kcpIsActive()) {
                             try {
                                 ByteBufAllocator ba = cfg.getAllocator();
                                 ChannelPipeline pipe = kcpChannel.pipeline();
                                 int peekSize;
-                                boolean recv = false;
+                                io.netty.buffer.CompositeByteBuf composite = null;
                                 while ((peekSize = kcpChannel.kcpPeekSize()) >= 0) {
-                                    recv = true;
                                     if (peekSize == 0) {
                                         LOG.warn("[kcp][DISPATCH] peekSize=0, skipping empty segment");
-                                        // 빈 세그먼트 — recv 호출 없이 skip (무한루프 방지)
                                         break;
                                     }
                                     ByteBuf recvBuf = ba.ioBuffer(peekSize);
                                     kcpChannel.kcpReceive(recvBuf);
-                                    pipe.fireChannelRead(recvBuf);
+                                    if (composite == null)
+                                        composite = io.netty.buffer.Unpooled.compositeBuffer();
+                                    composite.addComponent(true, recvBuf);
                                 }
-                                if (recv) pipe.fireChannelReadComplete();
+                                if (composite != null && composite.isReadable()) {
+                                    pipe.fireChannelRead(composite);
+                                    pipe.fireChannelReadComplete();
+                                } else if (composite != null) {
+                                    composite.release();
+                                }
                             } catch (Throwable t) {
                                 LOG.warn("[kcp] pipeline dispatch exception: {}", t.toString());
                                 closed = true;

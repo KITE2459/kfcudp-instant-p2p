@@ -24,7 +24,6 @@ public final class KcpCore {
     private static final int OVERHEAD      = 24;
     private static final int MTU           = 1450;
     private static final int MSS           = MTU - OVERHEAD; // 1426
-    private static final int RTO_NDL       = 30;
     private static final int RTO_DEF       = 200;
     private static final int RTO_MAX       = 3_000;  // 핑 20ms 환경 — 재전송 간격 상한 3초
     private static final int WND_SND       = 20_480;
@@ -167,6 +166,7 @@ public final class KcpCore {
         if (data == null || data.readableBytes() < OVERHEAD) return -1;
 
         long maxack = 0;
+        int  maxackts = 0;
         boolean hasAck = false;
 
         while (true) {
@@ -197,7 +197,7 @@ public final class KcpCore {
                     if (rtt >= 0) updateAck(rtt);
                     parseAck(sn);
                     shrinkBuf();
-                    if (!hasAck || itimediff(sn, maxack) > 0) { hasAck = true; maxack = sn; }
+                    if (!hasAck || itimediff(sn, maxack) > 0) { hasAck = true; maxack = sn; maxackts = ts; }
                     break;
                 }
                 case CMD_PUSH: {
@@ -220,7 +220,9 @@ public final class KcpCore {
             if (!consumed) data.skipBytes(len);
         }
 
-        if (hasAck) parseFastack(maxack);
+        boolean flushNow = false;
+        if (hasAck) flushNow = parseFastack(maxack, maxackts);
+        if (flushNow) flush();
         return 0;
     }
 
@@ -317,6 +319,35 @@ public final class KcpCore {
     public int     sndQueueSize() { return sndQueue.size; }
     public int     rmtWnd()       { return rmtWnd; }
 
+    /**
+     * ACKNoDelay: input() 직후 호출해서 ACK만 즉시 UDP로 전송.
+     * kcp-go SetACKNoDelay(true)와 동일한 효과.
+     * 서버의 fastack 트리거를 빠르게 해서 재전송 지연을 줄임.
+     */
+    public void flushAck() {
+        if (!updated) return;
+        if (ackcount == 0) return;
+
+        Seg ctrl = Seg.control(alloc);
+        ctrl.conv = conv;
+        ctrl.cmd  = CMD_ACK;
+        ctrl.wnd  = wndUnused();
+        ctrl.una  = rcvNxt;
+
+        ByteBuf buf = null;
+        for (int i = 0; i < ackcount; i++) {
+            buf = tryOut(buf, OVERHEAD);
+            ctrl.sn = intToUint(acklist[i * 2]);
+            ctrl.ts = acklist[i * 2 + 1];
+            encodeSeg(buf, ctrl);
+        }
+        ackcount = 0;
+
+        if (buf != null && buf.readableBytes() > 0) output.out(buf, buf.readableBytes());
+        else if (buf != null) buf.release();
+        ctrl.release();
+    }
+
     public boolean canSend(boolean curCanSend) {
         int max     = WND_SND * 2;
         int waitSnd = waitSnd();
@@ -401,13 +432,12 @@ public final class KcpCore {
                 seg.fastack = 0;
                 seg.rto    += rxRto / 2;
                 seg.resendts = current + seg.rto;
-            } else if (seg.fastack >= 1) {
-                if (seg.xmit <= FASTACK_LIMIT) {
-                    needSend = true;
-                    seg.xmit++;
-                    seg.fastack  = 0;
-                    seg.resendts = current + seg.rto;
-                }
+            } else if (seg.fastack >= 1 && seg.xmit <= FASTACK_LIMIT) {
+                // fast retransmit
+                needSend = true;
+                seg.xmit++;
+                seg.fastack  = 0;
+                seg.resendts = current + seg.rto;
             }
 
             if (needSend) {
@@ -470,7 +500,8 @@ public final class KcpCore {
             rxSrtt   = (7 * rxSrtt + rtt) / 8;
             if (rxSrtt < 1) rxSrtt = 1;
         }
-        rxRto = Math.min(Math.max(RTO_NDL, rxSrtt + Math.max(interval, 4 * rxRttvar)), RTO_MAX);
+        int rxMinRto = Math.max(10, rxSrtt * 6 / 5); // RTT × 1.2 동적 하한
+        rxRto = Math.min(Math.max(rxMinRto, rxSrtt + Math.max(interval, 4 * rxRttvar)), RTO_MAX);
     }
 
     private void shrinkBuf() {
@@ -496,12 +527,17 @@ public final class KcpCore {
         }
     }
 
-    private void parseFastack(long sn) {
-        if (itimediff(sn, sndUna) < 0 || itimediff(sn, sndNxt) >= 0) return;
+    private boolean parseFastack(long sn, int ts) {
+        if (itimediff(sn, sndUna) < 0 || itimediff(sn, sndNxt) >= 0) return false;
+        boolean shouldFlush = false;
         for (Seg s = sndBuf.head.next; s != sndBuf.tail; s = s.next) {
             if (itimediff(sn, s.sn) < 0) break;
-            else if (sn != s.sn) s.fastack++;
+            else if (sn != s.sn && itimediff(s.ts, ts) <= 0) {
+                s.fastack++;
+                if (s.fastack >= 1) shouldFlush = true;
+            }
         }
+        return shouldFlush;
     }
 
     private void ackPush(long sn, int ts) {
