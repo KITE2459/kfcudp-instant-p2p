@@ -24,10 +24,11 @@ public final class KcpCore {
     private static final int OVERHEAD      = 24;
     private static final int MTU           = 1450;
     private static final int MSS           = MTU - OVERHEAD; // 1426
+    private static final int RTO_MIN       = 20;
     private static final int RTO_DEF       = 200;
     private static final int RTO_MAX       = 3_000;  // 핑 20ms 환경 — 재전송 간격 상한 3초
     private static final int WND_SND       = 20_480;
-    private static final int WND_RCV       = 20_480;
+    private static final int WND_RCV       = 81_920;
     private static final int INTERVAL      = 2;
     private static final int DEADLINK      = 200;  // 핑 20ms 환경 — 서버→클라이언트 단절 시 장기 생존
     private static final int PROBE_INIT    = 500;   // kcp-go 기본값과 동일 (7000→500)
@@ -500,8 +501,8 @@ public final class KcpCore {
             rxSrtt   = (7 * rxSrtt + rtt) / 8;
             if (rxSrtt < 1) rxSrtt = 1;
         }
-        int rxMinRto = Math.max(10, rxSrtt * 6 / 5); // RTT × 1.2 동적 하한
-        rxRto = Math.min(Math.max(rxMinRto, rxSrtt + Math.max(interval, 4 * rxRttvar)), RTO_MAX);
+//        rxRto = Math.min(Math.max(rxSrtt * 6 / 5, rxSrtt + Math.max(interval, 4 * rxRttvar)), RTO_MAX);
+        rxRto = Math.min(rxSrtt + Math.max(interval, 4 * rxRttvar), RTO_MAX);
     }
 
     private void shrinkBuf() {
