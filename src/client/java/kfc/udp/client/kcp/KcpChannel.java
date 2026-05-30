@@ -112,10 +112,33 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
     @Override protected void doDisconnect()  throws Exception { udpChannel.doDisconnect(); }
     @Override protected void doBeginRead()   throws Exception { udpChannel.doBeginRead(); }
 
+    /**
+     * 명시적 종료 신호.
+     * KCP는 UDP 기반이라 TCP FIN 같은 종료 신호가 프로토콜에 없어, 서버 측은
+     * 무통신 타임아웃으로만 종료를 감지한다. 그 사이 MC 서버에 고스트 플레이어가
+     * 남으므로, 종료 직전 1바이트 raw UDP 마커(0xFE)를 보내 서버가 즉시
+     * 해당 세션을 닫도록 한다. (서버측 markerPacketConn.ReadFrom이 가로챔)
+     * 마커는 KCP 프레임이 아니므로 OVERHEAD(24B) 미만 → KCP 파서가 무시.
+     */
+    private static final byte CLOSE_MARKER = (byte) 0xFE;
+
+    private void sendCloseMarker() {
+        try {
+            DatagramChannel ch = udpChannel.javaChannel();
+            if (ch.isOpen() && ch.isConnected()) {
+                // connected DatagramChannel: write()는 연결된 원격지(오라클)로 전송
+                ch.write(ByteBuffer.wrap(new byte[]{CLOSE_MARKER}));
+            }
+        } catch (Throwable t) {
+            // 마커 전송 실패는 치명적이지 않음 — 서버측 idleTimeout 안전망이 정리
+            LOG.debug("[kcp] close marker send failed: {}", t.toString());
+        }
+    }
+
     @Override
     protected void doClose() {
-        LOG.info("[kcp] doClose — conv=0x{}, sndBuf={}, sndQueue={}",
-                Integer.toHexString(kcp.getConv()), kcp.waitSnd(), kcp.sndQueueSize());
+        // release()/소켓 close 전에 마커를 먼저 보낸다.
+        sendCloseMarker();
         kcpActive = false;
         kcp.release();
         if (!closeAnother) {
