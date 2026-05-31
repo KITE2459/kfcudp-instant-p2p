@@ -59,14 +59,47 @@ public final class KcpCore {
         int  xmit;
         ByteBuf data;
 
+        // ── Seg 노드 풀 ──────────────────────────────────────────
+        // KCP는 단일 eventLoop 스레드에서만 실행되므로(KcpChannel 참고) 락이 불필요.
+        // 송신/수신 핫패스에서 패킷마다 new Seg()가 일어나 minor GC를 주기적으로
+        // 유발 → 짧은 레이턴시 스파이크의 원인. 노드(자바 객체)만 재사용한다.
+        //
+        // 중요: data(ByteBuf)의 생명주기는 건드리지 않는다. ByteBuf는 Netty가
+        // 자체 풀링하며, release()에서 정상적으로 data.release() 후 노드만 반환한다.
+        // 센티넬(SegList.head/tail)은 이 풀을 경유하지 않는다(new Seg() 직접 생성).
+        private static final Seg[] POOL = new Seg[256];
+        private static int poolSize = 0;
+
+        // alloc - 풀에서 노드를 꺼내 모든 필드를 초기화해 반환. 비었으면 new.
+        static Seg alloc() {
+            Seg s;
+            if (poolSize > 0) {
+                s = POOL[--poolSize];
+                POOL[poolSize] = null;
+            } else {
+                s = new Seg();
+            }
+            // 재사용 시 이전 값 잔존 방지 — 전 필드 초기화
+            s.prev = null; s.next = null;
+            s.conv = 0; s.cmd = 0; s.frg = 0; s.wnd = 0; s.ts = 0;
+            s.sn = 0; s.una = 0; s.resendts = 0; s.rto = 0;
+            s.fastack = 0; s.xmit = 0; s.data = null;
+            return s;
+        }
+
         static Seg control(ByteBufAllocator alloc) {
-            Seg s = new Seg();
+            Seg s = alloc();
             s.data = alloc.ioBuffer(0, 0);
             return s;
         }
 
         void release() {
             if (data != null) { data.release(); data = null; }
+            // 노드를 풀로 반환 (상한 초과 시 GC에 맡김)
+            if (poolSize < POOL.length) {
+                prev = null; next = null;
+                POOL[poolSize++] = this;
+            }
         }
     }
 
@@ -166,6 +199,13 @@ public final class KcpCore {
     public int input(ByteBuf data) {
         if (data == null || data.readableBytes() < OVERHEAD) return -1;
 
+        // RTT 측정 전용 현재 시각. this.current(직전 update가 박은 값)는 update
+        // 지터로 최대 수십 ms 낡을 수 있어, 이를 RTT 계산에 쓰면 네트워크가 일정해도
+        // 측정 RTT가 update 타이밍에 따라 흔들린다(불규칙 스파이크의 원인).
+        // ACK가 실제 처리되는 이 순간의 시각으로 측정해 지터 영향을 제거한다.
+        // this.current 필드 자체는 변경하지 않아 다른 로직(재전송 등)에 영향 없음.
+        int rttNow = KcpChannel.milliSeconds();
+
         long maxack = 0;
         int  maxackts = 0;
         boolean hasAck = false;
@@ -194,7 +234,7 @@ public final class KcpCore {
             boolean consumed = false;
             switch (cmd) {
                 case CMD_ACK: {
-                    int rtt = itimediff(current, ts);
+                    int rtt = itimediff(rttNow, ts);
                     if (rtt >= 0) updateAck(rtt);
                     parseAck(sn);
                     shrinkBuf();
@@ -205,7 +245,7 @@ public final class KcpCore {
                     if (itimediff(sn, rcvNxt + WND_RCV) < 0) {
                         ackPush(sn, ts);
                         if (itimediff(sn, rcvNxt) >= 0) {
-                            Seg seg = new Seg();
+                            Seg seg = Seg.alloc();
                             seg.data = len > 0 ? data.readRetainedSlice(len) : alloc.ioBuffer(0, 0);
                             consumed = true;
                             seg.conv = pktConv; seg.cmd = cmd; seg.frg = frg;
@@ -251,7 +291,7 @@ public final class KcpCore {
 
         while (len > 0) {
             int size = Math.min(len, MSS);
-            Seg seg = new Seg();
+            Seg seg = Seg.alloc();
             seg.data = buf.readRetainedSlice(size);
             seg.frg  = 0;
             sndQueue.addLast(seg);

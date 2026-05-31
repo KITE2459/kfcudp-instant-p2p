@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * Java 네이티브 WebRTC 클라이언트.
  * 지연 최적화:
  *   - onMessage → 직접 MC 소켓 write (스레드 핸드오프/큐 지연 제거)
- *   - 수신 버퍼는 BufSlot 풀로 GC 없이 재사용
+ *   - 수신 버퍼는 ThreadLocal로 재사용 (동기 경로라 락 불필요)
  *   - send 경로: readBuf 재사용, 정확한 크기 배열만 새로 할당
  */
 public class WebRtcClient {
@@ -23,7 +23,6 @@ public class WebRtcClient {
     private static final Logger LOG = LoggerFactory.getLogger("webrtc-native");
 
     private static final int  BUFFER_SIZE  = 65536;
-    private static final int  POOL_SIZE    = 256;
     private static final long DC_BUF_HIGH  = 16 * 1024 * 1024L;
 
     // 송신용 ThreadLocal direct ByteBuffer — forwardMcToWebRtc 스레드 전용
@@ -32,25 +31,13 @@ public class WebRtcClient {
     private static final ThreadLocal<ByteBuffer> SEND_BUF =
             ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(BUFFER_SIZE));
 
-    // ── 수신 버퍼 풀 (onMessage → MC 소켓 write 경로) ────────────────────────
-    static final class BufSlot {
-        final byte[] data = new byte[BUFFER_SIZE];
-    }
-
-    private static final ArrayBlockingQueue<BufSlot> POOL;
-    static {
-        POOL = new ArrayBlockingQueue<>(POOL_SIZE);
-        for (int i = 0; i < POOL_SIZE; i++) POOL.offer(new BufSlot());
-    }
-
-    private static BufSlot acquireSlot() {
-        BufSlot s = POOL.poll();
-        return s != null ? s : new BufSlot();
-    }
-
-    private static void releaseSlot(BufSlot s) {
-        POOL.offer(s);
-    }
+    // ── 수신 버퍼 (onMessage → MC 소켓 write 경로) ────────────────────────
+    // onMessage는 webrtc-java 네이티브 콜백 스레드에서 직렬로만 호출되고,
+    // buffer 복사 → out.write까지 동기로 끝난다. 따라서 동시에 두 버퍼가
+    // 쓰이지 않으므로 락 기반 풀(ArrayBlockingQueue)의 동시성 이점이 전혀 없고
+    // poll/offer 락 비용만 발생했다. 스레드 전용 ThreadLocal 버퍼로 락을 제거한다.
+    private static final ThreadLocal<byte[]> RECV_BUF =
+            ThreadLocal.withInitial(() -> new byte[BUFFER_SIZE]);
 
     // ── 인스턴스 필드 ─────────────────────────────────────────────────────────
 
@@ -181,19 +168,18 @@ public class WebRtcClient {
             @Override
             public void onMessage(RTCDataChannelBuffer buffer) {
                 int n = buffer.data.remaining();
-                BufSlot slot = acquireSlot();
-                buffer.data.get(slot.data, 0, n);
+                byte[] buf = RECV_BUF.get();   // 스레드 전용, 락 없음
+                buffer.data.get(buf, 0, n);
                 OutputStream out = mcOut;
                 if (out != null) {
                     try {
                         // TCP_NODELAY 설정으로 flush 없이도 즉시 전송
-                        out.write(slot.data, 0, n);
+                        out.write(buf, 0, n);
                     } catch (Exception e) {
                         if (running.get()) LOG.warn("[webrtc] MC write failed: {}", e.getMessage());
                         close();
                     }
                 }
-                releaseSlot(slot);
             }
         });
     }

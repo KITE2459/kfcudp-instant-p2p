@@ -137,6 +137,8 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
     @Override
     protected void doClose() {
+        LOG.info("[kcp] doClose — conv=0x{}, sndBuf={}, sndQueue={}",
+                Integer.toHexString(kcp.getConv()), kcp.waitSnd(), kcp.sndQueueSize());
         // release()/소켓 close 전에 마커를 먼저 보낸다.
         sendCloseMarker();
         kcpActive = false;
