@@ -25,6 +25,15 @@ public class WebRtcClient {
     private static final int  BUFFER_SIZE  = 65536;
     private static final long DC_BUF_HIGH  = 16 * 1024 * 1024L;
 
+    // ── TURN 서버 인증 ────────────────────────────────────────────────────────
+    // P2P 직결 실패 시 폴백할 TURN 중계 서버의 인증 정보.
+    // coturn 등의 TURN 서버는 보통 정적 계정(turnserver.conf의 user=이름:비밀번호)
+    // 또는 시간제한 토큰(REST API)으로 인증한다. 아래는 정적 계정 가정.
+    // !! 실제 서버에 설정된 값으로 교체할 것. 값이 틀리면 TURN 중계가 거부되어
+    //    P2P 직결만 동작한다(STUN 단독과 동일). !!
+    private static final String TURN_USERNAME   = "villasnode";
+    private static final String TURN_CREDENTIAL = "villaspass";
+
     // 송신용 ThreadLocal direct ByteBuffer — forwardMcToWebRtc 스레드 전용
     // sendDirectBuffer는 CopyOnWriteBuffer로 즉시 복사(동기) → 재사용 안전
     // GetDirectBufferCapacity를 쓰므로 slice()로 정확한 크기 뷰를 넘겨야 함
@@ -190,9 +199,20 @@ public class WebRtcClient {
         factory = new PeerConnectionFactory();
 
         RTCConfiguration config = new RTCConfiguration();
+
+        // STUN: 공인 IP 탐색 (P2P 직결 시도용)
         RTCIceServer stun = new RTCIceServer();
         stun.urls.add("stun:193.122.114.163:3478");
         config.iceServers.add(stun);
+        // TURN: P2P 직결 실패 시(Symmetric NAT 양쪽 등) 중계 폴백.
+        // STUN만으론 양쪽이 Symmetric NAT이면 연결이 아예 안 되므로, 중계 서버를
+        // 폴백으로 둬 연결 성공률을 높인다. TURN은 인증(username/credential)이
+        // 필수다 — 서버 설정과 일치해야 중계가 허용된다.
+        RTCIceServer turn = new RTCIceServer();
+        turn.urls.add("turn:193.122.114.163:3478");
+        turn.username = TURN_USERNAME;
+        turn.password = TURN_CREDENTIAL;
+        config.iceServers.add(turn);
 
         peerConnection = factory.createPeerConnection(config, new PeerConnectionObserver() {
             @Override

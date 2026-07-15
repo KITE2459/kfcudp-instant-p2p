@@ -43,7 +43,7 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
             " (expected: " + StringUtil.simpleClassName(ByteBuf.class) + ')';
 
     private static final int UDP_BUF_SIZE  = 32 * 1024 * 1024;
-    private static final int UDP_RECV_SIZE = 2048;
+    private static final int UDP_RECV_SIZE = 4096;
 
     /**
      * 한 번의 read() 이벤트에서 처리할 최대 UDP 패킷 수.
@@ -51,7 +51,7 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
      * 반복되면서 처리량이 TCP 대비 크게 낮아짐.
      * 256개 × MTU(1450) ≈ 370KB/회 → 청크 50KB 기준 약 7개 청크를 한 사이클에 처리.
      */
-    private static final int MAX_READ_PER_LOOP = 256;
+    private static final int MAX_READ_PER_LOOP = 4096;
 
     // KcpChannel이 단독 소유 — KcpUdpChannel.config()가 직접 참조해 무한재귀 방지
     private final DefaultChannelConfig config;
@@ -116,18 +116,34 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
      * 명시적 종료 신호.
      * KCP는 UDP 기반이라 TCP FIN 같은 종료 신호가 프로토콜에 없어, 서버 측은
      * 무통신 타임아웃으로만 종료를 감지한다. 그 사이 MC 서버에 고스트 플레이어가
-     * 남으므로, 종료 직전 1바이트 raw UDP 마커(0xFE)를 보내 서버가 즉시
-     * 해당 세션을 닫도록 한다. (서버측 markerPacketConn.ReadFrom이 가로챔)
-     * 마커는 KCP 프레임이 아니므로 OVERHEAD(24B) 미만 → KCP 파서가 무시.
+     * 남으므로, 종료 직전 종료 마커를 보내 서버가 즉시 해당 세션을 닫도록 한다.
+     * 마커는 데이터 포트가 아닌 control 포트(data port + 1)로 보낸다. 데이터
+     * 포트로 보내면 서버측 recvmmsg(batch IO)가 raw fd에서 먼저 삼켜 가로챌 수
+     * 없기 때문이다. control 포트로 분리해 데이터 경로의 recvmmsg를 보존한다.
+     * 포맷: [0xFE][convID 4B LE]. NAT가 출처 포트를 바꿔도(Symmetric NAT) 서버가
+     * convID로 세션을 식별하므로 안전하다. (출처 주소 매칭이 아님)
      */
     private static final byte CLOSE_MARKER = (byte) 0xFE;
 
     private void sendCloseMarker() {
         try {
             DatagramChannel ch = udpChannel.javaChannel();
-            if (ch.isOpen() && ch.isConnected()) {
-                // connected DatagramChannel: write()는 연결된 원격지(오라클)로 전송
-                ch.write(ByteBuffer.wrap(new byte[]{CLOSE_MARKER}));
+            if (!ch.isOpen() || !ch.isConnected()) return;
+
+            java.net.SocketAddress raddr = ch.getRemoteAddress();
+            if (!(raddr instanceof InetSocketAddress data)) return;
+            // control 포트 = 데이터 포트 + 1
+            InetSocketAddress ctrl = new InetSocketAddress(data.getAddress(), data.getPort() + 1);
+
+            int conv = kcp.getConv();
+            ByteBuffer pkt = ByteBuffer.allocate(5);
+            pkt.put(CLOSE_MARKER);
+            pkt.order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(1, conv);
+            pkt.rewind();
+
+            // connected 채널이라 send에 명시 주소를 못 쓰므로, 일회용 비연결 채널로 전송.
+            try (DatagramChannel tmp = DatagramChannel.open()) {
+                tmp.send(pkt, ctrl);
             }
         } catch (Throwable t) {
             // 마커 전송 실패는 치명적이지 않음 — 서버측 idleTimeout 안전망이 정리
@@ -472,14 +488,19 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                             ByteBuf pkt = (ByteBuf) o;
                             try {
                                 kcpChannel.kcpInput(pkt);
-                                // ACKNoDelay: 패킷 수신 즉시 ACK 전송
-                                kcpChannel.kcp.flushAck();
                             } catch (Throwable t) {
                                 LOG.warn("[kcp][PARSE] fatal kcpInput error, closing: {}", t.toString());
                                 ex = t;
                                 break;
                             }
                         }
+                        // ACKNoDelay: 배치 전체의 ACK를 한 번에 coalesce 전송.
+                        // 기존엔 패킷마다 flushAck를 호출해, 청크 로딩 시 수신 패킷
+                        // 수(수백)만큼의 작은 ACK 데이터그램이 그대로 나가 return 경로
+                        // 패킷 레이트와 sendto 시스콜을 폭증시켰다(서버도 그만큼 처리).
+                        // MTU 하나에 ACK가 ~60개 들어가므로, 배치 후 1회 flush로
+                        // ACK 데이터그램이 수백 개 → 수 개로 줄어든다.
+                        if (ex == null) kcpChannel.kcp.flushAck();
                     }
 
                     // readBuf 해제

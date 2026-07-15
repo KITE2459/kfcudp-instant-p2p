@@ -601,17 +601,22 @@ public final class KcpCore {
         if (itimediff(sn, rcvNxt + WND_RCV) >= 0 || itimediff(sn, rcvNxt) < 0) {
             newSeg.release(); return;
         }
-        // head부터 순방향 탐색으로 삽입 위치 결정 (kcp-go 원본과 동일)
-        // 역방향 탐색은 sn이 현재 최솟값보다 작을 때 맨 뒤에 잘못 삽입되는 버그 있음
-        Seg insertBefore = rcvBuf.tail;
-        for (Seg s = rcvBuf.head.next; s != rcvBuf.tail; s = s.next) {
-            if (s.sn == sn) { newSeg.release(); return; }
-            if (itimediff(sn, s.sn) < 0) { insertBefore = s; break; }
+        // 꼬리에서부터 역방향 탐색으로 삽입 위치 결정.
+        // 청크 로딩처럼 sn이 forward로 진행하는 버스트에서 새 세그먼트는 대부분
+        // rcvBuf 맨 뒤에 붙으므로 O(1)에 끝난다. 기존 head-first 순방향 탐색은
+        // 이 경우 매 삽입마다 전체를 순회해 O(n²)가 되어(손실 1개로 수천 개가
+        // 적체되면 삽입마다 수천 번 비교), eventLoop를 수십 ms 멈추게 만들고
+        // 그 사이 OS 소켓 버퍼가 넘쳐 추가 손실 → 처리량이 붕괴한다.
+        // insertAfter = sn보다 작은 첫 노드(뒤에서부터). 없으면 head(맨 앞 삽입).
+        Seg insertAfter = rcvBuf.head;
+        for (Seg s = rcvBuf.tail.prev; s != rcvBuf.head; s = s.prev) {
+            if (s.sn == sn) { newSeg.release(); return; }   // 중복 → DROP
+            if (itimediff(sn, s.sn) > 0) { insertAfter = s; break; }
         }
-        newSeg.next = insertBefore;
-        newSeg.prev = insertBefore.prev;
-        insertBefore.prev.next = newSeg;
-        insertBefore.prev = newSeg;
+        newSeg.prev = insertAfter;
+        newSeg.next = insertAfter.next;
+        insertAfter.next.prev = newSeg;
+        insertAfter.next = newSeg;
         rcvBuf.size++;
         moveRcvData();
     }
