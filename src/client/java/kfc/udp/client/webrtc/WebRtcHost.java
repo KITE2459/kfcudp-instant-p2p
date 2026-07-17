@@ -368,7 +368,7 @@ public class WebRtcHost {
         private volatile RTCPeerConnection peerConnection;
         private volatile RTCDataChannel    dataChannel;
         private volatile Socket            tcpSocket;
-        private volatile OutputStream      tcpOut;
+        private volatile BatchPipe.Writer  tcpWriter;
         volatile boolean dcOpened = false;
 
         private final CountDownLatch dcOpenLatch = new CountDownLatch(1);
@@ -376,8 +376,6 @@ public class WebRtcHost {
 
         private final List<RTCIceCandidate> queuedIce = new ArrayList<>();
         private volatile boolean remoteSet = false;
-
-        private byte[] recvBuf = new byte[BUFFER_SIZE];
 
         HostSession(PairSignal pair) {
             this.pair = pair;
@@ -504,11 +502,7 @@ public class WebRtcHost {
 
                 @Override
                 public void onMessage(RTCDataChannelBuffer buffer) {
-                    int n = buffer.data.remaining();
-                    if (n > recvBuf.length) recvBuf = new byte[n];
-                    byte[] buf = recvBuf;
-                    buffer.data.get(buf, 0, n);
-                    onPeerData(buf, n);
+                    onPeerData(buffer.data);
                 }
             });
             if (channel.getState() == RTCDataChannelState.OPEN) {
@@ -517,14 +511,14 @@ public class WebRtcHost {
             }
         }
 
-        private void onPeerData(byte[] data, int len) {
+        private void onPeerData(java.nio.ByteBuffer data) {
             if (closed.get()) return;
-            OutputStream out = tcpOut;
-            if (out == null) {
+            BatchPipe.Writer w = tcpWriter;
+            if (w == null) {
                 synchronized (dialLock) {
                     if (closed.get()) return;
-                    out = tcpOut;
-                    if (out == null) {
+                    w = tcpWriter;
+                    if (w == null) {
                         LOG.info("[host] first data received; dialing target {}:{} clientIp={}",
                                 targetHost, targetPort, clientIp);
                         try {
@@ -534,8 +528,15 @@ public class WebRtcHost {
                             sock.setReceiveBufferSize(512 * 1024);
                             sock.setSendBufferSize(512 * 1024);
                             tcpSocket = sock;
-                            out = sock.getOutputStream();
-                            tcpOut = out;
+                            // DC→TCP: 전담 writer 스레드가 연속 청크를 단일 write로 배칭
+                            w = new BatchPipe.Writer(sock.getOutputStream(),
+                                    "webrtc-host-tcpw-" + sid,
+                                    e -> {
+                                        if (!closed.get())
+                                            LOG.warn("[host] TCP write failed sid={}: {}", sid, e.getMessage());
+                                        pair.close();
+                                    });
+                            tcpWriter = w;
                             Thread t = new Thread(() -> forwardTcpToWebRtc(sock),
                                     "webrtc-host-tcp-" + sid);
                             t.setDaemon(true);
@@ -550,20 +551,20 @@ public class WebRtcHost {
                 }
             }
             try {
-                out.write(data, 0, len);
-            } catch (Exception e) {
-                if (!closed.get()) LOG.warn("[host] TCP write failed sid={}: {}", sid, e.getMessage());
+                w.feed(data); // 큐 가득 시 블로킹 → SCTP 수신 윈도우로 배압
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
                 pair.close();
             }
         }
 
-        /** MC 서버 TCP → DataChannel. 16MB 백프레셔. */
+        /** MC 서버 TCP → DataChannel. coalescing 배칭 + 16MB 백프레셔. */
         private void forwardTcpToWebRtc(Socket sock) {
-            byte[] readBuf = new byte[BUFFER_SIZE];
-            ByteBuffer sendBuf = ByteBuffer.allocateDirect(BUFFER_SIZE);
+            byte[] readBuf = new byte[BatchPipe.BATCH_MAX];
+            ByteBuffer sendBuf = ByteBuffer.allocateDirect(BatchPipe.BATCH_MAX);
             try (InputStream in = sock.getInputStream()) {
                 int n;
-                while ((n = in.read(readBuf)) != -1) {
+                while ((n = in.read(readBuf, 0, readBuf.length)) != -1) {
                     RTCDataChannel ch = dataChannel;
                     if (ch == null || ch.getState() != RTCDataChannelState.OPEN) break;
 
@@ -572,6 +573,9 @@ public class WebRtcHost {
                         Thread.sleep(5);
                     }
                     if (closed.get()) break;
+
+                    // OS 버퍼에 쌓인 후속 데이터를 논블로킹으로 흡수 → send 횟수 감소
+                    n = BatchPipe.coalesce(in, readBuf, n);
 
                     sendBuf.clear();
                     sendBuf.put(readBuf, 0, n);
@@ -589,7 +593,9 @@ public class WebRtcHost {
         void close() {
             if (!closed.compareAndSet(false, true)) return;
             dcOpenLatch.countDown();
-            tcpOut = null;
+            BatchPipe.Writer w = tcpWriter;
+            tcpWriter = null;
+            if (w != null) w.close();
             try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception ignored) {}
             RTCDataChannel dc = dataChannel;
             dataChannel = null;

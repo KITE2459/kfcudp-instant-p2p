@@ -36,11 +36,7 @@ public class WebRtcClient {
 
     // 송신용 ThreadLocal direct ByteBuffer — forwardMcToWebRtc 스레드 전용
     private static final ThreadLocal<ByteBuffer> SEND_BUF =
-            ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(BUFFER_SIZE));
-
-    // 수신 버퍼 (onMessage → MC 소켓 write 경로, 네이티브 콜백 스레드 전용)
-    private static final ThreadLocal<byte[]> RECV_BUF =
-            ThreadLocal.withInitial(() -> new byte[BUFFER_SIZE]);
+            ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(BatchPipe.BATCH_MAX));
 
     // ── 인스턴스 필드 ─────────────────────────────────────────────────────────
 
@@ -55,6 +51,7 @@ public class WebRtcClient {
     private ServerSocket            serverSocket;
     private volatile Socket         mcSocket;
     private volatile OutputStream   mcOut;
+    private volatile BatchPipe.Writer mcWriter; // DC→MC 배칭 writer
 
     private final AtomicBoolean  running         = new AtomicBoolean(false);
     private final CountDownLatch hostArrivedLatch = new CountDownLatch(1);
@@ -92,10 +89,15 @@ public class WebRtcClient {
         try {
             Socket sock = serverSocket.accept();
             sock.setTcpNoDelay(true);
-            sock.setReceiveBufferSize(BUFFER_SIZE * 4);
-            sock.setSendBufferSize(BUFFER_SIZE * 4);
+            sock.setReceiveBufferSize(512 * 1024);
+            sock.setSendBufferSize(512 * 1024);
             mcSocket = sock;
             mcOut    = sock.getOutputStream();
+            // DC→MC: 전담 writer 스레드가 연속 청크를 단일 write로 배칭
+            mcWriter = new BatchPipe.Writer(mcOut, "webrtc-mc-writer", e -> {
+                if (running.get()) LOG.warn("[webrtc] MC write failed: {}", e.getMessage());
+                close();
+            });
 
             // 로비에 조인 알림 → 호스트가 페어 세션으로 들어옴
             announceJoin();
@@ -210,10 +212,10 @@ public class WebRtcClient {
     // ── MC → DataChannel ──────────────────────────────────────────────────────
 
     private void forwardMcToWebRtc(Socket sock) {
-        byte[] readBuf = new byte[BUFFER_SIZE];
+        byte[] readBuf = new byte[BatchPipe.BATCH_MAX];
         try (InputStream in = sock.getInputStream()) {
             int n;
-            while ((n = in.read(readBuf)) != -1) {
+            while ((n = in.read(readBuf, 0, readBuf.length)) != -1) {
                 RTCDataChannel ch = dataChannel;
                 if (ch == null || ch.getState() != RTCDataChannelState.OPEN) break;
 
@@ -222,6 +224,9 @@ public class WebRtcClient {
                     Thread.sleep(5);
                 }
                 if (!running.get()) break;
+
+                // OS 버퍼에 쌓인 후속 데이터를 논블로킹으로 흡수 → send 횟수 감소
+                n = BatchPipe.coalesce(in, readBuf, n);
 
                 ByteBuffer base = SEND_BUF.get();
                 base.clear();
@@ -252,18 +257,13 @@ public class WebRtcClient {
 
             @Override
             public void onMessage(RTCDataChannelBuffer buffer) {
-                int n = buffer.data.remaining();
-                byte[] buf = RECV_BUF.get();
-                if (n > buf.length) buf = new byte[n];
-                buffer.data.get(buf, 0, n);
-                OutputStream out = mcOut;
-                if (out != null) {
-                    try {
-                        out.write(buf, 0, n);
-                    } catch (Exception e) {
-                        if (running.get()) LOG.warn("[webrtc] MC write failed: {}", e.getMessage());
-                        close();
-                    }
+                BatchPipe.Writer w = mcWriter;
+                if (w == null) return;
+                try {
+                    w.feed(buffer.data); // 큐 가득 시 블로킹 → SCTP 수신 윈도우로 배압
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    close();
                 }
             }
         });
@@ -369,6 +369,9 @@ public class WebRtcClient {
         hostArrivedLatch.countDown();
         readyLatch.countDown();
         mcOut = null;
+        BatchPipe.Writer w = mcWriter;
+        mcWriter = null;
+        if (w != null) w.close();
         try { if (mcSocket != null)      mcSocket.close();     } catch (Exception ignored) {}
         try { if (serverSocket != null)  serverSocket.close(); } catch (Exception ignored) {}
         try { if (dataChannel != null) {
