@@ -81,6 +81,7 @@ final class BatchPipe {
             this.onError = onError;
             this.thread = new Thread(this::run, name);
             this.thread.setDaemon(true);
+            this.thread.setPriority(Thread.NORM_PRIORITY + 2); // 파이프 지연 최소화
             this.thread.start();
         }
 

@@ -48,6 +48,7 @@ public class WebRtcHost {
     private static final int    DIAL_TIMEOUT_MS      = 5_000;
     private static final int    BUFFER_SIZE          = 65536;
     private static final long   DC_BUF_HIGH          = 16 * 1024 * 1024L;
+    private static final long   DC_BUF_LOW           = 2 * 1024 * 1024L; // 이하로 빠지면 송신 재개
 
     // ── 인스턴스 필드 ─────────────────────────────────────────────────────────
     private final String roomId;
@@ -373,6 +374,8 @@ public class WebRtcHost {
 
         private final CountDownLatch dcOpenLatch = new CountDownLatch(1);
         private final Object dialLock = new Object();
+        /** 백프레셔 대기/웨이크업 (onBufferedAmountChange 이벤트 기반) */
+        private final Object bpLock = new Object();
 
         private final List<RTCIceCandidate> queuedIce = new ArrayList<>();
         private volatile boolean remoteSet = false;
@@ -484,7 +487,16 @@ public class WebRtcHost {
 
         private void setupDataChannel(RTCDataChannel channel) {
             channel.registerObserver(new RTCDataChannelObserver() {
-                @Override public void onBufferedAmountChange(long previousAmount) {}
+                @Override
+                public void onBufferedAmountChange(long previousAmount) {
+                    // 하강 에지에서만 웨이크업 (콜백은 모든 변화마다 오므로 조건 최소화)
+                    if (previousAmount > DC_BUF_LOW) {
+                        RTCDataChannel ch = dataChannel;
+                        if (ch != null && ch.getBufferedAmount() <= DC_BUF_LOW) {
+                            synchronized (bpLock) { bpLock.notifyAll(); }
+                        }
+                    }
+                }
 
                 @Override
                 public void onStateChange() {
@@ -540,6 +552,7 @@ public class WebRtcHost {
                             Thread t = new Thread(() -> forwardTcpToWebRtc(sock),
                                     "webrtc-host-tcp-" + sid);
                             t.setDaemon(true);
+                            t.setPriority(Thread.NORM_PRIORITY + 2); // 파이프 지연 최소화
                             t.start();
                         } catch (Exception e) {
                             LOG.warn("[host] Failed to dial target {}:{}: {}",
@@ -568,9 +581,12 @@ public class WebRtcHost {
                     RTCDataChannel ch = dataChannel;
                     if (ch == null || ch.getState() != RTCDataChannelState.OPEN) break;
 
+                    // 이벤트 기반 백프레셔: onBufferedAmountChange가 깨움 (50ms 안전 타임아웃)
                     while (ch.getBufferedAmount() > DC_BUF_HIGH) {
                         if (closed.get() || ch.getState() != RTCDataChannelState.OPEN) return;
-                        Thread.sleep(5);
+                        synchronized (bpLock) {
+                            if (ch.getBufferedAmount() > DC_BUF_HIGH) bpLock.wait(50);
+                        }
                     }
                     if (closed.get()) break;
 
@@ -593,6 +609,7 @@ public class WebRtcHost {
         void close() {
             if (!closed.compareAndSet(false, true)) return;
             dcOpenLatch.countDown();
+            synchronized (bpLock) { bpLock.notifyAll(); } // 백프레셔 대기 해제
             BatchPipe.Writer w = tcpWriter;
             tcpWriter = null;
             if (w != null) w.close();

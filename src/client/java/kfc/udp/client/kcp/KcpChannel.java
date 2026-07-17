@@ -80,10 +80,11 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
         } catch (IOException e) {
             throw new ChannelException("Failed to open DatagramChannel", e);
         }
-        KcpOutput output = (data, c) -> {
-            udpChannel.unsafe().write(data, udpChannel.voidPromise());
-            udpChannel.unsafe().flush();
-        };
+        // 데이터그램마다 flush하지 않는다 — kcp.flush()가 한 사이클에 수백 개의
+        // MTU 데이터그램을 낼 수 있는데(청크 로딩), 그때마다 pipeline flush를
+        // 타면 오버헤드가 패킷 수에 비례. write만 하고 사이클 끝에 udpFlush() 1회.
+        KcpOutput output = (data, c) ->
+                udpChannel.unsafe().write(data, udpChannel.voidPromise());
         this.kcp = new KcpCore(conv, output, ByteBufAllocator.DEFAULT);
     }
 
@@ -155,6 +156,7 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
     protected void doClose() {
         LOG.info("[kcp] doClose — conv=0x{}, sndBuf={}, sndQueue={}",
                 Integer.toHexString(kcp.getConv()), kcp.waitSnd(), kcp.sndQueueSize());
+        udpFlush(); // 잔여 ACK/세그먼트 방출
         // release()/소켓 close 전에 마커를 먼저 보낸다.
         sendCloseMarker();
         kcpActive = false;
@@ -182,7 +184,10 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                 break;
             }
         }
-        if (sent) doUpdateKcp();
+        if (sent) {
+            doUpdateKcp();
+            udpFlush();
+        }
     }
 
     @Override
@@ -236,6 +241,7 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
         if (flushPending && kcp.canSend(false))
             unsafe().forceFlush();
+        udpFlush();
 
         tsUpdate = nextTs;
         scheduleUpdate(nextTs, current);
@@ -289,6 +295,11 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                     kcp.waitSnd(), kcp.sndQueueSize(), kcp.rmtWnd());
             fireExceptionAndClose(new KcpException("State=-1 after update()"));
         }
+    }
+
+    /** 사이클 단위 UDP 일괄 플러시 — output 콜백은 write만 하므로 반드시 짝으로 호출 */
+    void udpFlush() {
+        udpChannel.unsafe().flush();
     }
 
     boolean kcpIsActive() { return kcpActive; }
@@ -465,17 +476,19 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                 try {
                     // 1) UDP 수신 — 최대 MAX_READ_PER_LOOP개로 제한
                     //    UDP 소켓 수신만 분산. rcvQueue 드레인은 별도로 전부 처리.
+                    // continueReading()은 ChannelMetadata/할당자 설정에 따라
+                    // maxMessagesPerRead(기본 1~16)로 조기 종료될 수 있어 사용하지
+                    // 않는다 — 버스트 시 셀렉터 사이클이 패킷 수만큼 반복되는 원인.
+                    // OS 버퍼가 빌 때까지(또는 상한까지) 직접 드레인한다.
                     int readCount = 0;
                     try {
-                        do {
+                        for (;;) {
                             int n = doReadMessages(readBuf);
                             if (n == 0) break;
                             if (n < 0) { closed = true; break; }
                             allocHandle.incMessagesRead(n);
-                            readCount++;
-                        } while (readCount < MAX_READ_PER_LOOP
-                                && allocHandle.continueReading(
-                                io.netty.util.UncheckedBooleanSupplier.TRUE_SUPPLIER));
+                            if (++readCount >= MAX_READ_PER_LOOP) break;
+                        }
                     } catch (Throwable t) { ex = t; }
 
                     // 2) KCP input 전체 처리 후 일괄 드레인
@@ -521,6 +534,8 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                     } else {
                         // 3) update (재전송 타이머, sndQueue flush)
                         kcpChannel.doUpdateKcp();
+                        // ACK·재전송 데이터그램 일괄 방출 (output은 write만 하므로)
+                        kcpChannel.udpFlush();
 
                         // 4) rcvQueue → pipeline 드레인
                         // kcp-go Read()처럼 세그먼트들을 CompositeByteBuf로 합쳐서

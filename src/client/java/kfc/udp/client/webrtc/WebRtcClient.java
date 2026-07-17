@@ -33,6 +33,7 @@ public class WebRtcClient {
 
     private static final int  BUFFER_SIZE  = 65536;
     private static final long DC_BUF_HIGH  = 16 * 1024 * 1024L;
+    private static final long DC_BUF_LOW   = 2 * 1024 * 1024L; // 이하로 빠지면 송신 재개
 
     // 송신용 ThreadLocal direct ByteBuffer — forwardMcToWebRtc 스레드 전용
     private static final ThreadLocal<ByteBuffer> SEND_BUF =
@@ -54,6 +55,8 @@ public class WebRtcClient {
     private volatile BatchPipe.Writer mcWriter; // DC→MC 배칭 writer
 
     private final AtomicBoolean  running         = new AtomicBoolean(false);
+    /** 백프레셔 대기/웨이크업 (onBufferedAmountChange 이벤트 기반) */
+    private final Object bpLock = new Object();
     private final CountDownLatch hostArrivedLatch = new CountDownLatch(1);
     private final CountDownLatch readyLatch       = new CountDownLatch(1);
 
@@ -219,9 +222,12 @@ public class WebRtcClient {
                 RTCDataChannel ch = dataChannel;
                 if (ch == null || ch.getState() != RTCDataChannelState.OPEN) break;
 
+                // 이벤트 기반 백프레셔: onBufferedAmountChange가 깨움 (50ms 안전 타임아웃)
                 while (ch.getBufferedAmount() > DC_BUF_HIGH) {
                     if (!running.get() || ch.getState() != RTCDataChannelState.OPEN) break;
-                    Thread.sleep(5);
+                    synchronized (bpLock) {
+                        if (ch.getBufferedAmount() > DC_BUF_HIGH) bpLock.wait(50);
+                    }
                 }
                 if (!running.get()) break;
 
@@ -246,7 +252,15 @@ public class WebRtcClient {
 
     private void setupDataChannel(RTCDataChannel channel) {
         channel.registerObserver(new RTCDataChannelObserver() {
-            @Override public void onBufferedAmountChange(long p) {}
+            @Override
+            public void onBufferedAmountChange(long previousAmount) {
+                if (previousAmount > DC_BUF_LOW) {
+                    RTCDataChannel ch = dataChannel;
+                    if (ch != null && ch.getBufferedAmount() <= DC_BUF_LOW) {
+                        synchronized (bpLock) { bpLock.notifyAll(); }
+                    }
+                }
+            }
 
             @Override
             public void onStateChange() {
@@ -368,6 +382,7 @@ public class WebRtcClient {
         LOG.info("[webrtc] Closing");
         hostArrivedLatch.countDown();
         readyLatch.countDown();
+        synchronized (bpLock) { bpLock.notifyAll(); } // 백프레셔 대기 해제
         mcOut = null;
         BatchPipe.Writer w = mcWriter;
         mcWriter = null;
