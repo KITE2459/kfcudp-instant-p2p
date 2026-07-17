@@ -3,18 +3,17 @@ package kfc.udp.client.webrtc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.*;
+import java.io.IOException;
 import java.net.ServerSocket;
 import java.nio.file.*;
-import java.util.*;
-import java.util.concurrent.*;
+import java.util.stream.Stream;
 
 /**
- * WebRTC/KCP 브리지 관리.
+ * WebRTC/KCP 브리지 관리. (외부 바이너리 의존 없음 — 전부 Java 네이티브)
  * <p>
- * webrtc.ROOM → WebRtcClient (Java 네이티브, dev.onvoid.webrtc)
+ * webrtc.ROOM → WebRtcClient (dev.onvoid.webrtc)
  * kcp.ADDR    → KCP 네이티브 (ClientConnectionMixin)
- * startHost() → openfriend Go 바이너리 (서버 사이드)
+ * startHost() → WebRtcHost (dev.onvoid.webrtc)
  */
 public class WebRtcBridge {
 
@@ -25,8 +24,8 @@ public class WebRtcBridge {
     // webrtc. 네이티브 클라이언트
     private static volatile WebRtcClient webRtcClient;
 
-    // 서버 사이드 host 프로세스 (Go 바이너리)
-    private static volatile Process hostProcess;
+    // 네이티브 호스트
+    private static volatile WebRtcHost webRtcHost;
 
     // 핑 후 접속 시 roomId 전달용
     private static volatile int activeLocalPort = LOCAL_PORT;
@@ -51,7 +50,6 @@ public class WebRtcBridge {
 
     /**
      * WebRTC P2P 연결 시작.
-     * openfriend 바이너리 없이 dev.onvoid.webrtc로 직접 연결.
      *
      * @return 로컬 포트 (MC 클라이언트가 연결할 포트)
      */
@@ -80,126 +78,39 @@ public class WebRtcBridge {
         }
     }
 
-    // ── Host (서버 사이드 — Go 바이너리 유지) ─────────────────────────────────
+    // ── Host (Java 네이티브 — WebRtcHost) ─────────────────────────────────────
 
     public static void startHost(String roomId, String target) throws IOException {
         stopHost();
-        killZombies(getHostBinaryName());
 
-        Path corePath = extractHostBinary();
-        List<String> command = new ArrayList<>();
-        command.add(corePath.toAbsolutePath().toString());
-        command.add("--room");
-        command.add(roomId);
-        command.add("--target");
-        command.add(target);
-        command.add("--signaling");
-        command.add("ws://193.122.114.163:8765");
-        command.add("--no-proxy");
-
-        LOG.info("[WebRTC] Starting Host Core: room={} target={}", roomId, target);
-
-        ProcessBuilder pb = new ProcessBuilder(command);
-        pb.redirectErrorStream(true);
-        pb.environment().put("GOGC", "off");
-        Process proc = pb.start();
-        hostProcess = proc;
-
-        Thread logThread = new Thread(() -> {
-            try (BufferedReader r = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-                String line;
-                while ((line = r.readLine()) != null) LOG.info("[HostCore] {}", line);
-            } catch (IOException ignored) {}
-        }, "webrtc-host-log");
-        logThread.setDaemon(true);
-        logThread.start();
+        LOG.info("[WebRTC] Starting native host: room={} target={}", roomId, target);
+        WebRtcHost host = new WebRtcHost(roomId, target);
+        webRtcHost = host;
+        host.start();
     }
 
     public static void stopHost() {
-        Process proc = hostProcess;
-        if (proc != null && proc.isAlive()) {
-            LOG.info("[WebRTC] Stopping Host Core");
-            proc.destroy();
-            try {
-                if (!proc.waitFor(3, TimeUnit.SECONDS)) proc.destroyForcibly();
-            } catch (InterruptedException ignored) { Thread.currentThread().interrupt(); }
-            hostProcess = null;
+        WebRtcHost host = webRtcHost;
+        if (host != null) {
+            LOG.info("[WebRTC] Stopping native host");
+            host.close();
+            webRtcHost = null;
         }
-    }
-
-    // ── 바이너리 추출 (Host 전용) ──────────────────────────────────────────────
-
-    private static Path extractHostBinary() throws IOException {
-        String name   = getHostBinaryName();
-        Path   dir    = getDataDir();
-        Files.createDirectories(dir);
-        Path target = dir.resolve(name);
-        if (!Files.exists(target)) {
-            try (InputStream in = WebRtcBridge.class.getResourceAsStream("/openfriend/" + name)) {
-                if (in == null) return extractCoreBinary(); // fallback
-                Files.copy(in, target);
-            }
-        }
-        if (!System.getProperty("os.name", "").toLowerCase().contains("win"))
-            target.toFile().setExecutable(true);
-        return target;
-    }
-
-    private static Path extractCoreBinary() throws IOException {
-        String name   = getBinaryName();
-        Path   dir    = getDataDir();
-        Files.createDirectories(dir);
-        Path target = dir.resolve(name);
-        if (!Files.exists(target)) {
-            try (InputStream in = WebRtcBridge.class.getResourceAsStream("/openfriend/" + name)) {
-                if (in == null) throw new IOException("Binary not found: " + name);
-                Files.copy(in, target);
-            }
-        }
-        if (!System.getProperty("os.name", "").toLowerCase().contains("win"))
-            target.toFile().setExecutable(true);
-        return target;
-    }
-
-    private static String getHostBinaryName() {
-        String os   = System.getProperty("os.name", "").toLowerCase();
-        String arch = System.getProperty("os.arch", "").toLowerCase();
-        if (os.contains("win"))                        return "openfriend-host-windows-amd64.exe";
-        if (os.contains("mac") || os.contains("darwin")) {
-            return (arch.contains("aarch64") || arch.contains("arm"))
-                    ? "openfriend-host-darwin-arm64" : "openfriend-host-darwin-amd64";
-        }
-        return (arch.contains("aarch64") || arch.contains("arm"))
-                ? "openfriend-host-linux-arm64" : "openfriend-host-linux-amd64";
     }
 
     // ── 유틸 ──────────────────────────────────────────────────────────────────
 
-    private static void killZombies(String binaryName) {
-        String os = System.getProperty("os.name", "").toLowerCase();
-        try {
-            if (os.contains("win")) Runtime.getRuntime().exec(new String[]{"taskkill", "/F", "/IM", binaryName});
-            else                    Runtime.getRuntime().exec(new String[]{"pkill", "-f", binaryName});
-            Thread.sleep(500);
-        } catch (Exception ignored) {}
-    }
-
+    /**
+     * 과거 버전이 데이터 폴더에 추출해 둔 openfriend 바이너리 잔재 삭제.
+     * (현재 버전은 외부 바이너리를 일절 사용하지 않음)
+     */
     public static void cleanup() {
         Path dir = getDataDir();
-        try { Files.deleteIfExists(dir.resolve(getBinaryName())); } catch (IOException ignored) {}
-    }
-
-
-    private static String getBinaryName() {
-        String os   = System.getProperty("os.name", "").toLowerCase();
-        String arch = System.getProperty("os.arch", "").toLowerCase();
-        if (os.contains("win"))                        return "openfriend-windows-amd64.exe";
-        if (os.contains("mac") || os.contains("darwin")) {
-            return (arch.contains("aarch64") || arch.contains("arm"))
-                    ? "openfriend-darwin-arm64" : "openfriend-darwin-amd64";
-        }
-        return (arch.contains("aarch64") || arch.contains("arm"))
-                ? "openfriend-linux-arm64" : "openfriend-linux-amd64";
+        if (!Files.isDirectory(dir)) return;
+        try (Stream<Path> files = Files.list(dir)) {
+            files.filter(p -> p.getFileName().toString().startsWith("openfriend"))
+                    .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
     }
 
     private static Path getDataDir() {

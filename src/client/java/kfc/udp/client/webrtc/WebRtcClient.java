@@ -1,6 +1,8 @@
 package kfc.udp.client.webrtc;
 
 import dev.onvoid.webrtc.*;
+import dev.onvoid.webrtc.media.audio.AudioDeviceModule;
+import dev.onvoid.webrtc.media.audio.AudioLayer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,11 +14,18 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Java 네이티브 WebRTC 클라이언트.
- * 지연 최적화:
+ * Java 네이티브 WebRTC 클라이언트(조인) — VILLASframework signaling 프로토콜.
+ * <p>
+ * 조인 절차 (WebRtcHost의 로비/페어 구조와 짝):
+ * <ol>
+ *   <li>페어 세션 {@code /{roomId}-{sid}}에 peer "p{sid}"로 먼저 접속해 대기</li>
+ *   <li>로비 {@code /{roomId}}에 peer "j{sid}"로 접속(조인 알림) — 호스트가 감지</li>
+ *   <li>페어 세션 control에 호스트(peer "h…")가 나타나면 → OFFER 생성/전송</li>
+ *   <li>ANSWER/ICE 교환 → DataChannel open → MC 트래픽 파이프</li>
+ * </ol>
+ * 지연 최적화(기존 유지):
  *   - onMessage → 직접 MC 소켓 write (스레드 핸드오프/큐 지연 제거)
- *   - 수신 버퍼는 ThreadLocal로 재사용 (동기 경로라 락 불필요)
- *   - send 경로: readBuf 재사용, 정확한 크기 배열만 새로 할당
+ *   - 수신 버퍼는 ThreadLocal로 재사용, 송신은 ThreadLocal direct buffer
  */
 public class WebRtcClient {
 
@@ -25,26 +34,11 @@ public class WebRtcClient {
     private static final int  BUFFER_SIZE  = 65536;
     private static final long DC_BUF_HIGH  = 16 * 1024 * 1024L;
 
-    // ── TURN 서버 인증 ────────────────────────────────────────────────────────
-    // P2P 직결 실패 시 폴백할 TURN 중계 서버의 인증 정보.
-    // coturn 등의 TURN 서버는 보통 정적 계정(turnserver.conf의 user=이름:비밀번호)
-    // 또는 시간제한 토큰(REST API)으로 인증한다. 아래는 정적 계정 가정.
-    // !! 실제 서버에 설정된 값으로 교체할 것. 값이 틀리면 TURN 중계가 거부되어
-    //    P2P 직결만 동작한다(STUN 단독과 동일). !!
-    private static final String TURN_USERNAME   = "villasnode";
-    private static final String TURN_CREDENTIAL = "villaspass";
-
     // 송신용 ThreadLocal direct ByteBuffer — forwardMcToWebRtc 스레드 전용
-    // sendDirectBuffer는 CopyOnWriteBuffer로 즉시 복사(동기) → 재사용 안전
-    // GetDirectBufferCapacity를 쓰므로 slice()로 정확한 크기 뷰를 넘겨야 함
     private static final ThreadLocal<ByteBuffer> SEND_BUF =
             ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(BUFFER_SIZE));
 
-    // ── 수신 버퍼 (onMessage → MC 소켓 write 경로) ────────────────────────
-    // onMessage는 webrtc-java 네이티브 콜백 스레드에서 직렬로만 호출되고,
-    // buffer 복사 → out.write까지 동기로 끝난다. 따라서 동시에 두 버퍼가
-    // 쓰이지 않으므로 락 기반 풀(ArrayBlockingQueue)의 동시성 이점이 전혀 없고
-    // poll/offer 락 비용만 발생했다. 스레드 전용 ThreadLocal 버퍼로 락을 제거한다.
+    // 수신 버퍼 (onMessage → MC 소켓 write 경로, 네이티브 콜백 스레드 전용)
     private static final ThreadLocal<byte[]> RECV_BUF =
             ThreadLocal.withInitial(() -> new byte[BUFFER_SIZE]);
 
@@ -54,21 +48,26 @@ public class WebRtcClient {
     private final int    localPort;
     private final String sessionId;
 
+    private AudioDeviceModule       audioModule;
     private PeerConnectionFactory   factory;
     private RTCPeerConnection       peerConnection;
     private volatile RTCDataChannel dataChannel;
     private ServerSocket            serverSocket;
     private volatile Socket         mcSocket;
-    private volatile OutputStream   mcOut;   // onMessage에서 직접 사용
+    private volatile OutputStream   mcOut;
 
-    private final AtomicBoolean  running       = new AtomicBoolean(false);
-    private final CountDownLatch acceptedLatch  = new CountDownLatch(1);
-    private final CountDownLatch readyLatch     = new CountDownLatch(1);
+    private final AtomicBoolean  running         = new AtomicBoolean(false);
+    private final CountDownLatch hostArrivedLatch = new CountDownLatch(1);
+    private final CountDownLatch readyLatch       = new CountDownLatch(1);
 
     private volatile String             pendingAnswer = null;
     private final List<RTCIceCandidate> pendingIce    = new ArrayList<>();
 
-    private WebSocketClient signalingWs;
+    private WebSocketClient pairWs;      // SDP/ICE 교환용 (roomId-sid)
+    private WebSocketClient announceWs;  // 조인 알림용 (roomId 로비)
+
+    /** 서버가 내려준 TURN/STUN relays (없으면 P2PConfig 기본값 사용) */
+    private volatile List<String[]> serverRelays = List.of();
 
     public WebRtcClient(String roomId, int localPort) {
         this.roomId    = roomId;
@@ -78,7 +77,7 @@ public class WebRtcClient {
 
     public void start() throws Exception {
         running.set(true);
-        connectSignaling();
+        connectPairSignaling();
 
         serverSocket = new ServerSocket(localPort);
         serverSocket.setSoTimeout(120000);
@@ -98,11 +97,11 @@ public class WebRtcClient {
             mcSocket = sock;
             mcOut    = sock.getOutputStream();
 
-            signalingWs.send("{\"type\":\"JOIN\",\"roomId\":\"" + roomId +
-                    "\",\"sessionId\":\"" + sessionId + "\"}");
+            // 로비에 조인 알림 → 호스트가 페어 세션으로 들어옴
+            announceJoin();
 
-            if (!acceptedLatch.await(15, TimeUnit.SECONDS)) {
-                LOG.warn("[webrtc] JOIN_ACCEPTED timeout");
+            if (!hostArrivedLatch.await(15, TimeUnit.SECONDS)) {
+                LOG.warn("[webrtc] host did not arrive in pair session (room={})", roomId);
                 close(); return;
             }
 
@@ -113,6 +112,11 @@ public class WebRtcClient {
                 LOG.warn("[webrtc] DataChannel open timed out");
                 close(); return;
             }
+
+            // 연결 완료 — 조인 알림용 로비 접속은 정리
+            WebSocketClient a = announceWs;
+            announceWs = null;
+            if (a != null) a.close();
 
             forwardMcToWebRtc(sock);
 
@@ -125,10 +129,87 @@ public class WebRtcClient {
         }
     }
 
+    // ── 시그널링 (VILLAS) ─────────────────────────────────────────────────────
+
+    private void connectPairSignaling() throws Exception {
+        pairWs = new WebSocketClient(
+                P2PConfig.SIGNALING_URL + "/" + roomId + "-" + sessionId + "/p" + sessionId) {
+            @Override public void onConnected() {
+                send(VillasMsg.hello()); // 서버가 최초 1회 signals 메시지를 요구함
+            }
+            @Override public void onMessage(String type, String json) {
+                handlePairMessage(json);
+            }
+            @Override public void onDisconnected() {
+                // 연결 수립 전에 시그널링이 끊기면 실패 처리 (수립 후에는 P2P 독립)
+                if (readyLatch.getCount() > 0) {
+                    LOG.warn("[webrtc] pair signaling lost");
+                    close();
+                }
+            }
+        };
+        pairWs.connect();
+    }
+
+    private void announceJoin() throws Exception {
+        announceWs = new WebSocketClient(
+                P2PConfig.SIGNALING_URL + "/" + roomId + "/j" + sessionId) {
+            @Override public void onConnected() {
+                send(VillasMsg.hello());
+                LOG.info("[webrtc] join announced: room={} sid={}", roomId, sessionId);
+            }
+            @Override public void onMessage(String type, String json) { /* 로비 메시지 무시 */ }
+        };
+        announceWs.connect();
+    }
+
+    private void handlePairMessage(String json) {
+        if (VillasMsg.has(json, "servers")) {
+            List<String[]> servers = VillasMsg.servers(json);
+            if (!servers.isEmpty()) {
+                serverRelays = servers;
+                LOG.info("[webrtc] using {} relay(s) from signaling server", servers.size());
+            }
+        }
+        if (VillasMsg.has(json, "control")) {
+            // 호스트(peer "h…")가 페어 세션에 연결되면 진행
+            for (String[] p : VillasMsg.peers(json)) {
+                String name = p[0], remote = p[1];
+                if (name != null && remote != null && name.startsWith("h")) {
+                    hostArrivedLatch.countDown();
+                }
+            }
+        } else if (VillasMsg.has(json, "description")) {
+            String desc = VillasMsg.object(json, "description");
+            if (desc == null) return;
+            String sdpType = VillasMsg.field(desc, "type");
+            String sdp     = VillasMsg.field(desc, "spd");
+            if (!"answer".equalsIgnoreCase(sdpType) || sdp == null) return;
+            if (peerConnection != null) applyAnswer(sdp);
+            else pendingAnswer = sdp;
+        } else if (VillasMsg.has(json, "candidate")) {
+            String cand = VillasMsg.object(json, "candidate");
+            if (cand == null) return;
+            String spd = VillasMsg.field(cand, "spd");
+            String mid = VillasMsg.field(cand, "mid");
+            if (spd == null) return;
+            RTCIceCandidate ic = new RTCIceCandidate(mid != null ? mid : "0", 0, spd);
+            if (peerConnection != null) peerConnection.addIceCandidate(ic);
+            else synchronized (pendingIce) { pendingIce.add(ic); }
+        }
+    }
+
+    private void sendPair(String json) {
+        if (json.length() > 4000) {
+            LOG.warn("[webrtc] outgoing signaling message near server limit ({} bytes)", json.length());
+        }
+        WebSocketClient w = pairWs;
+        if (w != null) w.send(json);
+    }
+
     // ── MC → DataChannel ──────────────────────────────────────────────────────
 
     private void forwardMcToWebRtc(Socket sock) {
-        // readBuf 재사용 — 루프마다 힙 할당 없음
         byte[] readBuf = new byte[BUFFER_SIZE];
         try (InputStream in = sock.getInputStream()) {
             int n;
@@ -136,21 +217,16 @@ public class WebRtcClient {
                 RTCDataChannel ch = dataChannel;
                 if (ch == null || ch.getState() != RTCDataChannelState.OPEN) break;
 
-                // 백프레셔
                 while (ch.getBufferedAmount() > DC_BUF_HIGH) {
                     if (!running.get() || ch.getState() != RTCDataChannelState.OPEN) break;
                     Thread.sleep(5);
                 }
                 if (!running.get()) break;
 
-                // ThreadLocal direct 버퍼 재사용 (동기 확인됨)
-                // GetDirectBufferCapacity가 capacity를 쓰므로
-                // slice()로 정확한 크기 뷰를 넘겨야 함
                 ByteBuffer base = SEND_BUF.get();
                 base.clear();
                 base.put(readBuf, 0, n);
                 base.flip();
-                // slice(): position=0, limit=capacity=n 인 독립 뷰
                 ByteBuffer slice = base.slice().limit(n);
                 ch.send(new RTCDataChannelBuffer(slice, true));
             }
@@ -161,7 +237,7 @@ public class WebRtcClient {
         }
     }
 
-    // ── DataChannel → MC (onMessage에서 직접 write — 큐/스레드 핸드오프 없음) ──
+    // ── DataChannel → MC ──────────────────────────────────────────────────────
 
     private void setupDataChannel(RTCDataChannel channel) {
         channel.registerObserver(new RTCDataChannelObserver() {
@@ -177,12 +253,12 @@ public class WebRtcClient {
             @Override
             public void onMessage(RTCDataChannelBuffer buffer) {
                 int n = buffer.data.remaining();
-                byte[] buf = RECV_BUF.get();   // 스레드 전용, 락 없음
+                byte[] buf = RECV_BUF.get();
+                if (n > buf.length) buf = new byte[n];
                 buffer.data.get(buf, 0, n);
                 OutputStream out = mcOut;
                 if (out != null) {
                     try {
-                        // TCP_NODELAY 설정으로 flush 없이도 즉시 전송
                         out.write(buf, 0, n);
                     } catch (Exception e) {
                         if (running.get()) LOG.warn("[webrtc] MC write failed: {}", e.getMessage());
@@ -193,35 +269,45 @@ public class WebRtcClient {
         });
     }
 
-    // ── PeerConnection / Signaling ────────────────────────────────────────────
+    // ── PeerConnection ────────────────────────────────────────────────────────
 
     private void initPeerConnection() {
-        factory = new PeerConnectionFactory();
+        // DataChannel 전용 — dummy audio로 오디오 장치 초기화 생략
+        audioModule = new AudioDeviceModule(AudioLayer.kDummyAudio);
+        factory = new PeerConnectionFactory(audioModule);
 
         RTCConfiguration config = new RTCConfiguration();
+        List<String[]> relays = serverRelays;
+        if (relays.isEmpty()) {
+            RTCIceServer stun = new RTCIceServer();
+            stun.urls.add(P2PConfig.STUN_URL);
+            config.iceServers.add(stun);
+            RTCIceServer turn = new RTCIceServer();
+            turn.urls.add(P2PConfig.TURN_URL);
+            turn.username = P2PConfig.TURN_USERNAME;
+            turn.password = P2PConfig.TURN_CREDENTIAL;
+            config.iceServers.add(turn);
+        } else {
+            for (String[] r : relays) {
+                RTCIceServer s = new RTCIceServer();
+                s.urls.add(r[0]);
+                if (r[1] != null) s.username = r[1];
+                if (r[2] != null) s.password = r[2];
+                config.iceServers.add(s);
+            }
+        }
 
-        // STUN: 공인 IP 탐색 (P2P 직결 시도용)
-        RTCIceServer stun = new RTCIceServer();
-        stun.urls.add("stun:193.122.114.163:3478");
-        config.iceServers.add(stun);
-        // TURN: P2P 직결 실패 시(Symmetric NAT 양쪽 등) 중계 폴백.
-        // STUN만으론 양쪽이 Symmetric NAT이면 연결이 아예 안 되므로, 중계 서버를
-        // 폴백으로 둬 연결 성공률을 높인다. TURN은 인증(username/credential)이
-        // 필수다 — 서버 설정과 일치해야 중계가 허용된다.
-        RTCIceServer turn = new RTCIceServer();
-        turn.urls.add("turn:193.122.114.163:3478");
-        turn.username = TURN_USERNAME;
-        turn.password = TURN_CREDENTIAL;
-        config.iceServers.add(turn);
+        // 디버그/특수 네트워크 환경용: any-address 포트 강제 (-Dkfcudp.ice.anyaddress=true)
+        if (Boolean.getBoolean("kfcudp.ice.anyaddress")) {
+            config.portAllocatorConfig.setDisableAdapterEnumeration(true);
+            config.portAllocatorConfig.setEnableAnyAddressPorts(true);
+        }
 
         peerConnection = factory.createPeerConnection(config, new PeerConnectionObserver() {
             @Override
             public void onIceCandidate(RTCIceCandidate candidate) {
-                signalingWs.send("{\"type\":\"ICE_CANDIDATE\",\"sessionId\":\"" + sessionId + "\"," +
-                        "\"iceCandidate\":{" +
-                        "\"candidate\":\"" + escapeJson(candidate.sdp) + "\"," +
-                        "\"sdpMid\":\"" + (candidate.sdpMid != null ? candidate.sdpMid : "0") + "\"," +
-                        "\"sdpMLineIndex\":" + candidate.sdpMLineIndex + "}}");
+                sendPair(VillasMsg.candidate(candidate.sdp,
+                        candidate.sdpMid != null ? candidate.sdpMid : "0"));
             }
 
             @Override
@@ -229,7 +315,6 @@ public class WebRtcClient {
                 if (state == RTCIceConnectionState.FAILED ||
                         state == RTCIceConnectionState.DISCONNECTED) close();
             }
-
         });
 
         RTCDataChannelInit dcInit = new RTCDataChannelInit();
@@ -250,8 +335,7 @@ public class WebRtcClient {
                 peerConnection.setLocalDescription(desc, new SetSessionDescriptionObserver() {
                     @Override
                     public void onSuccess() {
-                        signalingWs.send("{\"type\":\"OFFER\",\"sessionId\":\"" + sessionId + "\"," +
-                                "\"sdp\":\"" + escapeJson(desc.sdp) + "\"}");
+                        sendPair(VillasMsg.description("offer", desc.sdp));
                         String ans = pendingAnswer;
                         if (ans != null) { pendingAnswer = null; applyAnswer(ans); }
                     }
@@ -277,95 +361,12 @@ public class WebRtcClient {
                 });
     }
 
-    private void connectSignaling() throws Exception {
-        signalingWs = new WebSocketClient("ws://193.122.114.163:8765") {
-            @Override public void onConnected() {}
-            @Override public void onMessage(String type, String json) {
-                switch (type) {
-                    case "JOIN_ACCEPTED" -> acceptedLatch.countDown();
-                    case "JOIN_REJECTED" -> { LOG.warn("[webrtc] JOIN_REJECTED"); close(); }
-                    case "ANSWER" -> {
-                        String sdp = extractField(json, "sdp");
-                        if (sdp == null) return;
-                        if (peerConnection != null) applyAnswer(sdp);
-                        else pendingAnswer = sdp;
-                    }
-                    case "ICE_CANDIDATE" -> {
-                        String icJson = extractObject(json);
-                        if (icJson == null) return;
-                        String cand   = extractField(icJson, "candidate");
-                        String mid    = extractField(icJson, "sdpMid");
-                        String idxStr = extractField(icJson, "sdpMLineIndex");
-                        if (cand == null) return;
-                        int idx = 0;
-                        try { idx = Integer.parseInt(idxStr != null ? idxStr : "0"); }
-                        catch (Exception ignored) {}
-                        RTCIceCandidate ic = new RTCIceCandidate(mid != null ? mid : "0", idx, cand);
-                        if (peerConnection != null) peerConnection.addIceCandidate(ic);
-                        else synchronized (pendingIce) { pendingIce.add(ic); }
-                    }
-                    case "HOST_DISCONNECTED" -> close();
-                }
-            }
-        };
-        signalingWs.connect();
-    }
-
-    // ── JSON 유틸 ─────────────────────────────────────────────────────────────
-
-    private String extractField(String json, String field) {
-        String key = "\"" + field + "\"";
-        int idx = json.indexOf(key);
-        if (idx < 0) return null;
-        int colon = json.indexOf(':', idx + key.length());
-        if (colon < 0) return null;
-        int vs = colon + 1;
-        while (vs < json.length() && json.charAt(vs) == ' ') vs++;
-        if (vs < json.length() && json.charAt(vs) != '"') {
-            int e = vs;
-            while (e < json.length() && ",}".indexOf(json.charAt(e)) < 0) e++;
-            return json.substring(vs, e).trim();
-        }
-        int start = json.indexOf('"', colon + 1);
-        if (start < 0) return null;
-        int end = start + 1;
-        while (end < json.length()) {
-            if (json.charAt(end) == '"' && json.charAt(end - 1) != '\\') break;
-            end++;
-        }
-        return json.substring(start + 1, end)
-                .replace("\\n", "\n").replace("\\r", "\r")
-                .replace("\\\"", "\"").replace("\\\\", "\\");
-    }
-
-    private String extractObject(String json) {
-        String key = "\"" + "iceCandidate" + "\"";
-        int idx = json.indexOf(key);
-        if (idx < 0) return null;
-        int brace = json.indexOf('{', idx + key.length());
-        if (brace < 0) return null;
-        int depth = 0, end = brace;
-        while (end < json.length()) {
-            char c = json.charAt(end);
-            if (c == '{') depth++;
-            else if (c == '}') { if (--depth == 0) { end++; break; } }
-            end++;
-        }
-        return json.substring(brace, end);
-    }
-
-    private String escapeJson(String s) {
-        if (s == null) return "";
-        return s.replace("\\", "\\\\").replace("\"", "\\\"")
-                .replace("\r\n", "\\r\\n").replace("\n", "\\n").replace("\r", "\\r");
-    }
-
     // ── 정리 ──────────────────────────────────────────────────────────────────
 
     public void close() {
         if (!running.compareAndSet(true, false)) return;
         LOG.info("[webrtc] Closing");
-        acceptedLatch.countDown();
+        hostArrivedLatch.countDown();
         readyLatch.countDown();
         mcOut = null;
         try { if (mcSocket != null)      mcSocket.close();     } catch (Exception ignored) {}
@@ -377,7 +378,8 @@ public class WebRtcClient {
         }} catch (Exception ignored) {}
         try { if (peerConnection != null) peerConnection.close(); } catch (Exception ignored) {}
         try { if (factory != null)        factory.dispose();       } catch (Exception ignored) {}
-        if (signalingWs != null) signalingWs.close();
+        try { if (audioModule != null)    audioModule.dispose();   } catch (Exception ignored) {}
+        if (pairWs != null)     pairWs.close();
+        if (announceWs != null) announceWs.close();
     }
-
 }
