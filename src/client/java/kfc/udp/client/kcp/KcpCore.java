@@ -7,16 +7,21 @@ import io.netty.buffer.ByteBufAllocator;
  * KCP 프로토콜 코어 — 라이브러리 없이 완전 하드코딩.
  * 고정 파라미터 (kcp-go applyKCPOptions와 동일):
  *   MTU      = 1450       MSS = 1426
- *   nodelay  = true       rxMinRto = 30ms
+ *   nodelay  = true       rxMinRto = 40ms (updateAck에서 하한 클램프 적용)
  *   interval = 2ms
- *   resend   = 1          (fastack: ACK 1회 누락 즉시 재전송)
+ *   resend   = 2          (fastack: ACK 2회 누락 시 재전송 — 재정렬 내성, kcp-go 서버와 동일)
  *   nocwnd   = true       (혼잡제어 OFF)
- *   sndWnd   = 20480
- *   rcvWnd   = 20480
+ *   sndWnd   = 4096       (재전송 버스트 상한 억제 — BDP 대비 충분한 여유)
+ *   rcvWnd   = 81920
  *   stream   = true       (바이트 스트림 모드 — 서버사이드 kcp-go와 동일)
  *   deadLink = 200        (핑 20ms 환경 기준 — 서버→클라이언트 일시 단절 장기 버팀)
  *   fastackLimit = 30     (fastack xmit 소진 방지)
  *   RTO_MAX  = 3000ms     (재전송 간격 상한 — 핑 20ms 환경에서 60초는 과도)
+ * RTO 하한(RTO_MIN 40ms) 근거: 실측 경로 지터가 p95 ~8ms, 스파이크 15~25ms,
+ * 최대 ~37ms. 하한 없이 rto = srtt + max(interval, 4×rttvar)만 쓰면 안정 구간에서
+ * rto가 ~12ms까지 조여져, 지터 스파이크만으로 RTO가 발화해 in-flight 세그먼트를
+ * 대량 중복 재전송(spurious RTO)했다. 진짜 손실 복구는 fastack이 ~RTT에 처리하므로
+ * 하한을 지터 위(40ms)로 올려도 복구 지연 손해는 거의 없다.
  */
 public final class KcpCore {
 
@@ -24,12 +29,13 @@ public final class KcpCore {
     private static final int OVERHEAD      = 24;
     private static final int MTU           = 1450;
     private static final int MSS           = MTU - OVERHEAD; // 1426
-    private static final int RTO_MIN       = 20;
+    private static final int RTO_MIN       = 40;     // RTO 하한 — updateAck에서 클램프 (상단 주석 참조)
     private static final int RTO_DEF       = 200;
     private static final int RTO_MAX       = 3_000;  // 핑 20ms 환경 — 재전송 간격 상한 3초
-    private static final int WND_SND       = 20_480;
+    private static final int WND_SND       = 4_096;
     private static final int WND_RCV       = 81_920;
     private static final int INTERVAL      = 2;
+    private static final int RESEND        = 2;    // fastack 임계 — ACK 2회 건너뜀 시 재전송 (재정렬 내성)
     private static final int DEADLINK      = 200;  // 핑 20ms 환경 — 서버→클라이언트 단절 시 장기 생존
     private static final int PROBE_INIT    = 500;   // kcp-go 기본값과 동일 (7000→500)
     private static final int PROBE_LIM     = 120_000;
@@ -473,8 +479,10 @@ public final class KcpCore {
                 seg.fastack = 0;
                 seg.rto    += rxRto / 2;
                 seg.resendts = current + seg.rto;
-            } else if (seg.fastack >= 1 && seg.xmit <= FASTACK_LIMIT) {
-                // fast retransmit
+            } else if (seg.fastack >= RESEND && seg.xmit <= FASTACK_LIMIT) {
+                // fast retransmit — ACK RESEND(2)회 건너뜀 확인 후 재전송.
+                // 임계 1은 ACK 데이터그램 1개의 재정렬/유실만으로 재전송을 유발해
+                // 과민(spurious fast retransmit)했다. kcp-go 서버(resend=2)와 정합.
                 needSend = true;
                 seg.xmit++;
                 seg.fastack  = 0;
@@ -541,8 +549,10 @@ public final class KcpCore {
             rxSrtt   = (7 * rxSrtt + rtt) / 8;
             if (rxSrtt < 1) rxSrtt = 1;
         }
-//        rxRto = Math.min(Math.max(rxSrtt * 6 / 5, rxSrtt + Math.max(interval, 4 * rxRttvar)), RTO_MAX);
-        rxRto = Math.min(rxSrtt + Math.max(interval, 4 * rxRttvar), RTO_MAX);
+        // RTO_MIN 하한 클램프 — kcp-go의 _ibound_(rx_minrto, rto, RTO_MAX)와 동일.
+        // 하한 없이는 안정 구간에서 rto가 srtt+수 ms(~12ms)까지 조여져, 경로 지터
+        // 스파이크(15~37ms)만으로 RTO가 발화 → in-flight 세그먼트 대량 중복 재전송.
+        rxRto = Math.min(Math.max(RTO_MIN, rxSrtt + Math.max(interval, 4 * rxRttvar)), RTO_MAX);
     }
 
     private void shrinkBuf() {
@@ -575,7 +585,7 @@ public final class KcpCore {
             if (itimediff(sn, s.sn) < 0) break;
             else if (sn != s.sn && itimediff(s.ts, ts) <= 0) {
                 s.fastack++;
-                if (s.fastack >= 1) shouldFlush = true;
+                if (s.fastack >= RESEND) shouldFlush = true;
             }
         }
         return shouldFlush;
