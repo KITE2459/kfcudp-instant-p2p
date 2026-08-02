@@ -53,6 +53,15 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
      */
     private static final int MAX_READ_PER_LOOP = 4096;
 
+    /**
+     * 한 번에 파이프라인으로 넘길 최대 바이트.
+     * 경기 시작처럼 수백 KB가 한꺼번에 도착할 때 전량을 한 배치로 넘기면
+     * 압축해제·디코딩·핸들러 실행이 한 사이클을 길게 점유해 그 뒤의 keepalive
+     * 응답까지 밀린다(= 출발 직후 핑 급등). 256KB 단위로 끊어 넘기면 사이클
+     * 사이에 송신·타이머가 끼어들 수 있어 지연 피크가 낮아진다.
+     */
+    private static final int DRAIN_MAX_BYTES = 256 * 1024;
+
     // KcpChannel이 단독 소유 — KcpUdpChannel.config()가 직접 참조해 무한재귀 방지
     private final DefaultChannelConfig config;
 
@@ -62,6 +71,16 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
     private int     tsUpdate;
     private boolean flushPending;
+
+    /**
+     * 파이프라인이 데이터를 더 받을 준비가 됐는지.
+     * MC(ClientConnection/FlowControlHandler)는 메인스레드가 밀리면 autoRead=false로
+     * 패킷 투입을 제동한다. 예전 구현은 매 read()마다 autoRead=true를 강제해 이 제동을
+     * 무력화했고(패킷이 소화 속도보다 빨리 밀려듦), 그 상태에서 네트워크 스레드와
+     * 메인스레드가 같은 월드 상태를 동시에 만지는 모드가 있으면 경합으로 크래시했다.
+     * 이제는 UDP 수신(=KCP 프로토콜 유지)과 파이프라인 전달(=백프레셔 대상)을 분리한다.
+     */
+    private boolean pipelineWants;
 
     boolean closeAnother = false;
 
@@ -111,7 +130,16 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
     @Override protected void doBind(SocketAddress addr) throws Exception { udpChannel.doBind(addr); }
     @Override protected void doDisconnect()  throws Exception { udpChannel.doDisconnect(); }
-    @Override protected void doBeginRead()   throws Exception { udpChannel.doBeginRead(); }
+    /**
+     * 파이프라인이 read()를 요청했다 — 보류 중이던 수신분을 전달한다.
+     * UDP 소켓 읽기 자체는 항상 유지된다(ACK·재전송 처리가 멈추면 세션이 죽으므로).
+     */
+    @Override
+    protected void doBeginRead() throws Exception {
+        pipelineWants = true;
+        udpChannel.doBeginRead();
+        if (kcpActive) udpChannel.unsafe0().drainToPipeline();
+    }
 
     /**
      * 명시적 종료 신호.
@@ -303,6 +331,16 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
     }
 
     boolean kcpIsActive() { return kcpActive; }
+
+    /**
+     * 지금 파이프라인으로 데이터를 밀어도 되는지.
+     * autoRead=true거나, autoRead=false여도 파이프라인이 명시적으로 read()를
+     * 요청했다면(FlowControlHandler의 1건씩 요청) 전달한다.
+     */
+    boolean pipelineReady() { return config.isAutoRead() || pipelineWants; }
+
+    /** 한 배치를 전달한 뒤 호출 — 다음 전달은 autoRead이거나 새 read() 요청이 있을 때. */
+    void pipelineDelivered() { pipelineWants = false; }
     int     kcpPeekSize() { return kcp.peekSize(); }
 
     void kcpReceive(ByteBuf buf) throws IOException {
@@ -384,6 +422,9 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
         @Override public ChannelMetadata metadata() { return UDP_META; }
         @Override public ChannelConfig config() { return kcpChannel.config; }
         @Override protected KcpUdpUnsafe newUnsafe() { return new KcpUdpUnsafe(); }
+
+        /** KcpChannel.doBeginRead()가 보류분을 드레인할 때 사용 */
+        KcpUdpUnsafe unsafe0() { return (KcpUdpUnsafe) super.unsafe(); }
 
         @Override
         public boolean isActive() {
@@ -473,112 +514,124 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                 Throwable ex   = null;
                 boolean closed = false;
 
+                // 1) UDP 수신 — 최대 MAX_READ_PER_LOOP개로 제한
+                //    UDP 소켓 수신만 분산. rcvQueue 드레인은 별도로 전부 처리.
+                // continueReading()은 ChannelMetadata/할당자 설정에 따라
+                // maxMessagesPerRead(기본 1~16)로 조기 종료될 수 있어 사용하지
+                // 않는다 — 버스트 시 셀렉터 사이클이 패킷 수만큼 반복되는 원인.
+                // OS 버퍼가 빌 때까지(또는 상한까지) 직접 드레인한다.
+                int readCount = 0;
                 try {
-                    // 1) UDP 수신 — 최대 MAX_READ_PER_LOOP개로 제한
-                    //    UDP 소켓 수신만 분산. rcvQueue 드레인은 별도로 전부 처리.
-                    // continueReading()은 ChannelMetadata/할당자 설정에 따라
-                    // maxMessagesPerRead(기본 1~16)로 조기 종료될 수 있어 사용하지
-                    // 않는다 — 버스트 시 셀렉터 사이클이 패킷 수만큼 반복되는 원인.
-                    // OS 버퍼가 빌 때까지(또는 상한까지) 직접 드레인한다.
-                    int readCount = 0;
-                    try {
-                        for (;;) {
-                            int n = doReadMessages(readBuf);
-                            if (n == 0) break;
-                            if (n < 0) { closed = true; break; }
-                            allocHandle.incMessagesRead(n);
-                            if (++readCount >= MAX_READ_PER_LOOP) break;
-                        }
-                    } catch (Throwable t) { ex = t; }
-
-                    // 2) KCP input 전체 처리 후 일괄 드레인
-                    // 패킷별 즉시 드레인은 fireChannelRead를 수백 번 호출해서
-                    // MC 파이프라인(압축해제+디코딩)이 수백 번 실행 → eventLoop 점유 증가
-                    // → 다음 UDP read()가 밀려 처리량 감소
-                    // 전체 kcpInput 완료 후 rcvQueue를 한 번에 드레인하는 게 효율적
-                    if (ex == null) {
-                        for (Object o : readBuf) {
-                            ByteBuf pkt = (ByteBuf) o;
-                            try {
-                                kcpChannel.kcpInput(pkt);
-                            } catch (Throwable t) {
-                                LOG.warn("[kcp][PARSE] fatal kcpInput error, closing: {}", t.toString());
-                                ex = t;
-                                break;
-                            }
-                        }
-                        // ACKNoDelay: 배치 전체의 ACK를 한 번에 coalesce 전송.
-                        // 기존엔 패킷마다 flushAck를 호출해, 청크 로딩 시 수신 패킷
-                        // 수(수백)만큼의 작은 ACK 데이터그램이 그대로 나가 return 경로
-                        // 패킷 레이트와 sendto 시스콜을 폭증시켰다(서버도 그만큼 처리).
-                        // MTU 하나에 ACK가 ~60개 들어가므로, 배치 후 1회 flush로
-                        // ACK 데이터그램이 수백 개 → 수 개로 줄어든다.
-                        if (ex == null) kcpChannel.kcp.flushAck();
+                    for (;;) {
+                        int n = doReadMessages(readBuf);
+                        if (n == 0) break;
+                        if (n < 0) { closed = true; break; }
+                        allocHandle.incMessagesRead(n);
+                        if (++readCount >= MAX_READ_PER_LOOP) break;
                     }
+                } catch (Throwable t) { ex = t; }
 
-                    // readBuf 해제
-                    for (Object o : readBuf) io.netty.util.ReferenceCountUtil.release(o);
-                    readBuf.clear();
-                    allocHandle.readComplete();
-                    // OP_READ 재등록을 위해 autoRead=true 강제 후 readComplete 전파.
-                    // FlowControlHandler가 autoRead=false로 설정했을 때
-                    // HeadContext.readIfIsAutoRead()가 OP_READ를 재등록하지 않아
-                    // 이후 UDP 패킷을 수신하지 못하는 문제 방지.
-                    kcpChannel.config().setAutoRead(true);
-                    pipeline().fireChannelReadComplete();
-
-                    if (ex != null) {
-                        LOG.warn("[kcp] read() exception: {}", ex.toString());
-                        closed = closeOnReadError(ex);
-                        kcpChannel.pipeline().fireExceptionCaught(ex);
-                    } else {
-                        // 3) update (재전송 타이머, sndQueue flush)
-                        kcpChannel.doUpdateKcp();
-                        // ACK·재전송 데이터그램 일괄 방출 (output은 write만 하므로)
-                        kcpChannel.udpFlush();
-
-                        // 4) rcvQueue → pipeline 드레인
-                        // kcp-go Read()처럼 세그먼트들을 CompositeByteBuf로 합쳐서
-                        // fireChannelRead를 1번만 호출.
-                        // 세그먼트마다 호출하면 splitter가 매번 누적 버퍼를 재할당하고
-                        // zlib inflate 호출 횟수도 늘어남.
-                        if (kcpChannel.kcpIsActive()) {
-                            try {
-                                ByteBufAllocator ba = cfg.getAllocator();
-                                ChannelPipeline pipe = kcpChannel.pipeline();
-                                int peekSize;
-                                io.netty.buffer.CompositeByteBuf composite = null;
-                                while ((peekSize = kcpChannel.kcpPeekSize()) >= 0) {
-                                    if (peekSize == 0) {
-                                        LOG.warn("[kcp][DISPATCH] peekSize=0, skipping empty segment");
-                                        break;
-                                    }
-                                    ByteBuf recvBuf = ba.ioBuffer(peekSize);
-                                    kcpChannel.kcpReceive(recvBuf);
-                                    if (composite == null)
-                                        composite = io.netty.buffer.Unpooled.compositeBuffer();
-                                    composite.addComponent(true, recvBuf);
-                                }
-                                if (composite != null && composite.isReadable()) {
-                                    pipe.fireChannelRead(composite);
-                                    pipe.fireChannelReadComplete();
-                                } else if (composite != null) {
-                                    composite.release();
-                                }
-                            } catch (Throwable t) {
-                                LOG.warn("[kcp] pipeline dispatch exception: {}", t.toString());
-                                closed = true;
-                                kcpChannel.pipeline().fireExceptionCaught(t);
-                            }
+                // 2) KCP input 전체 처리 후 일괄 드레인
+                // 패킷별 즉시 드레인은 fireChannelRead를 수백 번 호출해서
+                // MC 파이프라인(압축해제+디코딩)이 수백 번 실행 → eventLoop 점유 증가
+                // → 다음 UDP read()가 밀려 처리량 감소
+                // 전체 kcpInput 완료 후 rcvQueue를 한 번에 드레인하는 게 효율적
+                if (ex == null) {
+                    for (Object o : readBuf) {
+                        ByteBuf pkt = (ByteBuf) o;
+                        try {
+                            kcpChannel.kcpInput(pkt);
+                        } catch (Throwable t) {
+                            LOG.warn("[kcp][PARSE] fatal kcpInput error, closing: {}", t.toString());
+                            ex = t;
+                            break;
                         }
                     }
+                    // ACKNoDelay: 배치 전체의 ACK를 한 번에 coalesce 전송.
+                    // 기존엔 패킷마다 flushAck를 호출해, 청크 로딩 시 수신 패킷
+                    // 수(수백)만큼의 작은 ACK 데이터그램이 그대로 나가 return 경로
+                    // 패킷 레이트와 sendto 시스콜을 폭증시켰다(서버도 그만큼 처리).
+                    // MTU 하나에 ACK가 ~60개 들어가므로, 배치 후 1회 flush로
+                    // ACK 데이터그램이 수백 개 → 수 개로 줄어든다.
+                    if (ex == null) kcpChannel.kcp.flushAck();
+                }
 
-                    if (closed) {
-                        inputShutdown = true;
-                        if (isOpen()) close(voidPromise());
+                // readBuf 해제
+                for (Object o : readBuf) io.netty.util.ReferenceCountUtil.release(o);
+                readBuf.clear();
+                allocHandle.readComplete();
+                pipeline().fireChannelReadComplete();
+
+                if (ex != null) {
+                    LOG.warn("[kcp] read() exception: {}", ex.toString());
+                    closed = closeOnReadError(ex);
+                    kcpChannel.pipeline().fireExceptionCaught(ex);
+                } else {
+                    // 3) update (재전송 타이머, sndQueue flush)
+                    kcpChannel.doUpdateKcp();
+                    // ACK·재전송 데이터그램 일괄 방출 (output은 write만 하므로)
+                    kcpChannel.udpFlush();
+
+                    // 4) rcvQueue → pipeline 드레인 (백프레셔 존중)
+                    //    autoRead=false이고 read() 요청도 없으면 여기서 멈춘다.
+                    //    데이터는 KCP rcvQueue에 남고, 수신 윈도우가 줄어들면서
+                    //    서버 송신이 자연히 감속한다(KCP 흐름제어). 소비자가
+                    //    준비되면 doBeginRead()가 이어서 드레인한다.
+                    // kcp-go Read()처럼 세그먼트들을 CompositeByteBuf로 합쳐서
+                    // fireChannelRead를 1번만 호출.
+                    // 세그먼트마다 호출하면 splitter가 매번 누적 버퍼를 재할당하고
+                    // zlib inflate 호출 횟수도 늘어남.
+                    if (!drainToPipeline()) closed = true;
+                }
+
+                if (closed) {
+                    inputShutdown = true;
+                    if (isOpen()) close(voidPromise());
+                }
+            }
+
+            /**
+             * KCP rcvQueue → MC 파이프라인 전달.
+             * 한 번에 최대 DRAIN_MAX_BYTES까지만 묶어 넘긴다(거대 배치가 한 프레임을
+             * 통째로 점유해 keepalive 응답이 밀리는 것을 방지). 남은 분량은 다음
+             * read() 요청이나 다음 사이클에 이어서 전달된다.
+             *
+             * @return 정상 처리 여부(false면 예외로 채널을 닫아야 함)
+             */
+            boolean drainToPipeline() {
+                if (!kcpChannel.kcpIsActive() || !kcpChannel.pipelineReady()) return true;
+                final ChannelConfig cfg = config();
+                try {
+                    ByteBufAllocator ba = cfg.getAllocator();
+                    ChannelPipeline pipe = kcpChannel.pipeline();
+                    int peekSize;
+                    int batched = 0;
+                    io.netty.buffer.CompositeByteBuf composite = null;
+                    while ((peekSize = kcpChannel.kcpPeekSize()) >= 0) {
+                        if (peekSize == 0) {
+                            LOG.warn("[kcp][DISPATCH] peekSize=0, skipping empty segment");
+                            break;
+                        }
+                        ByteBuf recvBuf = ba.ioBuffer(peekSize);
+                        kcpChannel.kcpReceive(recvBuf);
+                        if (composite == null)
+                            composite = io.netty.buffer.Unpooled.compositeBuffer();
+                        composite.addComponent(true, recvBuf);
+                        batched += peekSize;
+                        if (batched >= DRAIN_MAX_BYTES) break;
                     }
-                } finally {
-                    if (!cfg.isAutoRead()) removeReadOp();
+                    if (composite != null && composite.isReadable()) {
+                        kcpChannel.pipelineDelivered();
+                        pipe.fireChannelRead(composite);
+                        pipe.fireChannelReadComplete();
+                    } else if (composite != null) {
+                        composite.release();
+                    }
+                    return true;
+                } catch (Throwable t) {
+                    LOG.warn("[kcp] pipeline dispatch exception: {}", t.toString());
+                    kcpChannel.pipeline().fireExceptionCaught(t);
+                    return false;
                 }
             }
         }

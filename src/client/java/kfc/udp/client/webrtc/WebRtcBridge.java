@@ -80,7 +80,7 @@ public class WebRtcBridge {
 
     // ── Host (Java 네이티브 — WebRtcHost) ─────────────────────────────────────
 
-    public static void startHost(String roomId, String target) throws IOException {
+    public static void startHost(String roomId, String target) {
         stopHost();
 
         LOG.info("[WebRTC] Starting native host: room={} target={}", roomId, target);

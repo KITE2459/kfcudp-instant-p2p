@@ -31,7 +31,6 @@ public class WebRtcClient {
 
     private static final Logger LOG = LoggerFactory.getLogger("webrtc-native");
 
-    private static final int  BUFFER_SIZE  = 65536;
     private static final long DC_BUF_HIGH  = 16 * 1024 * 1024L;
     private static final long DC_BUF_LOW   = 2 * 1024 * 1024L; // 이하로 빠지면 송신 재개
 
