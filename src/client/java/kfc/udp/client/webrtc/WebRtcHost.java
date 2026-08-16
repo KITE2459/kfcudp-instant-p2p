@@ -370,6 +370,7 @@ public class WebRtcHost {
         private volatile RTCDataChannel    dataChannel;
         private volatile Socket            tcpSocket;
         private volatile BatchPipe.Writer  tcpWriter;
+        private volatile int               tunnelLocalPort = -1;
         volatile boolean dcOpened = false;
 
         private final CountDownLatch dcOpenLatch = new CountDownLatch(1);
@@ -540,6 +541,10 @@ public class WebRtcHost {
                             sock.setReceiveBufferSize(512 * 1024);
                             sock.setSendBufferSize(512 * 1024);
                             tcpSocket = sock;
+                            // MC 서버는 이 소켓의 로컬 포트를 조인자의 "IP:포트"로 본다.
+                            // (전부 127.0.0.1 이므로) 실제 원격 IP를 포트에 매핑해 둔다.
+                            tunnelLocalPort = sock.getLocalPort();
+                            P2PBanManager.registerTunnelPort(tunnelLocalPort, clientIp);
                             // DC→TCP: 전담 writer 스레드가 연속 청크를 단일 write로 배칭
                             w = new BatchPipe.Writer(sock.getOutputStream(),
                                     "webrtc-host-tcpw-" + sid,
@@ -613,6 +618,10 @@ public class WebRtcHost {
             BatchPipe.Writer w = tcpWriter;
             tcpWriter = null;
             if (w != null) w.close();
+            if (tunnelLocalPort > 0) {
+                P2PBanManager.unregisterTunnelPort(tunnelLocalPort);
+                tunnelLocalPort = -1;
+            }
             try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception ignored) {}
             RTCDataChannel dc = dataChannel;
             dataChannel = null;

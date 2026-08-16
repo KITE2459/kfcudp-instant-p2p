@@ -6,7 +6,6 @@ import kfc.udp.client.webrtc.WebRtcBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.minecraft.client.MinecraftClient;
@@ -103,21 +102,11 @@ public class KfcudpClient implements ClientModInitializer {
             }
         });
 
-        // 플레이어 접속 시 최대 인원 초과 체크
         // ban 명령어 등록 (리슨 서버에서도 동작)
+        // 밴/정원 체크는 PlayerManagerMixin → P2PBanManager.checkCanJoin 에서
+        // LOGIN 단계에 처리한다. JOIN 이벤트에서 끊으면 이미 월드에 스폰된 뒤라
+        // "joined the game" / "left the game" 로그가 남는다.
         P2PBanManager.registerCommands();
-
-        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (activeInviteCode == null) return;
-            // ban 체크
-            P2PBanManager.checkOnJoin(handler.player);
-            int current = server.getCurrentPlayerCount();
-            if (current > activeMaxPlayers) {
-                handler.player.networkHandler.disconnect(
-                        Text.translatable("kfcudp.msg.room_full", activeMaxPlayers)
-                );
-            }
-        });
 
         // 서버 연결 해제 시 KCP/QUIC 프로세스 종료.
         // 즉시 kill하면 0x1B Disconnect 패킷이 유실되어 서버에 고스트 잔류.
@@ -162,6 +151,7 @@ public class KfcudpClient implements ClientModInitializer {
         }
 
         activeMaxPlayers = maxPlayers;
+        P2PBanManager.setRoomMaxPlayers(maxPlayers);
 
         // openToLan: allowCheats 그대로 전달 (LAN 기본 동작)
         int lanPort = -1;
@@ -213,6 +203,7 @@ public class KfcudpClient implements ClientModInitializer {
     private static void cancelInvite() {
         activeInviteCode = null;
         inviteTicksRemaining = 0;
+        P2PBanManager.setRoomMaxPlayers(0);
         WebRtcBridge.stopHost();
     }
 

@@ -7,7 +7,8 @@
   "client": [
     "ConnectScreenMixin",
     "ServerAddressMixin",
-    "ClientConnectionMixin"
+    "ClientConnectionMixin",
+    "PlayerManagerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

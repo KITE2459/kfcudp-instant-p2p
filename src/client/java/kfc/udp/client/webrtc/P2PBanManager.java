@@ -1,6 +1,7 @@
 package kfc.udp.client.webrtc;
 
 import com.google.gson.*;
+import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
@@ -13,11 +14,15 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.*;
+import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.nio.file.*;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
@@ -34,6 +39,17 @@ public class P2PBanManager {
 
     private static final Map<String, JsonObject> bannedPlayers = new LinkedHashMap<>();
     private static final Map<String, JsonObject> bannedIps     = new LinkedHashMap<>();
+
+    /**
+     * WebRTC 터널을 지나면 모든 조인자가 127.0.0.1 로 보이기 때문에
+     * MC 가 보는 로컬 포트 → 실제 원격 IP 매핑을 WebRtcHost 가 등록해 준다.
+     */
+    private static final Map<Integer, String> tunnelPortToIp = new ConcurrentHashMap<>();
+    /** 로그인 시점에 확정된 UUID → 실제 원격 IP (ban-ip 명령에서 사용) */
+    private static final Map<UUID, String>    uuidToRealIp   = new ConcurrentHashMap<>();
+
+    /** 방 정원 게이트. KfcudpClient 가 방을 열 때 세팅, 닫을 때 0. */
+    private static volatile int roomMaxPlayers = 0;
 
     // -------------------------------------------------------------------------
     // 자동완성 제공자
@@ -161,22 +177,66 @@ public class P2PBanManager {
     }
 
     // -------------------------------------------------------------------------
-    // 접속 시 밴 체크
+    // 터널 포트 ↔ 실제 IP 매핑 (WebRtcHost 가 호출)
     // -------------------------------------------------------------------------
 
-    @SuppressWarnings("unused")
-    public static void checkOnJoin(ServerPlayerEntity player) {
-        String uuid = player.getUuidAsString();
-        String ip   = player.getIp();
+    public static void registerTunnelPort(int localPort, String realIp) {
+        if (realIp != null && !realIp.isEmpty()) tunnelPortToIp.put(localPort, realIp);
+    }
+
+    public static void unregisterTunnelPort(int localPort) {
+        tunnelPortToIp.remove(localPort);
+    }
+
+    /** WebRTC 터널 뒤의 진짜 IP. 매핑이 없으면 소켓 주소 그대로. */
+    private static String resolveRealIp(SocketAddress address) {
+        if (!(address instanceof InetSocketAddress isa)) return null;
+        String mapped = tunnelPortToIp.get(isa.getPort());
+        if (mapped != null) return mapped;
+        return isa.getAddress() != null ? isa.getAddress().getHostAddress() : null;
+    }
+
+    /** 로그인 시 기록해 둔 실제 IP (없으면 null) */
+    public static String realIpOf(UUID uuid) {
+        return uuidToRealIp.get(uuid);
+    }
+
+    public static void setRoomMaxPlayers(int max) {
+        roomMaxPlayers = max;
+    }
+
+    // -------------------------------------------------------------------------
+    // 로그인(LOGIN) 단계 밴 체크 — PlayerManagerMixin 에서 호출
+    // -------------------------------------------------------------------------
+
+    /**
+     * 바닐라 {@code PlayerManager#checkCanJoin} 과 동일한 계약.
+     * 거부 사유 Text 를 반환하면 플레이어는 월드에 스폰되기 전에 끊기므로
+     * join/left 채팅 메시지가 남지 않는다. 통과면 null.
+     */
+    public static Text checkCanJoin(MinecraftServer server, SocketAddress address, GameProfile profile) {
+        if (server == null || profile == null) return null;
+        // 방장(싱글플레이 오너)은 어떤 경우에도 막지 않는다
+        if (server.isHost(profile)) return null;
+
+        String realIp = resolveRealIp(address);
+        if (realIp != null) uuidToRealIp.put(profile.getId(), realIp);
+
+        String uuid = profile.getId().toString();
         if (isPlayerBanned(uuid)) {
-            player.networkHandler.disconnect(
-                    Text.literal("§cYou are banned: " + getBanReason(uuid)));
-            return;
+            LOG.info("[instant-p2p] login refused (banned): {} / {}", profile.getName(), realIp);
+            return Text.literal("§cYou are banned: " + getBanReason(uuid));
         }
-        if (isIpBanned(ip)) {
-            player.networkHandler.disconnect(
-                    Text.literal("§cYour IP is banned: " + getIpBanReason(ip)));
+        if (realIp != null && isIpBanned(realIp)) {
+            LOG.info("[instant-p2p] login refused (ip banned): {} / {}", profile.getName(), realIp);
+            return Text.literal("§cYour IP is banned: " + getIpBanReason(realIp));
         }
+        // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다
+        int max = roomMaxPlayers;
+        if (max > 0 && server.getCurrentPlayerCount() >= max) {
+            return Text.translatable("kfcudp.msg.room_full", max);
+        }
+        return null;
     }
 
     // -------------------------------------------------------------------------
@@ -286,14 +346,20 @@ public class P2PBanManager {
                 src.sendFeedback(() -> Text.literal("§cYou cannot ban the room owner."), false);
                 return 0;
             }
-            ip = p.getIp();
+            // p.getIp() 는 터널 때문에 항상 127.0.0.1 → 로그인 때 기록한 실제 IP 사용
+            ip = realIpOf(p.getUuid());
+            if (ip == null || ip.startsWith("127.")) {
+                src.sendFeedback(() -> Text.literal("§cCannot resolve the real IP of " + target + "."), false);
+                return 0;
+            }
         }
 
         String r = reason != null ? reason : "Banned by operator.";
         banIp(ip, r);
         final String finalIp = ip;
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
-            if (sp.getIp().equals(finalIp)) {
+            if (server.isHost(sp.getGameProfile())) continue;
+            if (finalIp.equals(realIpOf(sp.getUuid()))) {
                 sp.networkHandler.disconnect(Text.literal("§cYour IP has been banned: " + r));
             }
         }
