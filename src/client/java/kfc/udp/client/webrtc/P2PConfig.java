@@ -33,5 +33,15 @@ public final class P2PConfig {
     public static final String TURN_CREDENTIAL =
             System.getProperty("kfcudp.turn.pass", "minecraft");
 
+    /**
+     * <b>TURN 전용(relay-only) 스위치.</b>
+     * <p>
+     * true 면 ICE 후보를 relay 만 수집한다(=직결/홀펀칭 없음, 100% TURN 경유).
+     * 기본값은 false(일반 P2P). TURN 전용으로 돌리려면
+     * {@code -Dkfcudp.ice.relayonly=true} 로 실행한다.
+     */
+    public static final boolean RELAY_ONLY =
+            Boolean.getBoolean("kfcudp.ice.relayonly");
+
     private P2PConfig() {}
 }

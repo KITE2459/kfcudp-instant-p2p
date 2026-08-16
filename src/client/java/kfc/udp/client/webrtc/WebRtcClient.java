@@ -290,25 +290,8 @@ public class WebRtcClient {
         factory = new PeerConnectionFactory(audioModule);
 
         RTCConfiguration config = new RTCConfiguration();
-        List<String[]> relays = serverRelays;
-        if (relays.isEmpty()) {
-            RTCIceServer stun = new RTCIceServer();
-            stun.urls.add(P2PConfig.STUN_URL);
-            config.iceServers.add(stun);
-            RTCIceServer turn = new RTCIceServer();
-            turn.urls.add(P2PConfig.TURN_URL);
-            turn.username = P2PConfig.TURN_USERNAME;
-            turn.password = P2PConfig.TURN_CREDENTIAL;
-            config.iceServers.add(turn);
-        } else {
-            for (String[] r : relays) {
-                RTCIceServer s = new RTCIceServer();
-                s.urls.add(r[0]);
-                if (r[1] != null) s.username = r[1];
-                if (r[2] != null) s.password = r[2];
-                config.iceServers.add(s);
-            }
-        }
+        // ICE 서버 구성 (relay-only 여부는 P2PConfig.RELAY_ONLY)
+        IceConfig.apply(config, serverRelays, "client");
 
         // 디버그/특수 네트워크 환경용: any-address 포트 강제 (-Dkfcudp.ice.anyaddress=true)
         if (Boolean.getBoolean("kfcudp.ice.anyaddress")) {
