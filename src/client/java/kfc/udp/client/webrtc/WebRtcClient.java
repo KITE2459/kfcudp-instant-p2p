@@ -9,6 +9,10 @@ import org.slf4j.LoggerFactory;
 import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.ServerSocketChannel;
+import java.nio.channels.SocketChannel;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -31,12 +35,13 @@ public class WebRtcClient {
 
     private static final Logger LOG = LoggerFactory.getLogger("webrtc-native");
 
-    private static final long DC_BUF_HIGH  = 16 * 1024 * 1024L;
-    private static final long DC_BUF_LOW   = 2 * 1024 * 1024L; // 이하로 빠지면 송신 재개
+    // 버퍼 한도는 P2PConfig에서 관리 — 지연/처리량 트레이드오프 근거와
+    // -Dkfcudp.pipe.* 되돌리기 방법은 그쪽 주석 참고.
+    private static final long DC_BUF_HIGH  = P2PConfig.DC_BUF_HIGH;
+    private static final long DC_BUF_LOW   = P2PConfig.DC_BUF_LOW; // 이하로 빠지면 송신 재개
 
-    // 송신용 ThreadLocal direct ByteBuffer — forwardMcToWebRtc 스레드 전용
-    private static final ThreadLocal<ByteBuffer> SEND_BUF =
-            ThreadLocal.withInitial(() -> ByteBuffer.allocateDirect(BatchPipe.BATCH_MAX));
+    /** MC 클라이언트 접속 대기 한도 */
+    private static final int ACCEPT_TIMEOUT_MS = 120_000;
 
     // ── 인스턴스 필드 ─────────────────────────────────────────────────────────
 
@@ -48,9 +53,8 @@ public class WebRtcClient {
     private PeerConnectionFactory   factory;
     private RTCPeerConnection       peerConnection;
     private volatile RTCDataChannel dataChannel;
-    private ServerSocket            serverSocket;
-    private volatile Socket         mcSocket;
-    private volatile OutputStream   mcOut;
+    private ServerSocketChannel     serverChannel;
+    private volatile SocketChannel  mcChannel;
     private volatile BatchPipe.Writer mcWriter; // DC→MC 배칭 writer
 
     private final AtomicBoolean  running         = new AtomicBoolean(false);
@@ -78,8 +82,8 @@ public class WebRtcClient {
         running.set(true);
         connectPairSignaling();
 
-        serverSocket = new ServerSocket(localPort);
-        serverSocket.setSoTimeout(120000);
+        serverChannel = ServerSocketChannel.open();
+        serverChannel.bind(new InetSocketAddress(localPort));
         LOG.info("[webrtc] Ready on port {}", localPort);
 
         Thread t = new Thread(this::acceptAndBridge, "webrtc-accept");
@@ -89,14 +93,17 @@ public class WebRtcClient {
 
     private void acceptAndBridge() {
         try {
-            Socket sock = serverSocket.accept();
-            sock.setTcpNoDelay(true);
-            sock.setReceiveBufferSize(512 * 1024);
-            sock.setSendBufferSize(512 * 1024);
-            mcSocket = sock;
-            mcOut    = sock.getOutputStream();
-            // DC→MC: 전담 writer 스레드가 연속 청크를 단일 write로 배칭
-            mcWriter = new BatchPipe.Writer(mcOut, "webrtc-mc-writer", e -> {
+            SocketChannel sock = acceptWithTimeout();
+            if (sock == null) {
+                LOG.warn("[webrtc] MC client did not connect in time");
+                close(); return;
+            }
+            sock.setOption(StandardSocketOptions.TCP_NODELAY, true);
+            sock.setOption(StandardSocketOptions.SO_RCVBUF, 512 * 1024);
+            sock.setOption(StandardSocketOptions.SO_SNDBUF, 512 * 1024);
+            mcChannel = sock;
+            // DC→MC: 전담 writer 스레드가 연속 청크를 writev 1회로 배칭
+            mcWriter = new BatchPipe.Writer(sock, "webrtc-mc-writer", e -> {
                 if (running.get()) LOG.warn("[webrtc] MC write failed: {}", e.getMessage());
                 close();
             });
@@ -124,12 +131,41 @@ public class WebRtcClient {
 
             forwardMcToWebRtc(sock);
 
-        } catch (SocketTimeoutException e) {
-            LOG.warn("[webrtc] MC client did not connect in time");
-            close();
         } catch (Exception e) {
             if (running.get()) LOG.warn("[webrtc] bridge error: {}", e.getMessage());
             close();
+        }
+    }
+
+    /**
+     * MC 클라이언트 접속을 최대 {@link #ACCEPT_TIMEOUT_MS}까지 기다린다.
+     * <p>
+     * {@code ServerSocketChannel}은 블로킹 accept에 타임아웃을 걸 수 없어
+     * (예전 {@code ServerSocket.setSoTimeout}에 해당하는 게 없다) Selector로
+     * 대기한다. 채널 방식으로 accept해야 {@code SocketChannel}을 얻어
+     * direct 버퍼 read/writev를 쓸 수 있다.
+     *
+     * @return 접속된 채널, 시간 초과/종료 시 null
+     */
+    private SocketChannel acceptWithTimeout() throws IOException {
+        ServerSocketChannel ssc = serverChannel;
+        ssc.configureBlocking(false);
+        try (Selector sel = Selector.open()) {
+            ssc.register(sel, SelectionKey.OP_ACCEPT);
+            long deadline = System.nanoTime() + ACCEPT_TIMEOUT_MS * 1_000_000L;
+            while (running.get()) {
+                long remainMs = (deadline - System.nanoTime()) / 1_000_000L;
+                if (remainMs <= 0) return null;
+                sel.select(remainMs);
+                sel.selectedKeys().clear();
+                if (!running.get()) return null; // close() 중 깨어난 경우
+                SocketChannel sc = ssc.accept();
+                if (sc != null) {
+                    sc.configureBlocking(true); // 새 채널이라 셀렉터에 등록된 적 없음
+                    return sc;
+                }
+            }
+            return null;
         }
     }
 
@@ -213,11 +249,18 @@ public class WebRtcClient {
 
     // ── MC → DataChannel ──────────────────────────────────────────────────────
 
-    private void forwardMcToWebRtc(Socket sock) {
-        byte[] readBuf = new byte[BatchPipe.BATCH_MAX];
-        try (InputStream in = sock.getInputStream()) {
-            int n;
-            while ((n = in.read(readBuf, 0, readBuf.length)) != -1) {
+    private void forwardMcToWebRtc(SocketChannel sock) {
+        // direct 버퍼로 직접 read — 예전의 힙 byte[] → direct 복사 단계가 사라진다.
+        // 블로킹 read는 OS 버퍼에 있는 만큼을 용량까지 한 번에 채우므로
+        // 별도의 coalesce(available 기반 추가 흡수)도 필요 없다.
+        ByteBuffer buf = ByteBuffer.allocateDirect(BatchPipe.BATCH_MAX);
+        try {
+            while (true) {
+                buf.clear();
+                int n = sock.read(buf);
+                if (n < 0) break;   // EOF
+                if (n == 0) continue;
+
                 RTCDataChannel ch = dataChannel;
                 if (ch == null || ch.getState() != RTCDataChannelState.OPEN) break;
 
@@ -230,15 +273,13 @@ public class WebRtcClient {
                 }
                 if (!running.get()) break;
 
-                // OS 버퍼에 쌓인 후속 데이터를 논블로킹으로 흡수 → send 횟수 감소
-                n = BatchPipe.coalesce(in, readBuf, n);
-
-                ByteBuffer base = SEND_BUF.get();
-                base.clear();
-                base.put(readBuf, 0, n);
-                base.flip();
-                ByteBuffer slice = base.slice().limit(n);
-                ch.send(new RTCDataChannelBuffer(slice, true));
+                // slice()는 필수다. RTCDataChannelBuffer는 JNI로 넘어가고
+                // GetDirectBufferAddress/GetDirectBufferCapacity는 position/limit을
+                // 무시하고 capacity 전체를 읽는다. slice()만이 "시작 주소 = 현재
+                // position, capacity = 유효 길이"인 뷰를 만들어 준다.
+                // 이걸 빼면 유효 데이터 뒤에 버퍼 잔여분까지 전송돼 스트림이 깨진다.
+                buf.flip();
+                ch.send(new RTCDataChannelBuffer(buf.slice(), true));
             }
         } catch (Exception e) {
             if (running.get()) LOG.warn("[webrtc] MC read error: {}", e.getMessage());
@@ -365,12 +406,11 @@ public class WebRtcClient {
         hostArrivedLatch.countDown();
         readyLatch.countDown();
         synchronized (bpLock) { bpLock.notifyAll(); } // 백프레셔 대기 해제
-        mcOut = null;
         BatchPipe.Writer w = mcWriter;
         mcWriter = null;
         if (w != null) w.close();
-        try { if (mcSocket != null)      mcSocket.close();     } catch (Exception ignored) {}
-        try { if (serverSocket != null)  serverSocket.close(); } catch (Exception ignored) {}
+        try { if (mcChannel != null)     mcChannel.close();     } catch (Exception ignored) {}
+        try { if (serverChannel != null) serverChannel.close(); } catch (Exception ignored) {}
         try { if (dataChannel != null) {
             dataChannel.unregisterObserver();
             dataChannel.close();

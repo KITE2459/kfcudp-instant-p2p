@@ -43,7 +43,13 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
             " (expected: " + StringUtil.simpleClassName(ByteBuf.class) + ')';
 
     private static final int UDP_BUF_SIZE  = 32 * 1024 * 1024;
-    private static final int UDP_RECV_SIZE = 4096;
+    /**
+     * 수신 데이터그램 1개용 버퍼 크기. KcpCore의 MTU가 1450 고정이고 서버(kcp-go)도
+     * 동일하므로 2048이면 충분하다 — 예전 4096은 패킷마다 필요량의 2.7배를 잡았다.
+     * (DatagramChannel.read는 버퍼보다 큰 데이터그램을 조용히 잘라내므로 MTU를
+     *  올릴 때는 이 값도 같이 올려야 한다.)
+     */
+    private static final int UDP_RECV_SIZE = 2048;
 
     /**
      * 한 번의 read() 이벤트에서 처리할 최대 UDP 패킷 수.
@@ -277,7 +283,13 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
 
     // ── KCP 헬퍼 — 모두 eventLoop 스레드에서만 호출됨 ────────────────────────
 
-    void kcpInput(ByteBuf buf) {
+    /**
+     * @param now 이 read 배치의 수신 시각. 예전에는 패킷마다 {@link #milliSeconds()}를
+     *            불렀는데, 버스트 때 한 사이클에 수천 패킷이 들어오면 그만큼
+     *            {@code nanoTime()}(윈도우에선 QPC)이 반복된다. 배치 처리는 µs 단위라
+     *            ms 해상도에서 값이 같으므로 호출자가 한 번만 구해 넘긴다.
+     */
+    void kcpInput(ByteBuf buf, int now) {
         int readable = buf.readableBytes();
         // KCP 헤더(24바이트) 미만 패킷 — 서버사이드 kcp-go와 동일하게 무시
         if (readable < 24) {
@@ -285,9 +297,9 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
             return;
         }
 
-        lastAckTime = milliSeconds();
+        lastAckTime = now;
 
-        int ret = kcp.input(buf);
+        int ret = kcp.input(buf, now);
         switch (ret) {
             case -1:
                 // 루프 내 잔여 바이트가 OVERHEAD 미만 — 정상 종료 케이스이므로 skip
@@ -342,6 +354,7 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
     /** 한 배치를 전달한 뒤 호출 — 다음 전달은 autoRead이거나 새 read() 요청이 있을 때. */
     void pipelineDelivered() { pipelineWants = false; }
     int     kcpPeekSize() { return kcp.peekSize(); }
+    int     kcpRcvQueueBytes() { return kcp.rcvQueueBytes(); }
 
     void kcpReceive(ByteBuf buf) throws IOException {
         int ret = kcp.recv(buf);
@@ -537,10 +550,11 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
                 // → 다음 UDP read()가 밀려 처리량 감소
                 // 전체 kcpInput 완료 후 rcvQueue를 한 번에 드레인하는 게 효율적
                 if (ex == null) {
+                    final int now = milliSeconds(); // 배치 전체가 공유 (패킷마다 X)
                     for (Object o : readBuf) {
                         ByteBuf pkt = (ByteBuf) o;
                         try {
-                            kcpChannel.kcpInput(pkt);
+                            kcpChannel.kcpInput(pkt, now);
                         } catch (Throwable t) {
                             LOG.warn("[kcp][PARSE] fatal kcpInput error, closing: {}", t.toString());
                             ex = t;
@@ -601,37 +615,48 @@ public final class KcpChannel extends AbstractChannel implements Runnable {
             boolean drainToPipeline() {
                 if (!kcpChannel.kcpIsActive() || !kcpChannel.pipelineReady()) return true;
                 final ChannelConfig cfg = config();
+                ByteBuf batch = null;
                 try {
                     ByteBufAllocator ba = cfg.getAllocator();
                     ChannelPipeline pipe = kcpChannel.pipeline();
-                    int peekSize;
+
+                    int peekSize = kcpChannel.kcpPeekSize();
+                    if (peekSize < 0) return true;
+                    if (peekSize == 0) {
+                        LOG.warn("[kcp][DISPATCH] peekSize=0, skipping empty segment");
+                        return true;
+                    }
+
+                    // 세그먼트마다 ioBuffer를 잡아 CompositeByteBuf로 엮던 것을
+                    // 연속 버퍼 하나로 바꿨다. 256KB 드레인이면 할당이 ~180회 → 1회로
+                    // 줄고, 하류 SplitterHandler의 varint 읽기도 컴포넌트 탐색 없이
+                    // 끝난다(MERGE_CUMULATOR가 composite를 어차피 다시 복사하기도 함).
+                    // kcp.recv()는 append 방식이라 같은 버퍼에 이어 받을 수 있다.
+                    int want = Math.min(kcpChannel.kcpRcvQueueBytes(), DRAIN_MAX_BYTES);
+                    batch = ba.ioBuffer(Math.max(want, peekSize));
+
                     int batched = 0;
-                    io.netty.buffer.CompositeByteBuf composite = null;
-                    while ((peekSize = kcpChannel.kcpPeekSize()) >= 0) {
-                        if (peekSize == 0) {
-                            LOG.warn("[kcp][DISPATCH] peekSize=0, skipping empty segment");
-                            break;
-                        }
-                        ByteBuf recvBuf = ba.ioBuffer(peekSize);
-                        kcpChannel.kcpReceive(recvBuf);
-                        if (composite == null)
-                            composite = io.netty.buffer.Unpooled.compositeBuffer();
-                        composite.addComponent(true, recvBuf);
+                    do {
+                        kcpChannel.kcpReceive(batch);
                         batched += peekSize;
                         if (batched >= DRAIN_MAX_BYTES) break;
-                    }
-                    if (composite != null && composite.isReadable()) {
+                        peekSize = kcpChannel.kcpPeekSize();
+                    } while (peekSize > 0);
+
+                    if (batch.isReadable()) {
+                        ByteBuf out = batch;
+                        batch = null; // 소유권 이전 — 아래 finally에서 해제하지 않도록
                         kcpChannel.pipelineDelivered();
-                        pipe.fireChannelRead(composite);
+                        pipe.fireChannelRead(out);
                         pipe.fireChannelReadComplete();
-                    } else if (composite != null) {
-                        composite.release();
                     }
                     return true;
                 } catch (Throwable t) {
                     LOG.warn("[kcp] pipeline dispatch exception: {}", t.toString());
                     kcpChannel.pipeline().fireExceptionCaught(t);
                     return false;
+                } finally {
+                    if (batch != null) batch.release();
                 }
             }
         }

@@ -43,6 +43,14 @@ public final class KcpCore {
     private static final int ASK_TELL      = 2;
     private static final int FASTACK_LIMIT = 30;  // 핑 20ms 환경 — fastack xmit 소진 여유
 
+    /**
+     * 완전 유휴 상태(전송 대기·재전송 대상·ACK·probe 없음)에서의 타이머 백오프(ms).
+     * interval(2ms)을 그대로 쓰면 아무 할 일이 없어도 초당 500회 eventLoop를 깨우고
+     * ScheduledFutureTask를 새로 만든다. 되돌리려면 {@code -Dkfcudp.kcp.idleinterval=2}.
+     */
+    private static final int IDLE_INTERVAL =
+            Math.max(INTERVAL, Integer.getInteger("kfcudp.kcp.idleinterval", 10));
+
     private static final byte CMD_PUSH = 81;
     private static final byte CMD_ACK  = 82;
     private static final byte CMD_WASK = 83;
@@ -65,52 +73,55 @@ public final class KcpCore {
         int  xmit;
         ByteBuf data;
 
-        // ── Seg 노드 풀 ──────────────────────────────────────────
-        // KCP는 단일 eventLoop 스레드에서만 실행되므로(KcpChannel 참고) 락이 불필요.
-        // 송신/수신 핫패스에서 패킷마다 new Seg()가 일어나 minor GC를 주기적으로
-        // 유발 → 짧은 레이턴시 스파이크의 원인. 노드(자바 객체)만 재사용한다.
-        //
-        // 중요: data(ByteBuf)의 생명주기는 건드리지 않는다. ByteBuf는 Netty가
-        // 자체 풀링하며, release()에서 정상적으로 data.release() 후 노드만 반환한다.
-        // 센티넬(SegList.head/tail)은 이 풀을 경유하지 않는다(new Seg() 직접 생성).
-        private static final Seg[] POOL = new Seg[256];
-        private static int poolSize = 0;
+        /** 풀에서 재사용할 때 이전 값 잔존 방지 — 전 필드 초기화 */
+        void reset() {
+            prev = null; next = null;
+            conv = 0; cmd = 0; frg = 0; wnd = 0; ts = 0;
+            sn = 0; una = 0; resendts = 0; rto = 0;
+            fastack = 0; xmit = 0; data = null;
+        }
+    }
 
-        // alloc - 풀에서 노드를 꺼내 모든 필드를 초기화해 반환. 비었으면 new.
-        static Seg alloc() {
-            Seg s;
-            if (poolSize > 0) {
-                s = POOL[--poolSize];
-                POOL[poolSize] = null;
-            } else {
-                s = new Seg();
-            }
-            // 재사용 시 이전 값 잔존 방지 — 전 필드 초기화
+    // ── Seg 노드 풀 ───────────────────────────────────────────────────────────
+    // 송신/수신 핫패스에서 패킷마다 new Seg()가 일어나 minor GC를 주기적으로
+    // 유발 → 짧은 레이턴시 스파이크의 원인. 노드(자바 객체)만 재사용한다.
+    //
+    // 풀은 반드시 KcpCore 인스턴스별로 둔다. 예전에는 static이었는데, 이 클래스가
+    // "단일 eventLoop 스레드 전용"인 것은 채널 하나 기준일 뿐이고 KCP_GROUP은
+    // 스레드가 2개다(ClientConnectionMixin). 채널 둘이 서로 다른 루프에 배정되면
+    // 재접속으로 구/신 채널이 겹치는 순간 풀이 동기화 없이 동시 접근돼 노드가
+    // 이중 사용되거나 유실된다.
+    //
+    // 중요: data(ByteBuf)의 생명주기는 건드리지 않는다. ByteBuf는 Netty가
+    // 자체 풀링하며, releaseSeg()에서 data.release() 후 노드만 반환한다.
+    // 센티넬(SegList.head/tail)은 이 풀을 경유하지 않는다(new Seg() 직접 생성).
+    private final Seg[] segPool = new Seg[256];
+    private int segPoolSize;
+
+    /** 풀에서 노드를 꺼내 초기화해 반환. 비었으면 new. */
+    private Seg allocSeg() {
+        Seg s;
+        if (segPoolSize > 0) {
+            s = segPool[--segPoolSize];
+            segPool[segPoolSize] = null;
+        } else {
+            s = new Seg();
+        }
+        s.reset();
+        return s;
+    }
+
+    private void releaseSeg(Seg s) {
+        if (s.data != null) { s.data.release(); s.data = null; }
+        // 노드를 풀로 반환 (상한 초과 시 GC에 맡김)
+        if (segPoolSize < segPool.length) {
             s.prev = null; s.next = null;
-            s.conv = 0; s.cmd = 0; s.frg = 0; s.wnd = 0; s.ts = 0;
-            s.sn = 0; s.una = 0; s.resendts = 0; s.rto = 0;
-            s.fastack = 0; s.xmit = 0; s.data = null;
-            return s;
-        }
-
-        static Seg control(ByteBufAllocator alloc) {
-            Seg s = alloc();
-            s.data = alloc.ioBuffer(0, 0);
-            return s;
-        }
-
-        void release() {
-            if (data != null) { data.release(); data = null; }
-            // 노드를 풀로 반환 (상한 초과 시 GC에 맡김)
-            if (poolSize < POOL.length) {
-                prev = null; next = null;
-                POOL[poolSize++] = this;
-            }
+            segPool[segPoolSize++] = s;
         }
     }
 
     // ── 최소 연결 리스트 ──────────────────────────────────────────────────────
-    private static final class SegList {
+    private final class SegList {
         final Seg head = new Seg();
         final Seg tail = new Seg();
         int size;
@@ -143,7 +154,7 @@ public final class KcpCore {
             Seg cur = head.next;
             while (cur != tail) {
                 Seg nx = cur.next;
-                cur.release();
+                releaseSeg(cur);
                 cur = nx;
             }
             head.next = tail; tail.prev = head;
@@ -185,6 +196,22 @@ public final class KcpCore {
     private final SegList sndBuf   = new SegList();
     private final SegList rcvBuf   = new SegList();
 
+    /**
+     * flush/flushAck 전용 재사용 제어 세그먼트.
+     * 헤더 인코딩에만 쓰이고 data는 항상 null이다(encodeSeg가 null을 길이 0으로 처리).
+     * 예전에는 flush마다 Seg 노드 + 길이 0 ioBuffer를 새로 할당했는데, interval이
+     * 2ms면 초당 500회 + flushAck 횟수만큼 불필요한 할당이 쌓인다. flush()는 단일
+     * 스레드에서 재진입 없이 실행되므로 인스턴스 하나를 돌려 쓰면 충분하다.
+     */
+    private final Seg ctrlSeg = new Seg();
+
+    /** rcvQueue에 대기 중인 총 바이트 — 드레인 버퍼를 한 번에 정확히 잡기 위한 값 */
+    private int rcvQueueBytes;
+
+    /** 직전 flush()가 구한 sndBuf 내 최소 resendts — check()가 재순회 없이 사용 */
+    private int     minResendts;
+    private boolean hasPendingResend;
+
     // ── 생성 / 해제 ───────────────────────────────────────────────────────────
 
     public KcpCore(int conv, KcpOutput output, ByteBufAllocator alloc) {
@@ -198,19 +225,23 @@ public final class KcpCore {
         rcvQueue.clear();
         sndBuf.clear();
         rcvBuf.clear();
+        rcvQueueBytes = 0;
     }
 
     // ── 공개 API ──────────────────────────────────────────────────────────────
 
-    public int input(ByteBuf data) {
+    /**
+     * @param rttNow RTT 측정 기준 시각. this.current(직전 update가 박은 값)는 update
+     *               지터로 최대 수십 ms 낡을 수 있어, 이를 RTT 계산에 쓰면 네트워크가
+     *               일정해도 측정 RTT가 update 타이밍에 따라 흔들린다(불규칙 스파이크의
+     *               원인). 그래서 호출자가 실제 수신 시각을 넘긴다.
+     *               <p>한 read 배치 전체가 같은 값을 공유해도 무방하다 — 배치 처리는
+     *               µs 단위라 ms 해상도에서는 차이가 없고, 대신 버스트 때 패킷 수만큼
+     *               반복되던 {@code nanoTime()} 호출이 배치당 1회로 줄어든다.
+     *               this.current 필드는 건드리지 않아 재전송 등 다른 로직에 영향 없음.
+     */
+    public int input(ByteBuf data, int rttNow) {
         if (data == null || data.readableBytes() < OVERHEAD) return -1;
-
-        // RTT 측정 전용 현재 시각. this.current(직전 update가 박은 값)는 update
-        // 지터로 최대 수십 ms 낡을 수 있어, 이를 RTT 계산에 쓰면 네트워크가 일정해도
-        // 측정 RTT가 update 타이밍에 따라 흔들린다(불규칙 스파이크의 원인).
-        // ACK가 실제 처리되는 이 순간의 시각으로 측정해 지터 영향을 제거한다.
-        // this.current 필드 자체는 변경하지 않아 다른 로직(재전송 등)에 영향 없음.
-        int rttNow = KcpChannel.milliSeconds();
 
         long maxack = 0;
         int  maxackts = 0;
@@ -251,7 +282,7 @@ public final class KcpCore {
                     if (itimediff(sn, rcvNxt + WND_RCV) < 0) {
                         ackPush(sn, ts);
                         if (itimediff(sn, rcvNxt) >= 0) {
-                            Seg seg = Seg.alloc();
+                            Seg seg = allocSeg();
                             seg.data = len > 0 ? data.readRetainedSlice(len) : alloc.ioBuffer(0, 0);
                             consumed = true;
                             seg.conv = pktConv; seg.cmd = cmd; seg.frg = frg;
@@ -297,7 +328,7 @@ public final class KcpCore {
 
         while (len > 0) {
             int size = Math.min(len, MSS);
-            Seg seg = Seg.alloc();
+            Seg seg = allocSeg();
             seg.data = buf.readRetainedSlice(size);
             seg.frg  = 0;
             sndQueue.addLast(seg);
@@ -314,7 +345,8 @@ public final class KcpCore {
         boolean recover = rcvQueue.size >= WND_RCV;
         buf.writeBytes(first.data);
         rcvQueue.remove(first);
-        first.release();
+        rcvQueueBytes -= peekSize;
+        releaseSeg(first);
 
         moveRcvData();
         if (rcvQueue.size < WND_RCV && recover) probe |= ASK_TELL;
@@ -344,17 +376,30 @@ public final class KcpCore {
     public int check(int current) {
         if (!updated) return current;
 
+        // 완전 유휴 — 타이머를 굳이 2ms마다 돌릴 이유가 없다.
+        // 이 상태에서 일이 생기는 경로는 두 가지뿐이고 둘 다 타이머를 안 기다린다:
+        //   · 송신: doWrite()가 kcp.send() 직후 update+udpFlush를 직접 호출
+        //   · 수신: read()가 kcpInput+flushAck+update+udpFlush를 직접 호출
+        // sndBuf가 비었으니 재전송 대상도 없다. 백오프 상한을 넘겨도 그 사이에
+        // 늦어질 수 있는 건 "유휴→송신 전환 직후의 첫 재전송 판정"뿐인데,
+        // RTO 하한이 40ms라 기본 10ms granularity는 묻힌다.
+        if (sndBuf.size == 0 && sndQueue.size == 0
+                && ackcount == 0 && probe == 0 && rmtWnd > 0) {
+            return current + IDLE_INTERVAL;
+        }
+
         int tf = tsFlush;
         int slap = itimediff(current, tf);
         if (slap >= 10_000 || slap < -10_000) { tf = current; slap = 0; }
         if (slap >= 0) return current;
 
         int tmFlush  = itimediff(tf, current);
+        // 직전 flush()가 같은 sndBuf를 순회하며 구해 둔 값을 재사용 (재순회 제거)
         int tmPacket = Integer.MAX_VALUE;
-        for (Seg s = sndBuf.head.next; s != sndBuf.tail; s = s.next) {
-            int diff = itimediff(s.resendts, current);
+        if (hasPendingResend) {
+            int diff = itimediff(minResendts, current);
             if (diff <= 0) return current;
-            if (diff < tmPacket) tmPacket = diff;
+            tmPacket = diff;
         }
 
         return current + Math.min(Math.min(tmPacket, tmFlush), interval);
@@ -363,6 +408,8 @@ public final class KcpCore {
     public int     getState()     { return state; }
     public int     getConv()      { return conv; }
     public int     waitSnd()      { return sndBuf.size + sndQueue.size; }
+    /** rcvQueue에 대기 중인 총 바이트 — 드레인 버퍼 크기를 한 번에 잡을 때 사용 */
+    public int     rcvQueueBytes(){ return rcvQueueBytes; }
     public int     sndQueueSize() { return sndQueue.size; }
     public int     rmtWnd()       { return rmtWnd; }
 
@@ -375,7 +422,7 @@ public final class KcpCore {
         if (!updated) return;
         if (ackcount == 0) return;
 
-        Seg ctrl = Seg.control(alloc);
+        Seg ctrl = ctrlSeg;
         ctrl.conv = conv;
         ctrl.cmd  = CMD_ACK;
         ctrl.wnd  = wndUnused();
@@ -392,7 +439,6 @@ public final class KcpCore {
 
         if (buf != null && buf.readableBytes() > 0) output.out(buf, buf.readableBytes());
         else if (buf != null) buf.release();
-        ctrl.release();
     }
 
     public boolean canSend(boolean curCanSend) {
@@ -407,7 +453,7 @@ public final class KcpCore {
     private void flush() {
         if (!updated) return;
 
-        Seg ctrl = Seg.control(alloc);
+        Seg ctrl = ctrlSeg;
         ctrl.conv = conv;
         ctrl.cmd  = CMD_ACK;
         ctrl.wnd  = wndUnused();
@@ -465,6 +511,10 @@ public final class KcpCore {
         }
 
         // 4. 재전송 / 신규 전송
+        // 이 순회에서 다음 재전송 시각(최솟값)도 같이 구해 둔다. 예전에는 run()이
+        // update()(=이 순회) 직후 check()에서 sndBuf를 한 번 더 완주해, in-flight가
+        // 수천 개인 구간에서 매 틱 sndBuf를 두 번 훑었다.
+        int minDiff = Integer.MAX_VALUE;
         for (Seg seg = sndBuf.head.next; seg != sndBuf.tail; seg = seg.next) {
             boolean needSend = false;
 
@@ -502,14 +552,18 @@ public final class KcpCore {
 
                 if (seg.xmit >= DEADLINK) state = -1;
             }
+
+            int diff = itimediff(seg.resendts, current);
+            if (diff < minDiff) minDiff = diff;
         }
+        hasPendingResend = minDiff != Integer.MAX_VALUE;
+        if (hasPendingResend) minResendts = current + minDiff;
 
         // 5. flush
         if (buf != null) {
             if (buf.readableBytes() > 0) doOutput(buf);
             else buf.release();
         }
-        ctrl.release();
     }
 
     // ── 헬퍼 ──────────────────────────────────────────────────────────────────
@@ -563,7 +617,7 @@ public final class KcpCore {
     private void parseAck(long sn) {
         if (itimediff(sn, sndUna) < 0 || itimediff(sn, sndNxt) >= 0) return;
         for (Seg s = sndBuf.head.next; s != sndBuf.tail; s = s.next) {
-            if (sn == s.sn) { sndBuf.remove(s); s.release(); break; }
+            if (sn == s.sn) { sndBuf.remove(s); releaseSeg(s); break; }
             if (itimediff(sn, s.sn) < 0) break;
         }
     }
@@ -572,7 +626,7 @@ public final class KcpCore {
         Seg s = sndBuf.head.next;
         while (s != sndBuf.tail) {
             Seg nx = s.next;
-            if (itimediff(una, s.sn) > 0) { sndBuf.remove(s); s.release(); }
+            if (itimediff(una, s.sn) > 0) { sndBuf.remove(s); releaseSeg(s); }
             else break;
             s = nx;
         }
@@ -609,7 +663,7 @@ public final class KcpCore {
         long sn = newSeg.sn;
         // 수신 윈도우 초과 또는 이미 소비된 패킷 → DROP
         if (itimediff(sn, rcvNxt + WND_RCV) >= 0 || itimediff(sn, rcvNxt) < 0) {
-            newSeg.release(); return;
+            releaseSeg(newSeg); return;
         }
         // 꼬리에서부터 역방향 탐색으로 삽입 위치 결정.
         // 청크 로딩처럼 sn이 forward로 진행하는 버스트에서 새 세그먼트는 대부분
@@ -620,7 +674,7 @@ public final class KcpCore {
         // insertAfter = sn보다 작은 첫 노드(뒤에서부터). 없으면 head(맨 앞 삽입).
         Seg insertAfter = rcvBuf.head;
         for (Seg s = rcvBuf.tail.prev; s != rcvBuf.head; s = s.prev) {
-            if (s.sn == sn) { newSeg.release(); return; }   // 중복 → DROP
+            if (s.sn == sn) { releaseSeg(newSeg); return; }   // 중복 → DROP
             if (itimediff(sn, s.sn) > 0) { insertAfter = s; break; }
         }
         newSeg.prev = insertAfter;
@@ -638,6 +692,7 @@ public final class KcpCore {
                 Seg nx = s.next;
                 rcvBuf.remove(s);
                 rcvQueue.addLast(s);
+                rcvQueueBytes += s.data.readableBytes();
                 rcvNxt++;
                 s = nx;
             } else {

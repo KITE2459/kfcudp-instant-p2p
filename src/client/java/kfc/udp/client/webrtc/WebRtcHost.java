@@ -6,11 +6,15 @@ import dev.onvoid.webrtc.media.audio.AudioLayer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.InputStream;
-import java.io.OutputStream;
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
+import java.net.SocketTimeoutException;
+import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
+import java.nio.channels.SelectionKey;
+import java.nio.channels.Selector;
+import java.nio.channels.SocketChannel;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,8 +51,10 @@ public class WebRtcHost {
     private static final int    OFFER_TIMEOUT_MS     = 20_000; // 페어 세션에서 OFFER 대기 한도
     private static final int    DIAL_TIMEOUT_MS      = 5_000;
     private static final int    BUFFER_SIZE          = 65536;
-    private static final long   DC_BUF_HIGH          = 16 * 1024 * 1024L;
-    private static final long   DC_BUF_LOW           = 2 * 1024 * 1024L; // 이하로 빠지면 송신 재개
+    // 버퍼 한도는 P2PConfig에서 관리 — 지연/처리량 트레이드오프 근거와
+    // -Dkfcudp.pipe.* 되돌리기 방법은 그쪽 주석 참고.
+    private static final long   DC_BUF_HIGH          = P2PConfig.DC_BUF_HIGH;
+    private static final long   DC_BUF_LOW           = P2PConfig.DC_BUF_LOW; // 이하로 빠지면 송신 재개
 
     // ── 인스턴스 필드 ─────────────────────────────────────────────────────────
     private final String roomId;
@@ -216,6 +222,47 @@ public class WebRtcHost {
         }
     }
 
+    /**
+     * target으로 {@link SocketChannel}을 연결한다 (타임아웃 {@link #DIAL_TIMEOUT_MS}).
+     * <p>
+     * {@code SocketChannel}은 블로킹 connect에 타임아웃을 걸 수 없어
+     * (예전 {@code Socket.connect(addr, timeout)}에 해당하는 게 없다) 논블로킹으로
+     * 연결한 뒤 Selector로 기다린다. 채널이어야 direct 버퍼 read/writev를 쓸 수 있다.
+     */
+    private SocketChannel dialTarget() throws IOException {
+        SocketChannel sc = SocketChannel.open();
+        try {
+            sc.configureBlocking(false);
+            // target이 127.0.0.1이라 대개 여기서 즉시 true가 나와 셀렉터를 안 탄다.
+            if (!sc.connect(new InetSocketAddress(targetHost, targetPort))) {
+                try (Selector sel = Selector.open()) {
+                    SelectionKey key = sc.register(sel, SelectionKey.OP_CONNECT);
+                    try {
+                        long deadline = System.nanoTime() + DIAL_TIMEOUT_MS * 1_000_000L;
+                        while (!sc.finishConnect()) {
+                            long remainMs = (deadline - System.nanoTime()) / 1_000_000L;
+                            if (remainMs <= 0)
+                                throw new SocketTimeoutException(
+                                        "dial timeout " + DIAL_TIMEOUT_MS + "ms");
+                            sel.select(remainMs);
+                            sel.selectedKeys().clear();
+                        }
+                    } finally {
+                        // configureBlocking(true)는 채널에 유효한 키가 남아 있으면
+                        // IllegalBlockingModeException을 던진다. 셀렉터를 닫아도
+                        // 무효화되지만, 명시적으로 취소해 순서 의존을 없앤다.
+                        key.cancel();
+                    }
+                }
+            }
+            sc.configureBlocking(true);
+            return sc;
+        } catch (IOException e) {
+            try { sc.close(); } catch (IOException ignored) {}
+            throw e;
+        }
+    }
+
     /** ICE 서버 구성: 시그널링 서버 relays 우선, 없으면 P2PConfig 기본값 */
     private RTCConfiguration buildConfig() {
         RTCConfiguration config = new RTCConfiguration();
@@ -351,7 +398,7 @@ public class WebRtcHost {
 
         private volatile RTCPeerConnection peerConnection;
         private volatile RTCDataChannel    dataChannel;
-        private volatile Socket            tcpSocket;
+        private volatile SocketChannel     tcpChannel;
         private volatile BatchPipe.Writer  tcpWriter;
         private volatile int               tunnelLocalPort = -1;
         volatile boolean dcOpened = false;
@@ -518,18 +565,18 @@ public class WebRtcHost {
                         LOG.info("[host] first data received; dialing target {}:{} clientIp={}",
                                 targetHost, targetPort, clientIp);
                         try {
-                            Socket sock = new Socket();
-                            sock.connect(new InetSocketAddress(targetHost, targetPort), DIAL_TIMEOUT_MS);
-                            sock.setTcpNoDelay(true);
-                            sock.setReceiveBufferSize(512 * 1024);
-                            sock.setSendBufferSize(512 * 1024);
-                            tcpSocket = sock;
+                            SocketChannel sock = dialTarget();
+                            sock.setOption(StandardSocketOptions.TCP_NODELAY, true);
+                            sock.setOption(StandardSocketOptions.SO_RCVBUF, 512 * 1024);
+                            sock.setOption(StandardSocketOptions.SO_SNDBUF, 512 * 1024);
+                            tcpChannel = sock;
                             // MC 서버는 이 소켓의 로컬 포트를 조인자의 "IP:포트"로 본다.
                             // (전부 127.0.0.1 이므로) 실제 원격 IP를 포트에 매핑해 둔다.
-                            tunnelLocalPort = sock.getLocalPort();
+                            tunnelLocalPort =
+                                    ((InetSocketAddress) sock.getLocalAddress()).getPort();
                             P2PBanManager.registerTunnelPort(tunnelLocalPort, clientIp);
-                            // DC→TCP: 전담 writer 스레드가 연속 청크를 단일 write로 배칭
-                            w = new BatchPipe.Writer(sock.getOutputStream(),
+                            // DC→TCP: 전담 writer 스레드가 연속 청크를 writev 1회로 배칭
+                            w = new BatchPipe.Writer(sock,
                                     "webrtc-host-tcpw-" + sid,
                                     e -> {
                                         if (!closed.get())
@@ -559,13 +606,19 @@ public class WebRtcHost {
             }
         }
 
-        /** MC 서버 TCP → DataChannel. coalescing 배칭 + 16MB 백프레셔. */
-        private void forwardTcpToWebRtc(Socket sock) {
-            byte[] readBuf = new byte[BatchPipe.BATCH_MAX];
-            ByteBuffer sendBuf = ByteBuffer.allocateDirect(BatchPipe.BATCH_MAX);
-            try (InputStream in = sock.getInputStream()) {
-                int n;
-                while ((n = in.read(readBuf, 0, readBuf.length)) != -1) {
+        /** MC 서버 TCP → DataChannel. direct 버퍼 직접 read + 백프레셔. */
+        private void forwardTcpToWebRtc(SocketChannel sock) {
+            // direct 버퍼로 직접 read — 예전의 힙 byte[] → direct 복사 단계가 사라진다.
+            // 블로킹 read는 OS 버퍼에 있는 만큼을 용량까지 한 번에 채우므로
+            // 별도의 coalesce(available 기반 추가 흡수)도 필요 없다.
+            ByteBuffer buf = ByteBuffer.allocateDirect(BatchPipe.BATCH_MAX);
+            try {
+                while (true) {
+                    buf.clear();
+                    int n = sock.read(buf);
+                    if (n < 0) break;   // EOF
+                    if (n == 0) continue;
+
                     RTCDataChannel ch = dataChannel;
                     if (ch == null || ch.getState() != RTCDataChannelState.OPEN) break;
 
@@ -578,14 +631,13 @@ public class WebRtcHost {
                     }
                     if (closed.get()) break;
 
-                    // OS 버퍼에 쌓인 후속 데이터를 논블로킹으로 흡수 → send 횟수 감소
-                    n = BatchPipe.coalesce(in, readBuf, n);
-
-                    sendBuf.clear();
-                    sendBuf.put(readBuf, 0, n);
-                    sendBuf.flip();
-                    ByteBuffer slice = sendBuf.slice().limit(n);
-                    ch.send(new RTCDataChannelBuffer(slice, true));
+                    // slice()는 필수다. RTCDataChannelBuffer는 JNI로 넘어가고
+                    // GetDirectBufferAddress/GetDirectBufferCapacity는 position/limit을
+                    // 무시하고 capacity 전체를 읽는다. slice()만이 "시작 주소 = 현재
+                    // position, capacity = 유효 길이"인 뷰를 만들어 준다.
+                    // 이걸 빼면 유효 데이터 뒤에 버퍼 잔여분까지 전송돼 스트림이 깨진다.
+                    buf.flip();
+                    ch.send(new RTCDataChannelBuffer(buf.slice(), true));
                 }
             } catch (Exception e) {
                 if (!closed.get()) LOG.warn("[host] TCP read ended sid={}: {}", sid, e.getMessage());
@@ -605,7 +657,7 @@ public class WebRtcHost {
                 P2PBanManager.unregisterTunnelPort(tunnelLocalPort);
                 tunnelLocalPort = -1;
             }
-            try { if (tcpSocket != null) tcpSocket.close(); } catch (Exception ignored) {}
+            try { if (tcpChannel != null) tcpChannel.close(); } catch (Exception ignored) {}
             RTCDataChannel dc = dataChannel;
             dataChannel = null;
             if (dc != null) {
