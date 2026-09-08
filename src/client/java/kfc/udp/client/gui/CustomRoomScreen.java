@@ -8,7 +8,6 @@ import net.minecraft.client.gui.widget.CyclingButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.screen.ScreenTexts;
 import net.minecraft.text.Text;
-import net.minecraft.util.Formatting;
 import net.minecraft.world.GameMode;
 import org.jetbrains.annotations.Nullable;
 
@@ -16,14 +15,15 @@ import java.util.Objects;
 
 public class CustomRoomScreen extends Screen {
 
+    private static final int MIN_PLAYERS         = 2;
+    private static final int MAX_PLAYERS         = 100;
+
     private static final Text TITLE_TEXT        = Text.translatable("kfcudp.custom_room.title");
     private static final Text GAME_MODE_TEXT     = Text.translatable("kfcudp.custom_room.game_mode");
-    private static final Text MAX_PLAYERS_TEXT   = Text.translatable("kfcudp.custom_room.max_players");
+    private static final Text MAX_PLAYERS_TEXT   = Text.translatable("kfcudp.custom_room.max_players", MAX_PLAYERS);
     private static final Text ALLOW_COMMANDS_TEXT = Text.translatable("kfcudp.custom_room.allow_commands");
     private static final Text START_TEXT         = Text.translatable("kfcudp.custom_room.start");
-    private static final int INVALID_COLOR       = 0xFF5555;
-    private static final int MIN_PLAYERS         = 2;
-    private static final int MAX_PLAYERS         = 20;
+    private static final int INVALID_COLOR       = 0xFFFF5555;
 
     private final Screen parent;
     private GameMode gameMode    = GameMode.ADVENTURE;
@@ -45,6 +45,15 @@ public class CustomRoomScreen extends Screen {
         int row2Y = 130;
 
         // 게임 모드 선택
+        //? if >=1.21.11 {
+        /*this.addDrawableChild(
+                CyclingButtonWidget.builder(GameMode::getSimpleTranslatableName, this.gameMode)
+                        .values(GameMode.SURVIVAL, GameMode.CREATIVE, GameMode.ADVENTURE, GameMode.SPECTATOR)
+                        .build(cx - 155, row1Y, 150, 20, GAME_MODE_TEXT,
+                                (btn, mode) -> this.gameMode = mode)
+        );
+        *///?} else {
+        
         this.addDrawableChild(
                 CyclingButtonWidget.builder(GameMode::getSimpleTranslatableName)
                         .values(GameMode.SURVIVAL, GameMode.CREATIVE, GameMode.ADVENTURE, GameMode.SPECTATOR)
@@ -52,6 +61,7 @@ public class CustomRoomScreen extends Screen {
                         .build(cx - 155, row1Y, 150, 20, GAME_MODE_TEXT,
                                 (btn, mode) -> this.gameMode = mode)
         );
+        //?}
 
         // 최대 인원 입력
         this.maxPlayersField = new TextFieldWidget(
@@ -89,7 +99,7 @@ public class CustomRoomScreen extends Screen {
             if (v >= MIN_PLAYERS && v <= MAX_PLAYERS) {
                 this.maxPlayers = v;
                 if (this.maxPlayersField != null)
-                    this.maxPlayersField.setEditableColor(0xFFFFFF);
+                    this.maxPlayersField.setEditableColor(0xFFFFFFFF);
                 if (this.startButton != null)
                     this.startButton.active = true;
             } else {
@@ -116,14 +126,10 @@ public class CustomRoomScreen extends Screen {
         super.render(context, mouseX, mouseY, deltaTicks);
         int cx = this.width / 2;
 
-        context.drawCenteredTextWithShadow(this.textRenderer, this.title, cx, 50, 0xFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer, this.title, cx, 50, 0xFFFFFFFF);
 
-        context.drawCenteredTextWithShadow(this.textRenderer, GAME_MODE_TEXT,  cx - 80, 88, 0xA0A0A0);
-        context.drawCenteredTextWithShadow(this.textRenderer, MAX_PLAYERS_TEXT, cx + 80, 88, 0xA0A0A0);
-
-        context.drawCenteredTextWithShadow(this.textRenderer,
-                Text.literal(MIN_PLAYERS + " ~ " + MAX_PLAYERS).formatted(Formatting.DARK_GRAY),
-                cx + 80, 152, 0xFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer, GAME_MODE_TEXT,  cx - 80, 88, 0xFFA0A0A0);
+        context.drawCenteredTextWithShadow(this.textRenderer, MAX_PLAYERS_TEXT, cx + 80, 88, 0xFFA0A0A0);
     }
 
     @Override

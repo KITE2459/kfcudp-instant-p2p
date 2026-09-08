@@ -12,6 +12,46 @@ import java.net.UnknownHostException;
 @Mixin(MultiplayerServerListPinger.class)
 public class ServerAddressMixin {
 
+    //? if >=1.21.11 {
+    /*@Inject(method = "add", at = @At("HEAD"), cancellable = true)
+    private void kfcudp$handleSpecialPing(
+            ServerInfo entry, Runnable saver, Runnable pingCallback,
+            net.minecraft.network.NetworkingBackend backend, CallbackInfo ci)
+            throws UnknownHostException {
+
+        if (entry == null || entry.address == null) return;
+
+        String realAddress = null;
+        if (entry.address.startsWith("webrtc.")) {
+            realAddress = entry.address.substring("webrtc.".length());
+        } else if (entry.address.startsWith("kcp.")) {
+            realAddress = entry.address.substring("kcp.".length());
+        }
+
+        if (realAddress == null) return;
+
+        ci.cancel();
+
+        ServerInfo temp = new ServerInfo(entry.name, realAddress, ServerInfo.ServerType.OTHER);
+
+        try {
+            ((MultiplayerServerListPinger)(Object)this).add(temp, saver, () -> {
+                entry.ping             = temp.ping;
+                entry.label            = temp.label;
+                entry.playerCountLabel = temp.playerCountLabel;
+                entry.playerListSummary = temp.playerListSummary;
+                entry.players          = temp.players;
+                entry.protocolVersion  = temp.protocolVersion;
+                entry.version          = temp.version;
+                entry.setStatus(temp.getStatus());
+                pingCallback.run();
+            }, backend);
+        } catch (UnknownHostException e) {
+            throw e;
+        } catch (Exception ignored) {}
+    }
+    *///?} else {
+    
     @Inject(method = "add", at = @At("HEAD"), cancellable = true)
     private void kfcudp$handleSpecialPing(
             ServerInfo entry, Runnable saver, Runnable pingCallback, CallbackInfo ci)
@@ -48,4 +88,5 @@ public class ServerAddressMixin {
             throw e;
         } catch (Exception ignored) {}
     }
+    //?}
 }

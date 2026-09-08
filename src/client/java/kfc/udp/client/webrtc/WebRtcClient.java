@@ -3,6 +3,9 @@ package kfc.udp.client.webrtc;
 import dev.onvoid.webrtc.*;
 import dev.onvoid.webrtc.media.audio.AudioDeviceModule;
 import dev.onvoid.webrtc.media.audio.AudioLayer;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.DisconnectedScreen;
+import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -113,6 +116,7 @@ public class WebRtcClient {
 
             if (!hostArrivedLatch.await(15, TimeUnit.SECONDS)) {
                 LOG.warn("[webrtc] host did not arrive in pair session (room={})", roomId);
+                notifyFailure(Text.translatable("kfcudp.msg.host_not_found"));
                 close(); return;
             }
 
@@ -121,6 +125,7 @@ public class WebRtcClient {
 
             if (!readyLatch.await(30, TimeUnit.SECONDS)) {
                 LOG.warn("[webrtc] DataChannel open timed out");
+                notifyFailure(Text.translatable("kfcudp.msg.ice_failed"));
                 close(); return;
             }
 
@@ -132,9 +137,35 @@ public class WebRtcClient {
             forwardMcToWebRtc(sock);
 
         } catch (Exception e) {
-            if (running.get()) LOG.warn("[webrtc] bridge error: {}", e.getMessage());
+            if (running.get()) {
+                LOG.warn("[webrtc] bridge error: {}", e.getMessage());
+                notifyFailure(Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage())));
+            }
             close();
         }
+    }
+
+    private volatile Boolean usesRelay = null;
+
+    /** null = 아직 모름(통계 조회 전이거나 candidate pair 미확정). KfcudpClient가 월드 진입 시점에 읽어간다. */
+    public Boolean usesRelay() {
+        return usesRelay;
+    }
+
+    private void resolveConnectionType() {
+        RTCPeerConnection pc = peerConnection;
+        if (pc == null) return;
+        pc.getStats(report -> usesRelay = WebRtcStats.usesRelay(report));
+    }
+
+    /** 연결 실패를 실제 화면으로 보여준다 — 안 그러면 조인자는 원인도 모르고 로컬 소켓만 뚝 끊긴다. */
+    private void notifyFailure(Text reason) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        client.execute(() -> {
+            if (client.currentScreen instanceof DisconnectedScreen) return;
+            client.setScreen(new DisconnectedScreen(
+                    client.currentScreen, Text.translatable("connect.failed"), reason));
+        });
     }
 
     /**
@@ -305,8 +336,12 @@ public class WebRtcClient {
             @Override
             public void onStateChange() {
                 RTCDataChannelState state = channel.getState();
-                if (state == RTCDataChannelState.OPEN)        readyLatch.countDown();
-                else if (state == RTCDataChannelState.CLOSED) close();
+                if (state == RTCDataChannelState.OPEN) {
+                    readyLatch.countDown();
+                    resolveConnectionType();
+                } else if (state == RTCDataChannelState.CLOSED) {
+                    close();
+                }
             }
 
             @Override
@@ -349,8 +384,13 @@ public class WebRtcClient {
 
             @Override
             public void onIceConnectionChange(RTCIceConnectionState state) {
-                if (state == RTCIceConnectionState.FAILED ||
-                        state == RTCIceConnectionState.DISCONNECTED) close();
+                // Host와 동일: FAILED에서만 종료, DISCONNECTED는 자동 복구 대기
+                if (state == RTCIceConnectionState.FAILED) {
+                    LOG.warn("[webrtc] ICE failed");
+                    close();
+                } else if (state == RTCIceConnectionState.DISCONNECTED) {
+                    LOG.warn("[webrtc] ICE disconnected, waiting for reconnect...");
+                }
             }
         });
 

@@ -46,6 +46,21 @@ public abstract class ClientConnectionMixin {
             (long)(Math.random() * 0xFFFFFFFFL) & 0xFFFFFFFFL
     );
 
+    //? if >=1.21.11 {
+    /*@Inject(
+            method = "connect(Ljava/net/InetSocketAddress;Lnet/minecraft/network/NetworkingBackend;Lnet/minecraft/network/ClientConnection;)Lio/netty/channel/ChannelFuture;",
+            at = @At("HEAD"),
+            cancellable = true
+    )
+    private static void kfcudp$interceptConnect(
+            InetSocketAddress address,
+            net.minecraft.network.NetworkingBackend backend,
+            ClientConnection connection,
+            CallbackInfoReturnable<ChannelFuture> cir) {
+        kfcudp$doIntercept(address, connection, cir);
+    }
+    *///?} else {
+    
     @Inject(
             method = "connect(Ljava/net/InetSocketAddress;ZLnet/minecraft/network/ClientConnection;)Lio/netty/channel/ChannelFuture;",
             at = @At("HEAD"),
@@ -54,6 +69,15 @@ public abstract class ClientConnectionMixin {
     private static void kfcudp$interceptConnect(
             InetSocketAddress address,
             boolean useEpoll,
+            ClientConnection connection,
+            CallbackInfoReturnable<ChannelFuture> cir) {
+        kfcudp$doIntercept(address, connection, cir);
+    }
+    //?}
+
+    @Unique
+    private static void kfcudp$doIntercept(
+            InetSocketAddress address,
             ClientConnection connection,
             CallbackInfoReturnable<ChannelFuture> cir) {
 

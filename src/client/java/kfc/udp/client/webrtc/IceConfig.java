@@ -54,6 +54,7 @@ final class IceConfig {
                 if (!urls.add(r[0])) continue;
                 RTCIceServer s = new RTCIceServer();
                 s.urls.add(r[0]);
+                addTcpFallback(s, r[0]);
                 if (r[1] != null) s.username = r[1];
                 if (r[2] != null) s.password = r[2];
                 chosen.add(s);
@@ -71,6 +72,7 @@ final class IceConfig {
             if (urls.add(P2PConfig.TURN_URL)) {
                 RTCIceServer turn = new RTCIceServer();
                 turn.urls.add(P2PConfig.TURN_URL);
+                addTcpFallback(turn, P2PConfig.TURN_URL);
                 turn.username = P2PConfig.TURN_USERNAME;
                 turn.password = P2PConfig.TURN_CREDENTIAL;
                 chosen.add(turn);
@@ -92,5 +94,20 @@ final class IceConfig {
     private static boolean isTurn(String url) {
         String u = url.toLowerCase();
         return u.startsWith("turn:") || u.startsWith("turns:");
+    }
+
+    /**
+     * TURN URL에 transport 지정이 없으면(=UDP 기본) 같은 서버에 대해
+     * {@code ?transport=tcp} 후보를 추가로 얹는다.
+     * <p>
+     * 일부 유저 네트워크(학교·회사망, 특정 통신사 등)는 임의 UDP 포트를 막아
+     * coturn이 정상 동작해도 relay 후보가 아예 안 잡힌다 — TCP 3478이 열려
+     * 있으면(coturn 기본 동작) 이 fallback으로 우회할 수 있다.
+     */
+    private static void addTcpFallback(RTCIceServer s, String url) {
+        if (!isTurn(url)) return;
+        String lower = url.toLowerCase();
+        if (lower.contains("transport=")) return; // 이미 명시된 경우 중복 추가 안 함
+        s.urls.add(url + (url.contains("?") ? "&" : "?") + "transport=tcp");
     }
 }

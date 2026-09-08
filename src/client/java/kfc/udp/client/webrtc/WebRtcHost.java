@@ -3,6 +3,8 @@ package kfc.udp.client.webrtc;
 import dev.onvoid.webrtc.*;
 import dev.onvoid.webrtc.media.audio.AudioDeviceModule;
 import dev.onvoid.webrtc.media.audio.AudioLayer;
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -87,6 +89,7 @@ public class WebRtcHost {
             });
 
     private volatile long backoffMs = INITIAL_BACKOFF_MS;
+    private volatile boolean signalingDown = false;
 
     public WebRtcHost(String roomId, String target) {
         this.roomId = roomId;
@@ -144,6 +147,10 @@ public class WebRtcHost {
                 backoffMs = INITIAL_BACKOFF_MS;
                 send(VillasMsg.hello()); // 서버가 최초 1회 signals 메시지를 요구함
                 LOG.info("[host] lobby joined: room={}", roomId);
+                if (signalingDown) {
+                    signalingDown = false;
+                    notifyHost("kfcudp.msg.signaling_recovered");
+                }
             }
             @Override public void onMessage(String type, String json) {
                 handleLobby(json);
@@ -163,12 +170,27 @@ public class WebRtcHost {
 
     private void scheduleReconnect() {
         if (!running.get()) return;
+        // 초대코드를 발급했는데 실제로는 시그널링에 못 붙는 상태로 계속 재시도만
+        // 하고 있으면 방장은 그걸 알 방법이 없다 — 한 번만 알려준다(재시도마다 스팸 X).
+        if (!signalingDown) {
+            signalingDown = true;
+            notifyHost("kfcudp.msg.signaling_unreachable");
+        }
         long delay = backoffMs;
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
         LOG.info("[host] Signaling reconnect in {}ms", delay);
         try {
             scheduler.schedule(this::connectLobby, delay, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException ignored) {}
+    }
+
+    private void notifyHost(String translationKey) {
+        MinecraftClient client = MinecraftClient.getInstance();
+        client.execute(() -> {
+            if (client.player != null) {
+                client.player.sendMessage(Text.translatable(translationKey), false);
+            }
+        });
     }
 
     private void handleLobby(String json) {
@@ -430,6 +452,7 @@ public class WebRtcHost {
                     // Go와 동일: FAILED에서만 종료, DISCONNECTED는 자동 복구 대기
                     if (state == RTCIceConnectionState.FAILED) {
                         LOG.warn("[host] ICE failed sid={}", sid);
+                        if (!dcOpened) notifyHostFailure();
                         pair.close();
                     } else if (state == RTCIceConnectionState.DISCONNECTED) {
                         LOG.warn("[host] ICE disconnected sid={}, waiting for reconnect...", sid);
@@ -461,10 +484,36 @@ public class WebRtcHost {
                 scheduler.schedule(() -> {
                     if (!closed.get() && dcOpenLatch.getCount() > 0) {
                         LOG.warn("[host] handshake timeout sid={}", sid);
+                        notifyHostFailure();
                         pair.close();
                     }
                 }, HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             } catch (RejectedExecutionException ignored) {}
+        }
+
+        /** 접속 시도가 끝내 연결로 안 이어졌을 때 방장 채팅으로만 알림 (조인자는 자기 화면에서 이미 봄). */
+        private void notifyHostFailure() {
+            MinecraftClient client = MinecraftClient.getInstance();
+            client.execute(() -> {
+                if (client.player != null) {
+                    client.player.sendMessage(
+                            Text.translatable("kfcudp.msg.guest_connect_failed", clientIp), false);
+                }
+            });
+        }
+
+        /**
+         * 직결(P2P)/중계(TURN) 여부를 기록해 둔다 — 이 시점엔 아직 로그인 전이라 UUID를
+         * 모르므로 IP로 등록해 두고, PlayerJoinMessageMixin이 참여 메시지에 접미사로 붙인다.
+         * 조인자 본인 화면에는 KfcudpClient가 월드 진입 시점에 따로 띄운다.
+         */
+        private void notifyConnectionType() {
+            RTCPeerConnection pc = peerConnection;
+            if (pc == null) return;
+            pc.getStats(report -> {
+                Boolean relay = WebRtcStats.usesRelay(report);
+                if (relay != null) P2PBanManager.registerConnectionType(clientIp, relay);
+            });
         }
 
         private void createAnswer() {
@@ -535,6 +584,7 @@ public class WebRtcHost {
                     if (state == RTCDataChannelState.OPEN) {
                         dcOpened = true;
                         dcOpenLatch.countDown();
+                        notifyConnectionType();
                         LOG.info("[host] DataChannel open; waiting for first data sid={} clientIp={}",
                                 sid, clientIp);
                     } else if (state == RTCDataChannelState.CLOSED) {
@@ -551,6 +601,7 @@ public class WebRtcHost {
             if (channel.getState() == RTCDataChannelState.OPEN) {
                 dcOpened = true;
                 dcOpenLatch.countDown();
+                notifyConnectionType();
             }
         }
 

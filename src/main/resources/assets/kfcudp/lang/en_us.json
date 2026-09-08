@@ -3,7 +3,7 @@
 
   "kfcudp.custom_room.title": "Create Room",
   "kfcudp.custom_room.game_mode": "Game Mode",
-  "kfcudp.custom_room.max_players": "Max Players",
+  "kfcudp.custom_room.max_players": "Max Players (%s)",
   "kfcudp.custom_room.start": "Start",
   "kfcudp.custom_room.allow_commands": "Allow Commands",
 
@@ -14,11 +14,24 @@
   "kfcudp.join_room.server_name": "Custom Room",
 
   "kfcudp.msg.invite_prefix": "§b[Invite Code] §f",
-  "kfcudp.msg.invite_suffix": " §7(Click to copy, valid 2 min)",
+  "kfcudp.msg.invite_suffix": " §7(Click to copy — expires if no one joins within 2 minutes)",
   "kfcudp.msg.click_to_copy": "§7Click to copy",
   "kfcudp.msg.invite_expired": "§cThe invite has expired.",
+  "kfcudp.msg.invite_no_longer_expires": "§aA player has joined — the invite code no longer expires.",
   "kfcudp.msg.room_full": "§cThe room is full. (Max %s players)",
+  "kfcudp.msg.not_whitelisted": "§cYou are not whitelisted on this server.",
   "kfcudp.msg.singleplay_only": "§cOnly available in singleplayer.",
   "kfcudp.msg.prev_invite_expired": "§cPrevious invite (%s) has expired.",
-  "kfcudp.msg.host_failed": "§cFailed to start host."
+  "kfcudp.msg.host_failed": "§cFailed to start host.",
+  "kfcudp.msg.room_closed": "§eThe host has closed the room.",
+  "kfcudp.msg.connect_failed": "§cFailed to connect: %s",
+  "kfcudp.msg.host_not_found": "§cCould not find the host. Double-check the invite code, or the host may not be online.",
+  "kfcudp.msg.ice_failed": "§cThe relay service is currently unavailable. (STUN/TURN connection failed)",
+  "kfcudp.msg.guest_connect_failed": "§7A player (%s) tried to join but the connection could not be established.",
+  "kfcudp.msg.join_suffix_direct": "§a(Direct)",
+  "kfcudp.msg.join_suffix_relay": "§b(Relay)",
+  "kfcudp.msg.my_connection_direct": "§aYou are connected directly (P2P).",
+  "kfcudp.msg.my_connection_relay": "§bYou are connected via the relay server (TURN).",
+  "kfcudp.msg.signaling_unreachable": "§cThe signaling service is currently unavailable — retrying in the background. Players may not be able to join until this recovers.",
+  "kfcudp.msg.signaling_recovered": "§aReconnected to the signaling service — the room is working normally again."
 }

@@ -64,6 +64,17 @@ public class JoinRoomScreen extends Screen {
         ConnectScreen.connect(this.parent, Objects.requireNonNull(this.client), serverAddress, serverInfo, false, null);
     }
 
+    //? if >=1.21.9 {
+    /*@Override
+    public boolean keyPressed(net.minecraft.client.input.KeyInput input) {
+        if (input.key() == 257 && this.joinButton.active) { // Enter
+            this.onJoin();
+            return true;
+        }
+        return super.keyPressed(input);
+    }
+    *///?} else {
+    
     @Override
     public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
         if (keyCode == 257 && this.joinButton.active) { // Enter
@@ -72,13 +83,14 @@ public class JoinRoomScreen extends Screen {
         }
         return super.keyPressed(keyCode, scanCode, modifiers);
     }
+    //?}
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
         super.render(context, mouseX, mouseY, deltaTicks);
-        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, this.height / 2 - 40, 0xFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, this.height / 2 - 40, 0xFFFFFFFF);
         context.drawTextWithShadow(this.textRenderer, CODE_LABEL_TEXT,
-                this.width / 2 - 100, this.height / 2 - 22, 0xA0A0A0);
+                this.width / 2 - 100, this.height / 2 - 22, 0xFFA0A0A0);
     }
 
     @Override

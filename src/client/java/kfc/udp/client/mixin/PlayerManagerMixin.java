@@ -4,6 +4,8 @@ import com.mojang.authlib.GameProfile;
 import kfc.udp.client.webrtc.P2PBanManager;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.PlayerManager;
+//? if >=1.21.9
+//import net.minecraft.server.PlayerConfigEntry;
 import net.minecraft.text.Text;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -30,6 +32,20 @@ public abstract class PlayerManagerMixin {
     @Shadow
     public abstract MinecraftServer getServer();
 
+    //? if >=1.21.9 {
+    /*@Inject(method = "checkCanJoin", at = @At("HEAD"), cancellable = true)
+    private void kfcudp$checkBanOnLogin(SocketAddress address, PlayerConfigEntry configEntry,
+                                        CallbackInfoReturnable<Text> cir) {
+        // 1.21.9부터 checkCanJoin이 GameProfile 대신 PlayerConfigEntry(id+name만 있음)를 받는다.
+        // P2PBanManager는 여전히 GameProfile 기준이라 최소 정보로 하나 합성해서 넘긴다.
+        GameProfile profile = configEntry == null ? null : new GameProfile(configEntry.id(), configEntry.name());
+        Text deny = P2PBanManager.checkCanJoin(this.getServer(), address, profile);
+        if (deny != null) {
+            cir.setReturnValue(deny);
+        }
+    }
+    *///?} else {
+    
     @Inject(method = "checkCanJoin", at = @At("HEAD"), cancellable = true)
     private void kfcudp$checkBanOnLogin(SocketAddress address, GameProfile profile,
                                         CallbackInfoReturnable<Text> cir) {
@@ -38,4 +54,5 @@ public abstract class PlayerManagerMixin {
             cir.setReturnValue(deny);
         }
     }
+    //?}
 }

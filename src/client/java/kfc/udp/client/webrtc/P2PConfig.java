@@ -10,22 +10,22 @@ package kfc.udp.client.webrtc;
  *   -Dkfcudp.turn=turn:HOST:3478
  *   -Dkfcudp.turn.user=USER  -Dkfcudp.turn.pass=PASS
  * </pre>
- * 현재 배치 (오라클 클라우드 193.122.114.163):
+ * 현재 배치 (오라클 클라우드 kite-private-cloud.kro.kr):
  * villas-signaling → *:8088, coturn → *:3478
  */
 public final class P2PConfig {
 
     /** villas-signaling WebSocket 주소 */
     public static final String SIGNALING_URL =
-            System.getProperty("kfcudp.signaling", "ws://193.122.114.163:8088");
+            System.getProperty("kfcudp.signaling", "ws://kite-private-cloud.kro.kr:8088");
 
     /** coturn STUN (무인증) */
     public static final String STUN_URL =
-            System.getProperty("kfcudp.stun", "stun:193.122.114.163:3478");
+            System.getProperty("kfcudp.stun", "stun:kite-private-cloud.kro.kr:3478");
 
     /** coturn TURN (정적 계정 인증) */
     public static final String TURN_URL =
-            System.getProperty("kfcudp.turn", "turn:193.122.114.163:3478");
+            System.getProperty("kfcudp.turn", "turn:kite-private-cloud.kro.kr:3478");
 
     /** Go 구현(bridge.turnServers)에서 실사용하던 coturn 정적 계정 */
     public static final String TURN_USERNAME =

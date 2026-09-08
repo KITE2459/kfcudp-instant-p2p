@@ -3,11 +3,13 @@ package kfc.udp.client.mixin;
 import kfc.udp.client.webrtc.WebRtcBridge;
 import kfc.udp.client.kcp.KcpAddressRegistry;
 import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.DisconnectedScreen;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.network.ServerAddress;
 import net.minecraft.client.network.ServerInfo;
 import net.minecraft.client.network.CookieStorage;
+import net.minecraft.text.Text;
 import org.jetbrains.annotations.Nullable;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -50,7 +52,11 @@ public class ConnectScreenMixin {
                         ConnectScreen.connect(screen, client, localAddr, localInfo, false, null)
                 );
             } catch (Exception e) {
-                WebRtcBridge.LOG.warn("[WebRTC] Failed to start: {}", e.getMessage());
+                WebRtcBridge.LOG.warn("[WebRTC] Failed to start: {}", e.getMessage(), e);
+                client.execute(() -> client.setScreen(new DisconnectedScreen(
+                        screen,
+                        Text.translatable("connect.failed"),
+                        Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage())))));
             }
             return;
         }
@@ -60,24 +66,40 @@ public class ConnectScreenMixin {
         if (kcpAddr != null) {
             ci.cancel();
 
-            ServerAddress parsed = ServerAddress.parse(kcpAddr);
-            String host = parsed.getAddress();
-            int    port = parsed.getPort();
+            try {
+                ServerAddress parsed = ServerAddress.parse(kcpAddr);
+                String host = parsed.getAddress();
+                int    port = parsed.getPort();
 
-            WebRtcBridge.LOG.info("[KCP] Connecting native KCP, server={}:{}", host, port);
+                WebRtcBridge.LOG.info("[KCP] Connecting native KCP, server={}:{}", host, port);
 
-            // register + connect를 client.execute() 안에서 연속 실행
-            // → Server Pinger가 끼어들 타이밍 없음
-            ServerAddress realAddr = ServerAddress.parse(kcpAddr);
-            ServerInfo realInfo = new ServerInfo(
-                    serverInfo != null ? serverInfo.name : kcpAddr,
-                    kcpAddr,
-                    ServerInfo.ServerType.OTHER
-            );
-            client.execute(() -> {
-                KcpAddressRegistry.register();
-                ConnectScreen.connect(screen, client, realAddr, realInfo, false, null);
-            });
+                // register + connect를 client.execute() 안에서 연속 실행
+                // → Server Pinger가 끼어들 타이밍 없음
+                ServerAddress realAddr = ServerAddress.parse(kcpAddr);
+                ServerInfo realInfo = new ServerInfo(
+                        serverInfo != null ? serverInfo.name : kcpAddr,
+                        kcpAddr,
+                        ServerInfo.ServerType.OTHER
+                );
+                client.execute(() -> {
+                    try {
+                        KcpAddressRegistry.register();
+                        ConnectScreen.connect(screen, client, realAddr, realInfo, false, null);
+                    } catch (Exception e) {
+                        WebRtcBridge.LOG.warn("[KCP] Failed to connect: {}", e.getMessage(), e);
+                        client.setScreen(new DisconnectedScreen(
+                                screen,
+                                Text.translatable("connect.failed"),
+                                Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage()))));
+                    }
+                });
+            } catch (Exception e) {
+                WebRtcBridge.LOG.warn("[KCP] Failed to parse address: {}", e.getMessage(), e);
+                client.execute(() -> client.setScreen(new DisconnectedScreen(
+                        screen,
+                        Text.translatable("connect.failed"),
+                        Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage())))));
+            }
         }
     }
 }

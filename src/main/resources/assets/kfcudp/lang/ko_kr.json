@@ -3,7 +3,7 @@
 
   "kfcudp.custom_room.title": "커스텀 방 만들기",
   "kfcudp.custom_room.game_mode": "게임 모드",
-  "kfcudp.custom_room.max_players": "최대 인원",
+  "kfcudp.custom_room.max_players": "최대 인원 (%s)",
   "kfcudp.custom_room.start": "시작",
   "kfcudp.custom_room.allow_commands": "명령어 허용",
 
@@ -14,11 +14,24 @@
   "kfcudp.join_room.server_name": "커스텀 방",
 
   "kfcudp.msg.invite_prefix": "§b[초대코드] §f",
-  "kfcudp.msg.invite_suffix": " §7(클릭하여 복사, 2분 유효)",
+  "kfcudp.msg.invite_suffix": " §7(클릭하여 복사 — 2분 이상 아무도 접속하지 않으면 만료됩니다)",
   "kfcudp.msg.click_to_copy": "§7클릭해서 복사",
   "kfcudp.msg.invite_expired": "§c초대장이 만료되었습니다.",
+  "kfcudp.msg.invite_no_longer_expires": "§a플레이어가 접속해서 이제부터 초대 코드가 만료되지 않습니다.",
   "kfcudp.msg.room_full": "§c방이 가득 찼습니다. (최대 %s명)",
+  "kfcudp.msg.not_whitelisted": "§c이 서버에 화이트리스트로 등록되지 않았습니다.",
   "kfcudp.msg.singleplay_only": "§c싱글플레이에서만 사용 가능합니다.",
   "kfcudp.msg.prev_invite_expired": "§c이전 초대장(%s)이 만료되었습니다.",
-  "kfcudp.msg.host_failed": "§c호스트 실행에 실패했습니다."
+  "kfcudp.msg.host_failed": "§c호스트 실행에 실패했습니다.",
+  "kfcudp.msg.room_closed": "§e방장이 방을 닫았습니다.",
+  "kfcudp.msg.connect_failed": "§c접속에 실패했습니다: %s",
+  "kfcudp.msg.host_not_found": "§c호스트를 찾을 수 없습니다. 초대 코드를 다시 확인해주세요. (호스트가 접속 중이 아닐 수 있습니다)",
+  "kfcudp.msg.ice_failed": "§c현재 서버 점검 중으로 이용하실 수 없습니다. (STUN/TURN 연결 실패)",
+  "kfcudp.msg.guest_connect_failed": "§7플레이어(%s)가 접속을 시도했지만 연결에 실패했습니다.",
+  "kfcudp.msg.join_suffix_direct": "§a(직결 통신)",
+  "kfcudp.msg.join_suffix_relay": "§b(중계 통신)",
+  "kfcudp.msg.my_connection_direct": "§a호스트와 직결 통신 합니다",
+  "kfcudp.msg.my_connection_relay": "§b호스트와 중계 통신 합니다",
+  "kfcudp.msg.signaling_unreachable": "§c현재 서버 점검 중으로 이용하실 수 없습니다 (시그널링 연결 실패) — 백그라운드에서 재시도 중입니다. 복구될 때까지 플레이어가 접속하지 못할 수 있습니다.",
+  "kfcudp.msg.signaling_recovered": "§a시그널링 서버에 다시 연결되었습니다 — 방이 정상적으로 작동합니다."
 }

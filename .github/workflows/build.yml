@@ -2,6 +2,9 @@
 # and submitted pull request. This can help catch issues that only occur on
 # certain platforms or Java versions, and provides a first line of defence
 # against bad commits.
+#
+# Stonecutter를 통해 여러 Minecraft 버전을 지원하므로, settings.gradle.kts에 선언된
+# 버전마다 각각 빌드한다 (버전 목록이 바뀌면 이 matrix도 같이 갱신해야 함).
 
 name: build
 on: [pull_request, push]
@@ -9,6 +12,10 @@ on: [pull_request, push]
 jobs:
   build:
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        minecraft: ["1.21.5", "1.21.6", "1.21.7", "1.21.8", "1.21.9", "1.21.10", "1.21.11"]
     steps:
       - name: checkout repository
         uses: actions/checkout@v6
@@ -21,10 +28,10 @@ jobs:
           distribution: 'microsoft'
       - name: make gradle wrapper executable
         run: chmod +x ./gradlew
-      - name: build
-        run: ./gradlew build
+      - name: build ${{ matrix.minecraft }}
+        run: ./gradlew ":${{ matrix.minecraft }}:build"
       - name: capture build artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: Artifacts
-          path: build/libs/
+          name: Artifacts-${{ matrix.minecraft }}
+          path: versions/${{ matrix.minecraft }}/build/libs/

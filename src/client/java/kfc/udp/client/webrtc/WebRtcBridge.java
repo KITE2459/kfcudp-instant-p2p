@@ -78,6 +78,12 @@ public class WebRtcBridge {
         }
     }
 
+    /** 현재 진행 중인 webrtc 조인 세션의 연결 방식. null = webrtc 세션이 없거나 아직 안 정해짐. */
+    public static Boolean getActiveConnectionUsesRelay() {
+        WebRtcClient client = webRtcClient;
+        return client != null ? client.usesRelay() : null;
+    }
+
     // ── Host (Java 네이티브 — WebRtcHost) ─────────────────────────────────────
 
     public static void startHost(String roomId, String target) {
@@ -95,6 +101,23 @@ public class WebRtcBridge {
             LOG.info("[WebRTC] Stopping native host");
             host.close();
             webRtcHost = null;
+        }
+    }
+
+    /** 지금 활성화된 호스트 인스턴스를 식별하는 토큰(단순 참조). */
+    public static Object currentHostToken() {
+        return webRtcHost;
+    }
+
+    /**
+     * token이 여전히 현재 활성 호스트일 때만 중지한다. 방을 연달아 열면
+     * 이전 방을 닫으려던 지연 종료 스레드가 그 사이 새로 열린 방을
+     * 대신 죽이는 걸 막기 위한 것 — {@link #startHost}가 이미 이전 인스턴스를
+     * 동기적으로 닫으므로, 지연 종료 시점엔 그게 여전히 활성 호스트일 때만 유효하다.
+     */
+    public static void stopHostIfCurrent(Object token) {
+        if (token != null && token == webRtcHost) {
+            stopHost();
         }
     }
 
