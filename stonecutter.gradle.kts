@@ -1,21 +1,32 @@
+import org.gradle.api.tasks.bundling.AbstractArchiveTask
+
 plugins {
     id("dev.kikugie.stonecutter")
 }
 
 stonecutter active "1.21.5"
 
-/** 각 버전 서브프로젝트의 build/libs/ 에 흩어진 jar를 versions/all/ 로 모은다. */
+/**
+ * 각 버전 서브프로젝트가 만든 최종 remapJar 산출물을 versions/all/ 로 모은다.
+ * <p>
+ * build/libs/를 뒤져서 "*.jar면 다 복사"하던 예전 방식은 Gradle이 archivesName이나
+ * mod 버전을 바꿔도 이전 산출물을 build/libs/에서 자동으로 안 지우는 탓에, 이름
+ * (kfcudp- vs instant-p2p-)이든 버전(1.0.11 vs 1.0.12)이든 뭔가 바뀔 때마다 옛
+ * 산출물과 새 산출물이 같이 쌓였다. remapJar 태스크의 출력(archiveFile)을 직접
+ * 참조하면 파일명 패턴과 무관하게 "이번 빌드가 실제로 만든 파일"만 정확히 잡혀
+ * 이 문제 자체가 재발하지 않는다.
+ */
 val collectAllVersionJars by tasks.registering {
     val collectDir = rootProject.layout.projectDirectory.dir("versions/all")
+    val remapJarTasks = stonecutter.versions.map { v -> project(":${v.project}").tasks.named("remapJar") }
     stonecutter.versions.forEach { v -> dependsOn("${v.project}:build") }
 
     doLast {
         val out = collectDir.asFile
         out.mkdirs()
-        stonecutter.versions.forEach { v ->
-            val libs = project(":${v.project}").layout.buildDirectory.dir("libs").get().asFile
-            libs.listFiles { f -> f.name.endsWith(".jar") && !f.name.endsWith("-sources.jar") }
-                ?.forEach { it.copyTo(out.resolve(it.name), overwrite = true) }
+        remapJarTasks.forEach { taskProvider ->
+            val archiveFile = (taskProvider.get() as AbstractArchiveTask).archiveFile.get().asFile
+            if (archiveFile.exists()) archiveFile.copyTo(out.resolve(archiveFile.name), overwrite = true)
         }
         println("모은 jar: ${out.absolutePath}")
     }

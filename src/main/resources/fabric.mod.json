@@ -9,7 +9,7 @@
 	],
 	"contact": {
 		"homepage": "https://modrinth.com/mod/instant-p2p",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"sources": "https://github.com/KITE2459/kfcudp-instant-p2p"
 	},
 	"license": "CC0-1.0",
 	"icon": "assets/instant-p2p/icon.png",
@@ -23,7 +23,6 @@
 		]
 	},
 	"mixins": [
-		"instant-p2p.mixins.json",
 		{
 			"config": "instant-p2p.client.mixins.json",
 			"environment": "client"
