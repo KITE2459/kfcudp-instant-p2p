@@ -15,9 +15,6 @@
 	"icon": "assets/instant-p2p/icon.png",
 	"environment": "*",
 	"entrypoints": {
-		"main": [
-			"kfc.udp.Kfcudp"
-		],
 		"client": [
 			"kfc.udp.client.KfcudpClient"
 		]
