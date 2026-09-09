@@ -3,12 +3,12 @@
 	"id": "instant-p2p",
 	"version": "${version}",
 	"name": "instant-p2p",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "instant p2p mod with invite code style!",
 	"authors": [
-		"Me!"
+		"KITE2459"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
+		"homepage": "https://modrinth.com/mod/instant-p2p",
 		"sources": "https://github.com/FabricMC/fabric-example-mod"
 	},
 	"license": "CC0-1.0",

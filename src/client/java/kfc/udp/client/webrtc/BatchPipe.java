@@ -32,7 +32,7 @@ final class BatchPipe {
     /** 한 번의 writev에 실을 최대 청크 수 (16 × 64KB = 1MB). IOV_MAX 한참 아래. */
     private static final int MAX_VEC = 16;
 
-    // ── 청크 풀 (GC 압력 감소, Go globalChunkPool 대응) ───────────────────────
+    // ── 청크 풀 (GC 압력 감소) ───────────────────────────────────────────────
 
     /**
      * 청크 버퍼는 direct다. writev로 커널에 그대로 넘기려면 direct여야 하고,

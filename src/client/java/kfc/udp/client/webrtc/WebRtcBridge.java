@@ -5,8 +5,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.ServerSocket;
-import java.nio.file.*;
-import java.util.stream.Stream;
 
 /**
  * WebRTC/KCP 브리지 관리. (외부 바이너리 의존 없음 — 전부 Java 네이티브)
@@ -122,33 +120,6 @@ public class WebRtcBridge {
     }
 
     // ── 유틸 ──────────────────────────────────────────────────────────────────
-
-    /**
-     * 과거 버전이 데이터 폴더에 추출해 둔 openfriend 바이너리 잔재 삭제.
-     * (현재 버전은 외부 바이너리를 일절 사용하지 않음)
-     */
-    public static void cleanup() {
-        Path dir = getDataDir();
-        if (!Files.isDirectory(dir)) return;
-        try (Stream<Path> files = Files.list(dir)) {
-            files.filter(p -> p.getFileName().toString().startsWith("openfriend"))
-                    .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
-        } catch (IOException ignored) {}
-    }
-
-    private static Path getDataDir() {
-        String os   = System.getProperty("os.name", "").toLowerCase();
-        String home = System.getProperty("user.home", ".");
-        if (os.contains("win")) {
-            String appData = System.getenv("APPDATA");
-            return (appData != null && !appData.isEmpty())
-                    ? Path.of(appData, "kfcudp") : Path.of(home, "AppData", "Roaming", "kfcudp");
-        }
-        if (os.contains("mac") || os.contains("darwin"))
-            return Path.of(home, "Library", "Application Support", "kfcudp");
-        String xdg = System.getenv("XDG_DATA_HOME");
-        return (xdg != null && !xdg.isEmpty()) ? Path.of(xdg, "kfcudp") : Path.of(home, ".local", "share", "kfcudp");
-    }
 
     // startProtocol / stopProtocol — KCP는 이제 Java 네이티브이므로 불필요
     // ConnectScreenMixin이 KcpAddressRegistry를 통해 직접 처리

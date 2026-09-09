@@ -36,7 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       조인자(offer/DataChannel 생성) ↔ 호스트(answer)가 SDP/ICE를 교환.
  *       릴레이 메시지에 발신자 정보가 없으므로 반드시 2인 세션으로 격리.</li>
  * </ol>
- * WebRTC 세션 수립 후 흐름은 OpenFriend Go 구현과 동일:
+ * WebRTC 세션 수립 후 흐름:
  * 첫 데이터 수신 시 target TCP dial(5s) → 양방향 파이프, 16MB 백프레셔,
  * DataChannel open 10초 타임아웃, target 프로브(1s) 후 진행.
  * ICE 서버는 시그널링 서버가 relays(servers) 메시지로 내려주면 그것을,
@@ -216,7 +216,7 @@ public class WebRtcHost {
             LOG.info("[host] join detected: sid={}", sid);
 
             worker.execute(() -> {
-                // Go와 동일: target 프로브 후 진행 (실패 시 조인자는 타임아웃)
+                // target 프로브 후 진행 (실패 시 조인자는 타임아웃)
                 if (!probeTarget()) {
                     LOG.warn("[host] target unreachable; ignoring join sid={}", sid);
                     return;
@@ -400,7 +400,7 @@ public class WebRtcHost {
         }
     }
 
-    // ── WebRTC 세션 (기존 OpenFriend Go bridge.hostSession과 동일 흐름) ───────
+    // ── WebRTC 세션 ───────────────────────────────────────────────────────────
 
     private void startSession(PairSignal pair, String offerSdp) {
         if (!running.get() || pair.closed) return;
@@ -451,7 +451,7 @@ public class WebRtcHost {
 
                 @Override
                 public void onIceConnectionChange(RTCIceConnectionState state) {
-                    // Go와 동일: FAILED에서만 종료, DISCONNECTED는 자동 복구 대기
+                    // FAILED에서만 종료, DISCONNECTED는 자동 복구 대기
                     if (state == RTCIceConnectionState.FAILED) {
                         LOG.warn("[host] ICE failed sid={}", sid);
                         if (!dcOpened) notifyHostFailure();
@@ -568,7 +568,7 @@ public class WebRtcHost {
             for (RTCIceCandidate c : toApply) pc.addIceCandidate(c);
         }
 
-        // ── 데이터 파이프 (Go hostSession.onPeerData / TCPBridge와 동일) ─────
+        // ── 데이터 파이프 ─────────────────────────────────────────────────
 
         private void setupDataChannel(RTCDataChannel channel) {
             channel.registerObserver(new RTCDataChannelObserver() {

@@ -16,9 +16,8 @@ import java.util.Base64;
  * 시그널링 서버 WebSocket 클라이언트 — 자체 RFC 6455 구현.
  * <p>
  * 기존 java.net.http.WebSocket은 일부 서버/방화벽 조합에서 업그레이드 응답이
- * 오지 않아 핸드셰이크가 타임아웃되는 문제가 있었다 (Go coder/websocket은 정상).
- * Go 클라이언트가 보내는 것과 동일한 최소 핸드셰이크 헤더만 전송하도록
- * raw 소켓 기반으로 재구현. 외부 의존성 없음.
+ * 오지 않아 핸드셰이크가 타임아웃되는 문제가 있었다. 최소한의 핸드셰이크
+ * 헤더만 전송하도록 raw 소켓 기반으로 재구현. 외부 의존성 없음.
  */
 public abstract class WebSocketClient {
 
@@ -55,7 +54,7 @@ public abstract class WebSocketClient {
         if (uri.getRawQuery() != null) path = path + "?" + uri.getRawQuery();
 
         // JVM 프록시 설정(런처가 주입하는 socksProxyHost 등)을 우회하고
-        // Go 바이너리와 동일하게 항상 "직접" 연결한다. 프록시가 설정된 환경에서
+        // 항상 "직접" 연결한다. 프록시가 설정된 환경에서
         // new Socket()은 프록시를 경유해 Connection refused/timeout이 날 수 있다.
         String socksHost = System.getProperty("socksProxyHost");
         String httpProxyHost = System.getProperty("http.proxyHost");
@@ -76,7 +75,7 @@ public abstract class WebSocketClient {
             OutputStream o = new BufferedOutputStream(s.getOutputStream());
             InputStream  in = new BufferedInputStream(s.getInputStream());
 
-            // Go coder/websocket과 동일한 최소 헤더 (User-Agent 등 미포함)
+            // 최소 헤더만 전송 (User-Agent 등 미포함)
             byte[] keyBytes = new byte[16];
             RANDOM.nextBytes(keyBytes);
             String key = Base64.getEncoder().encodeToString(keyBytes);
@@ -112,7 +111,7 @@ public abstract class WebSocketClient {
                 throw new IOException("handshake failed: bad Sec-WebSocket-Accept");
             }
 
-            s.setSoTimeout(0); // 이후는 무한 대기 (Go와 동일)
+            s.setSoTimeout(0); // 이후는 무한 대기
             socket = s;
             out = o;
             ok = true;

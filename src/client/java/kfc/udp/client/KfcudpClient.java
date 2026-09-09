@@ -181,7 +181,6 @@ public class KfcudpClient implements ClientModInitializer {
             WebRtcBridge.stop();
             WebRtcBridge.stopHost();
             WebRtcBridge.stopProtocol();
-            WebRtcBridge.cleanup();
         }, "kfcudp-shutdown"));
     }
 

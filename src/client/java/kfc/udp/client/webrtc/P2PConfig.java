@@ -27,7 +27,7 @@ public final class P2PConfig {
     public static final String TURN_URL =
             System.getProperty("kfcudp.turn", "turn:kite-private-cloud.kro.kr:3478");
 
-    /** Go 구현(bridge.turnServers)에서 실사용하던 coturn 정적 계정 */
+    /** 실사용 검증된 coturn 정적 계정 */
     public static final String TURN_USERNAME =
             System.getProperty("kfcudp.turn.user", "minecraft");
     public static final String TURN_CREDENTIAL =
