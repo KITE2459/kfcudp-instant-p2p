@@ -643,6 +643,9 @@ public class WebRtcHost {
                         } catch (Exception e) {
                             LOG.warn("[host] Failed to dial target {}:{}: {}",
                                     targetHost, targetPort, e.getMessage());
+                            // dcOpened 이후 유일한 미통보 실패 경로였다 — 다른 실패 지점
+                            // (ICE FAILED, handshake timeout)과 동일하게 알려준다.
+                            notifyHostFailure();
                             pair.close();
                             return;
                         }

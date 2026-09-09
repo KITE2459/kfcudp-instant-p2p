@@ -234,9 +234,11 @@ public class KfcudpClient implements ClientModInitializer {
             server.openToLan(gameMode, allowCheats, lanPort);
         } else {
             // 바닐라 "Open to LAN"으로 이미 열려 있던 경우 — openToLan()을 다시 부르면
-            // 포트 재바인드 시도로 실패해서 여기서 고른 Allow Commands 설정이 그냥
-            // 무시된다. 이 값만 따로 적용한다.
+            // 포트 재바인드 시도로 실패해서 여기서 고른 설정이 그냥 무시된다.
+            // Allow Commands / 게임모드 둘 다 값만 따로 적용한다.
             server.getPlayerManager().setCheatsAllowed(allowCheats);
+            ((kfc.udp.client.mixin.IntegratedServerAccessor) server)
+                    .kfcudp$setForcedGameMode(gameMode);
         }
         // openToLan은 max player count를 안 건드리므로 바닐라 기본값(8)에 그대로 걸려 있다.
         // P2PBanManager.checkCanJoin은 여기서 정한 정원보다 낮은 경우에만 거부하고,
