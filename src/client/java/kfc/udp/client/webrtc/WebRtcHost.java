@@ -508,7 +508,7 @@ public class WebRtcHost {
         }
 
         /**
-         * 직결(P2P)/중계(TURN) 여부를 기록해 둔다 — 이 시점엔 아직 로그인 전이라 UUID를
+         * 직결(Direct)/중계(TURN) 여부를 기록해 둔다 — 이 시점엔 아직 로그인 전이라 UUID를
          * 모르므로 IP로 등록해 두고, PlayerJoinMessageMixin이 참여 메시지에 접미사로 붙인다.
          * 조인자 본인 화면에는 KfcudpClient가 월드 진입 시점에 따로 띄운다.
          */

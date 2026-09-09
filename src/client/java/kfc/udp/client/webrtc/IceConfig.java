@@ -18,7 +18,7 @@ import java.util.Set;
  * {@link P2PConfig#RELAY_ONLY} 가 true 면
  * <ul>
  *   <li>{@code iceTransportPolicy = RELAY} — host/srflx 후보를 아예 수집하지 않는다.
- *       즉 직결(P2P)·홀펀칭 경로가 생성되지 않고 모든 트래픽이 TURN 릴레이를 통과한다.</li>
+ *       즉 직결(Direct)·홀펀칭 경로가 생성되지 않고 모든 트래픽이 TURN 릴레이를 통과한다.</li>
  *   <li>시그널링 서버가 내려준 relay 목록에서 STUN 항목을 제거한다.
  *       (RELAY 정책에서 STUN 은 후보를 만들지 못하므로 무의미)</li>
  *   <li>TURN 이 하나도 없으면 {@link P2PConfig#TURN_URL} 기본값을 채워 넣는다.
