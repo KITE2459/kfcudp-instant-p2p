@@ -1,5 +1,14 @@
+// 26.x(언옵퓨스케이티드) 전용 빌드스크립트 — settings.gradle.kts의 .buildscript()로 지정됨.
+// 1.21.x용 build.gradle.kts와 갈라지는 지점:
+//   · 플러그인이 net.fabricmc.fabric-loom-remap → net.fabricmc.fabric-loom(리매핑 없음)
+//   · mappings(...) 선언 자체가 없음 — Mojang 공식 매핑이 Minecraft 아티팩트에 그대로 실려 있음
+//   · modImplementation → implementation (리매핑 대상이 없으므로 일반 의존성과 동일)
+//   · Java 25, Fabric Loader 0.19.5+
+//   · mixin { useLegacyMixinAp = true }가 불필요 — 그 설정은 TinyRemapper의 인라인
+//     리매핑이 우리 @Inject full-descriptor 타겟을 깨는 문제를 우회하려던 것이었는데,
+//     26.x는 애초에 리매핑을 안 하므로 그 문제 자체가 없다.
 plugins {
-    id("net.fabricmc.fabric-loom-remap") version "1.16-SNAPSHOT"
+    id("net.fabricmc.fabric-loom") version "1.17-SNAPSHOT"
     id("maven-publish")
 }
 
@@ -14,15 +23,6 @@ repositories {
 loom {
     splitEnvironmentSourceSets()
 
-    // Loom 1.12+ defaults to remapping Mixins in-place via TinyRemapper instead of the
-    // classic AP-generated refmap. That path doesn't correctly remap our full-descriptor
-    // @Inject targets (e.g. ClientConnectionMixin's overload-disambiguating `connect(...)`
-    // selector), which silently produces a jar with no refmap and a runtime
-    // "No refMap loaded" MixinApplyError. Force the legacy AP/refmap path instead.
-    mixin {
-        useLegacyMixinAp = true
-    }
-
     mods {
         create("instant-p2p") {
             sourceSet(sourceSets["main"])
@@ -33,9 +33,8 @@ loom {
 
 dependencies {
     minecraft("com.mojang:minecraft:${stonecutter.current.version}")
-    mappings("net.fabricmc:yarn:${sc.properties["deps.yarn"] as String}:v2")
-    modImplementation("net.fabricmc:fabric-loader:${property("loader_version")}")
-    modImplementation("net.fabricmc.fabric-api:fabric-api:${sc.properties["deps.fabric_api"] as String}")
+    implementation("net.fabricmc:fabric-loader:${project.property("loader_version_26x")}")
+    implementation("net.fabricmc.fabric-api:fabric-api:${sc.properties["deps.fabric_api"] as String}")
 
     // WebRTC Java — dev.onvoid.webrtc 0.14.0 (MC 버전과 무관, 고정)
     implementation("dev.onvoid.webrtc:webrtc-java:0.14.0")
@@ -47,9 +46,9 @@ dependencies {
 
 tasks.processResources {
     val modVersion = project.version
-    val loaderDepends = ">=${project.property("loader_version")}"
-    val minecraftDepends = ">=1.21.5 <=1.21.11"
-    val javaDepends = ">=21"
+    val loaderDepends = ">=${project.property("loader_version_26x")}"
+    val minecraftDepends = ">=26.1 <=26.2"
+    val javaDepends = ">=25"
     inputs.property("version", modVersion)
     inputs.property("loaderDepends", loaderDepends)
     filesMatching("fabric.mod.json") {
@@ -63,13 +62,13 @@ tasks.processResources {
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release = 21
+    options.release = 25
 }
 
 java {
     withSourcesJar()
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+    sourceCompatibility = JavaVersion.VERSION_25
+    targetCompatibility = JavaVersion.VERSION_25
 }
 
 tasks.jar {

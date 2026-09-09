@@ -30,3 +30,18 @@ deps.fabric_api = "0.138.4+1.21.10"
 ["1.21.11"]
 deps.yarn = "1.21.11+build.6"
 deps.fabric_api = "0.141.6+1.21.11"
+
+# 26.x부터는 Minecraft가 완전히 언옵퓨스케이티드라 Yarn 자체가 없다(Mojang 공식 매핑을
+# 그대로 씀) — deps.yarn이 없는 게 정상. loader_version(0.19.5)은 4개 버전이 전부
+# 동일해서 build-26x.gradle.kts에 상수로 뒀다.
+["26.1"]
+deps.fabric_api = "0.145.1+26.1"
+
+["26.1.1"]
+deps.fabric_api = "0.145.4+26.1.1"
+
+["26.1.2"]
+deps.fabric_api = "0.155.2+26.1.2"
+
+["26.2"]
+deps.fabric_api = "0.159.0+26.2"
