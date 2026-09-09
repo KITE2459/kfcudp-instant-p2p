@@ -31,7 +31,7 @@
   "instant-p2p.msg.join_suffix_direct": "§a(Direct)",
   "instant-p2p.msg.join_suffix_relay": "§b(Relay)",
   "instant-p2p.msg.my_connection_direct": "§aYou are connected directly.",
-  "instant-p2p.msg.my_connection_relay": "§bYou are connected via the relay server (TURN).",
+  "instant-p2p.msg.my_connection_relay": "§bYou are connected via the relay.",
   "instant-p2p.msg.signaling_unreachable": "§cThe signaling service is currently unavailable — retrying in the background. Players may not be able to join until this recovers.",
   "instant-p2p.msg.signaling_recovered": "§aReconnected to the signaling service — the room is working normally again."
 }
