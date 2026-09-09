@@ -211,7 +211,9 @@ public class WebRtcHost {
 
             String sid = name.substring(1);
             String clientIp = remote.contains(":") ? remote.substring(0, remote.lastIndexOf(':')) : remote;
-            LOG.info("[host] join detected: sid={} ip={}", sid, clientIp);
+            // IP는 로그에 남기지 않는다 — 방장이 버그 리포트로 로그를 그대로
+            // 공유하면 조인자의 실제 IP가 텍스트로 박제된다. sid로 세션 추적 충분.
+            LOG.info("[host] join detected: sid={}", sid);
 
             worker.execute(() -> {
                 // Go와 동일: target 프로브 후 진행 (실패 시 조인자는 타임아웃)
@@ -491,13 +493,16 @@ public class WebRtcHost {
             } catch (RejectedExecutionException ignored) {}
         }
 
-        /** 접속 시도가 끝내 연결로 안 이어졌을 때 방장 채팅으로만 알림 (조인자는 자기 화면에서 이미 봄). */
+        /**
+         * 접속 시도가 끝내 연결로 안 이어졌을 때 방장 채팅으로만 알림 (조인자는 자기 화면에서 이미 봄).
+         * IP는 넣지 않는다 — 방장이 스크린샷을 공유하면 그대로 노출된다.
+         */
         private void notifyHostFailure() {
             MinecraftClient client = MinecraftClient.getInstance();
             client.execute(() -> {
                 if (client.player != null) {
                     client.player.sendMessage(
-                            Text.translatable("kfcudp.msg.guest_connect_failed", clientIp), false);
+                            Text.translatable("kfcudp.msg.guest_connect_failed"), false);
                 }
             });
         }
@@ -585,8 +590,7 @@ public class WebRtcHost {
                         dcOpened = true;
                         dcOpenLatch.countDown();
                         notifyConnectionType();
-                        LOG.info("[host] DataChannel open; waiting for first data sid={} clientIp={}",
-                                sid, clientIp);
+                        LOG.info("[host] DataChannel open; waiting for first data sid={}", sid);
                     } else if (state == RTCDataChannelState.CLOSED) {
                         LOG.info("[host] DataChannel closed sid={}", sid);
                         pair.close();
@@ -613,8 +617,8 @@ public class WebRtcHost {
                     if (closed.get()) return;
                     w = tcpWriter;
                     if (w == null) {
-                        LOG.info("[host] first data received; dialing target {}:{} clientIp={}",
-                                targetHost, targetPort, clientIp);
+                        LOG.info("[host] first data received; dialing target {}:{} sid={}",
+                                targetHost, targetPort, sid);
                         try {
                             SocketChannel sock = dialTarget();
                             sock.setOption(StandardSocketOptions.TCP_NODELAY, true);

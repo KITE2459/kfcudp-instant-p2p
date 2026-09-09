@@ -27,7 +27,7 @@
   "kfcudp.msg.connect_failed": "§c접속에 실패했습니다: %s",
   "kfcudp.msg.host_not_found": "§c호스트를 찾을 수 없습니다. 초대 코드를 다시 확인해주세요. (호스트가 접속 중이 아닐 수 있습니다)",
   "kfcudp.msg.ice_failed": "§c현재 서버 점검 중으로 이용하실 수 없습니다. (STUN/TURN 연결 실패)",
-  "kfcudp.msg.guest_connect_failed": "§7플레이어(%s)가 접속을 시도했지만 연결에 실패했습니다.",
+  "kfcudp.msg.guest_connect_failed": "§7플레이어가 접속을 시도했지만 연결에 실패했습니다.",
   "kfcudp.msg.join_suffix_direct": "§a(직결 통신)",
   "kfcudp.msg.join_suffix_relay": "§b(중계 통신)",
   "kfcudp.msg.my_connection_direct": "§a호스트와 직결 통신 합니다",

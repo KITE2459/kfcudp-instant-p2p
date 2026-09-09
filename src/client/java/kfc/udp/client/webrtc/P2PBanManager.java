@@ -336,17 +336,19 @@ public class P2PBanManager {
         String realIp = resolveRealIp(address);
         if (realIp != null) uuidToRealIp.put(profileId(profile), realIp);
 
+        // IP는 로그에 남기지 않는다 — 방장이 버그 리포트로 로그를 그대로 공유하면
+        // 접속자의 실제 IP가 텍스트로 박제된다. 닉네임만으로 충분히 추적 가능.
         String uuid = profileId(profile).toString();
         if (isPlayerBanned(uuid)) {
-            LOG.info("[instant-p2p] login refused (banned): {} / {}", profileName(profile), realIp);
+            LOG.info("[instant-p2p] login refused (banned): {}", profileName(profile));
             return Text.literal("§cYou are banned: " + getBanReason(uuid));
         }
         if (!P2PWhitelistManager.canJoin(uuid)) {
-            LOG.info("[instant-p2p] login refused (not whitelisted): {} / {}", profileName(profile), realIp);
+            LOG.info("[instant-p2p] login refused (not whitelisted): {}", profileName(profile));
             return Text.translatable("kfcudp.msg.not_whitelisted");
         }
         if (realIp != null && isIpBanned(realIp)) {
-            LOG.info("[instant-p2p] login refused (ip banned): {} / {}", profileName(profile), realIp);
+            LOG.info("[instant-p2p] login refused (ip banned): {}", profileName(profile));
             return Text.literal("§cYour IP is banned: " + getIpBanReason(realIp));
         }
         // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다
