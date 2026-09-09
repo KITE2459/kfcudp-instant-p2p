@@ -38,6 +38,9 @@ bin/
 
 run/
 
+# stonecutter — 버전별 생성 소스 + buildAllVersions 산출물 모음
+versions/
+
 # java
 
 hs_err_*.log
