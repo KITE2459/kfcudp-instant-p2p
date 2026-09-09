@@ -116,7 +116,7 @@ public class WebRtcClient {
 
             if (!hostArrivedLatch.await(15, TimeUnit.SECONDS)) {
                 LOG.warn("[webrtc] host did not arrive in pair session (room={})", roomId);
-                notifyFailure(Text.translatable("kfcudp.msg.host_not_found"));
+                notifyFailure(Text.translatable("instant-p2p.msg.host_not_found"));
                 close(); return;
             }
 
@@ -125,7 +125,7 @@ public class WebRtcClient {
 
             if (!readyLatch.await(30, TimeUnit.SECONDS)) {
                 LOG.warn("[webrtc] DataChannel open timed out");
-                notifyFailure(Text.translatable("kfcudp.msg.ice_failed"));
+                notifyFailure(Text.translatable("instant-p2p.msg.ice_failed"));
                 close(); return;
             }
 
@@ -139,7 +139,7 @@ public class WebRtcClient {
         } catch (Exception e) {
             if (running.get()) {
                 LOG.warn("[webrtc] bridge error: {}", e.getMessage());
-                notifyFailure(Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage())));
+                notifyFailure(Text.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())));
             }
             close();
         }

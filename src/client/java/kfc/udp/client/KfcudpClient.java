@@ -31,7 +31,7 @@ import java.util.Random;
 
 public class KfcudpClient implements ClientModInitializer {
 
-    public static final Logger LOG = LoggerFactory.getLogger("kfcudp");
+    public static final Logger LOG = LoggerFactory.getLogger("instant-p2p");
     private static final Random RANDOM = new Random();
     private static final String CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -50,7 +50,7 @@ public class KfcudpClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        LOG.info("[kfcudp] WebRTC bridge mod initialized");
+        LOG.info("[instant-p2p] WebRTC bridge mod initialized");
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 멀티플레이 화면 - 초대 수락하기 버튼
@@ -61,7 +61,7 @@ public class KfcudpClient implements ClientModInitializer {
                 int btnY = 10;
                 Screens.getButtons(screen).add(
                         ButtonWidget.builder(
-                                Text.translatable("kfcudp.join_room.title"),
+                                Text.translatable("instant-p2p.join_room.title"),
                                 button -> client.setScreen(new JoinRoomScreen(screen))
                         ).dimensions(btnX, btnY, btnW, btnH).build()
                 );
@@ -79,7 +79,7 @@ public class KfcudpClient implements ClientModInitializer {
 
             Screens.getButtons(screen).add(
                     ButtonWidget.builder(
-                            Text.translatable("kfcudp.custom_room.title"),
+                            Text.translatable("instant-p2p.custom_room.title"),
                             button -> client.setScreen(new CustomRoomScreen(screen))
                     ).dimensions(btnX, btnY, btnW, btnH).build()
             );
@@ -93,7 +93,7 @@ public class KfcudpClient implements ClientModInitializer {
                                 button -> client.keyboard.setClipboard(code)
                         ).dimensions(btnX, btnY + btnH + 2, btnW, btnH)
                                 .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
-                                        Text.translatable("kfcudp.msg.click_to_copy")))
+                                        Text.translatable("instant-p2p.msg.click_to_copy")))
                                 .build()
                 );
             }
@@ -112,7 +112,7 @@ public class KfcudpClient implements ClientModInitializer {
 
             inviteTicksRemaining--;
             if (inviteTicksRemaining <= 0) {
-                client.player.sendMessage(Text.translatable("kfcudp.msg.invite_expired"), false);
+                client.player.sendMessage(Text.translatable("instant-p2p.msg.invite_expired"), false);
                 cancelInvite();
             }
         });
@@ -141,7 +141,7 @@ public class KfcudpClient implements ClientModInitializer {
             client.execute(() -> {
                 if (client.player != null) {
                     client.player.sendMessage(
-                            Text.translatable("kfcudp.msg.invite_no_longer_expires"), false);
+                            Text.translatable("instant-p2p.msg.invite_no_longer_expires"), false);
                 }
             });
         });
@@ -152,8 +152,8 @@ public class KfcudpClient implements ClientModInitializer {
             Boolean relay = WebRtcBridge.getActiveConnectionUsesRelay();
             if (relay == null || client.player == null) return;
             client.player.sendMessage(Text.translatable(relay
-                    ? "kfcudp.msg.my_connection_relay"
-                    : "kfcudp.msg.my_connection_direct"), false);
+                    ? "instant-p2p.msg.my_connection_relay"
+                    : "instant-p2p.msg.my_connection_direct"), false);
         });
 
         // ban/whitelist 명령어 등록 (리슨 서버에서도 동작)
@@ -194,14 +194,14 @@ public class KfcudpClient implements ClientModInitializer {
 
         IntegratedServer server = client.getServer();
         if (server == null) {
-            client.player.sendMessage(Text.translatable("kfcudp.msg.singleplay_only"), false);
+            client.player.sendMessage(Text.translatable("instant-p2p.msg.singleplay_only"), false);
             return;
         }
 
         // 기존 초대 만료
         if (activeInviteCode != null) {
             client.player.sendMessage(
-                    Text.translatable("kfcudp.msg.prev_invite_expired", activeInviteCode), false);
+                    Text.translatable("instant-p2p.msg.prev_invite_expired", activeInviteCode), false);
             cancelInvite();
         }
 
@@ -269,8 +269,8 @@ public class KfcudpClient implements ClientModInitializer {
         try {
             WebRtcBridge.startHost(code, "127.0.0.1:" + finalPort);
         } catch (Exception e) {
-            LOG.error("[kfcudp] Failed to start host: {}", e.getMessage(), e);
-            client.player.sendMessage(Text.translatable("kfcudp.msg.host_failed"), false);
+            LOG.error("[instant-p2p] Failed to start host: {}", e.getMessage(), e);
+            client.player.sendMessage(Text.translatable("instant-p2p.msg.host_failed"), false);
             return;
         }
 
@@ -278,15 +278,15 @@ public class KfcudpClient implements ClientModInitializer {
         inviteTicksRemaining = INVITE_TIMEOUT_TICKS;
         inviteEverJoined = false;
 
-        MutableText prefix   = Text.translatable("kfcudp.msg.invite_prefix");
+        MutableText prefix   = Text.translatable("instant-p2p.msg.invite_prefix");
         MutableText codeText = Text.literal(code).setStyle(Style.EMPTY
                 .withColor(Formatting.YELLOW)
                 .withBold(true)
                 .withUnderline(true)
                 .withClickEvent(new ClickEvent.CopyToClipboard(code))
-                .withHoverEvent(new HoverEvent.ShowText(Text.translatable("kfcudp.msg.click_to_copy")))
+                .withHoverEvent(new HoverEvent.ShowText(Text.translatable("instant-p2p.msg.click_to_copy")))
         );
-        MutableText suffix = Text.translatable("kfcudp.msg.invite_suffix");
+        MutableText suffix = Text.translatable("instant-p2p.msg.invite_suffix");
 
         client.player.sendMessage(
                 Text.empty().append(prefix).append(codeText).append(suffix), false);
@@ -321,15 +321,15 @@ public class KfcudpClient implements ClientModInitializer {
                     try {
                         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
                             if (P2PBanManager.isHost(server, sp)) continue;
-                            sp.networkHandler.disconnect(Text.translatable("kfcudp.msg.room_closed"));
+                            sp.networkHandler.disconnect(Text.translatable("instant-p2p.msg.room_closed"));
                         }
                     } catch (Exception e) {
-                        LOG.warn("[kfcudp] Failed to kick guests before closing room: {}", e.getMessage());
+                        LOG.warn("[instant-p2p] Failed to kick guests before closing room: {}", e.getMessage());
                     }
                 });
             }
         } catch (Exception e) {
-            LOG.warn("[kfcudp] closeRoomGracefully failed: {}", e.getMessage());
+            LOG.warn("[instant-p2p] closeRoomGracefully failed: {}", e.getMessage());
         }
 
         // 연달아 새 방을 열면 startCustomRoom → WebRtcBridge.startHost가 이미 이전

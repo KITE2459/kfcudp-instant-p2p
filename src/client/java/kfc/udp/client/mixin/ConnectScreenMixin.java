@@ -56,7 +56,7 @@ public class ConnectScreenMixin {
                 client.execute(() -> client.setScreen(new DisconnectedScreen(
                         screen,
                         Text.translatable("connect.failed"),
-                        Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage())))));
+                        Text.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())))));
             }
             return;
         }
@@ -90,7 +90,7 @@ public class ConnectScreenMixin {
                         client.setScreen(new DisconnectedScreen(
                                 screen,
                                 Text.translatable("connect.failed"),
-                                Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage()))));
+                                Text.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage()))));
                     }
                 });
             } catch (Exception e) {
@@ -98,7 +98,7 @@ public class ConnectScreenMixin {
                 client.execute(() -> client.setScreen(new DisconnectedScreen(
                         screen,
                         Text.translatable("connect.failed"),
-                        Text.translatable("kfcudp.msg.connect_failed", String.valueOf(e.getMessage())))));
+                        Text.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())))));
             }
         }
     }

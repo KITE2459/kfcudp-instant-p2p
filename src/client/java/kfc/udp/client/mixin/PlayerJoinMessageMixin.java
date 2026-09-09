@@ -25,7 +25,7 @@ public abstract class PlayerJoinMessageMixin {
             ClientConnection connection, ServerPlayerEntity player, ConnectedClientData clientData) {
         Boolean relay = P2PBanManager.connectionTypeOf(player.getUuid());
         Text out = relay == null ? message : message.copy().append(" ").append(Text.translatable(
-                relay ? "kfcudp.msg.join_suffix_relay" : "kfcudp.msg.join_suffix_direct"));
+                relay ? "instant-p2p.msg.join_suffix_relay" : "instant-p2p.msg.join_suffix_direct"));
         instance.broadcast(out, overlay);
     }
 }

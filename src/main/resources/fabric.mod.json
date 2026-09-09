@@ -1,8 +1,8 @@
 {
 	"schemaVersion": 1,
-	"id": "kfcudp",
+	"id": "instant-p2p",
 	"version": "${version}",
-	"name": "kfcudp",
+	"name": "instant-p2p",
 	"description": "This is an example description! Tell everyone what your mod is about!",
 	"authors": [
 		"Me!"
@@ -12,7 +12,7 @@
 		"sources": "https://github.com/FabricMC/fabric-example-mod"
 	},
 	"license": "CC0-1.0",
-	"icon": "assets/kfcudp/icon.png",
+	"icon": "assets/instant-p2p/icon.png",
 	"environment": "*",
 	"entrypoints": {
 		"main": [
@@ -23,9 +23,9 @@
 		]
 	},
 	"mixins": [
-		"kfcudp.mixins.json",
+		"instant-p2p.mixins.json",
 		{
-			"config": "kfcudp.client.mixins.json",
+			"config": "instant-p2p.client.mixins.json",
 			"environment": "client"
 		}
 	],

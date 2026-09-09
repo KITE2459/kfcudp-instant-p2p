@@ -14,9 +14,9 @@ import java.util.Objects;
 
 public class JoinRoomScreen extends Screen {
 
-    private static final Text TITLE_TEXT      = Text.translatable("kfcudp.join_room.title");
-    private static final Text CODE_LABEL_TEXT = Text.translatable("kfcudp.join_room.code_label");
-    private static final Text JOIN_TEXT       = Text.translatable("kfcudp.join_room.join");
+    private static final Text TITLE_TEXT      = Text.translatable("instant-p2p.join_room.title");
+    private static final Text CODE_LABEL_TEXT = Text.translatable("instant-p2p.join_room.code_label");
+    private static final Text JOIN_TEXT       = Text.translatable("instant-p2p.join_room.join");
 
     private final Screen parent;
     private TextFieldWidget codeField;
@@ -34,7 +34,7 @@ public class JoinRoomScreen extends Screen {
         this.codeField = new TextFieldWidget(
                 this.textRenderer, cx - 100, this.height / 2 - 10, 200, 20, CODE_LABEL_TEXT);
         this.codeField.setMaxLength(20);
-        this.codeField.setPlaceholder(Text.translatable("kfcudp.join_room.code_placeholder").formatted(net.minecraft.util.Formatting.DARK_GRAY));
+        this.codeField.setPlaceholder(Text.translatable("instant-p2p.join_room.code_placeholder").formatted(net.minecraft.util.Formatting.DARK_GRAY));
         this.codeField.setChangedListener(text -> this.joinButton.active = !text.trim().isEmpty());
         this.addDrawableChild(this.codeField);
 
@@ -59,7 +59,7 @@ public class JoinRoomScreen extends Screen {
 
         String address = "webrtc." + code;
         ServerAddress serverAddress = ServerAddress.parse(address);
-        ServerInfo serverInfo = new ServerInfo(Text.translatable("kfcudp.join_room.server_name").getString(), address, ServerInfo.ServerType.OTHER);
+        ServerInfo serverInfo = new ServerInfo(Text.translatable("instant-p2p.join_room.server_name").getString(), address, ServerInfo.ServerType.OTHER);
 
         ConnectScreen.connect(this.parent, Objects.requireNonNull(this.client), serverAddress, serverInfo, false, null);
     }

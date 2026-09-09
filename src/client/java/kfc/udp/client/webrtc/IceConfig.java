@@ -31,7 +31,7 @@ import java.util.Set;
  */
 final class IceConfig {
 
-    private static final Logger LOG = LoggerFactory.getLogger("kfcudp-ice");
+    private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-ice");
 
     private IceConfig() {}
 

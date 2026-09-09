@@ -345,7 +345,7 @@ public class P2PBanManager {
         }
         if (!P2PWhitelistManager.canJoin(uuid)) {
             LOG.info("[instant-p2p] login refused (not whitelisted): {}", profileName(profile));
-            return Text.translatable("kfcudp.msg.not_whitelisted");
+            return Text.translatable("instant-p2p.msg.not_whitelisted");
         }
         if (realIp != null && isIpBanned(realIp)) {
             LOG.info("[instant-p2p] login refused (ip banned): {}", profileName(profile));
@@ -354,7 +354,7 @@ public class P2PBanManager {
         // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다
         int max = roomMaxPlayers;
         if (max > 0 && server.getCurrentPlayerCount() >= max) {
-            return Text.translatable("kfcudp.msg.room_full", max);
+            return Text.translatable("instant-p2p.msg.room_full", max);
         }
         return null;
     }

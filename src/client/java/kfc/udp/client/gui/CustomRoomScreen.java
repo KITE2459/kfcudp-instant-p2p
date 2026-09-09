@@ -18,11 +18,11 @@ public class CustomRoomScreen extends Screen {
     private static final int MIN_PLAYERS         = 2;
     private static final int MAX_PLAYERS         = 100;
 
-    private static final Text TITLE_TEXT        = Text.translatable("kfcudp.custom_room.title");
-    private static final Text GAME_MODE_TEXT     = Text.translatable("kfcudp.custom_room.game_mode");
-    private static final Text MAX_PLAYERS_TEXT   = Text.translatable("kfcudp.custom_room.max_players", MAX_PLAYERS);
-    private static final Text ALLOW_COMMANDS_TEXT = Text.translatable("kfcudp.custom_room.allow_commands");
-    private static final Text START_TEXT         = Text.translatable("kfcudp.custom_room.start");
+    private static final Text TITLE_TEXT        = Text.translatable("instant-p2p.custom_room.title");
+    private static final Text GAME_MODE_TEXT     = Text.translatable("instant-p2p.custom_room.game_mode");
+    private static final Text MAX_PLAYERS_TEXT   = Text.translatable("instant-p2p.custom_room.max_players", MAX_PLAYERS);
+    private static final Text ALLOW_COMMANDS_TEXT = Text.translatable("instant-p2p.custom_room.allow_commands");
+    private static final Text START_TEXT         = Text.translatable("instant-p2p.custom_room.start");
     private static final int INVALID_COLOR       = 0xFFFF5555;
 
     private final Screen parent;

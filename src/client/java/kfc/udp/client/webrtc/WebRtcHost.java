@@ -149,7 +149,7 @@ public class WebRtcHost {
                 LOG.info("[host] lobby joined: room={}", roomId);
                 if (signalingDown) {
                     signalingDown = false;
-                    notifyHost("kfcudp.msg.signaling_recovered");
+                    notifyHost("instant-p2p.msg.signaling_recovered");
                 }
             }
             @Override public void onMessage(String type, String json) {
@@ -174,7 +174,7 @@ public class WebRtcHost {
         // 하고 있으면 방장은 그걸 알 방법이 없다 — 한 번만 알려준다(재시도마다 스팸 X).
         if (!signalingDown) {
             signalingDown = true;
-            notifyHost("kfcudp.msg.signaling_unreachable");
+            notifyHost("instant-p2p.msg.signaling_unreachable");
         }
         long delay = backoffMs;
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
@@ -502,7 +502,7 @@ public class WebRtcHost {
             client.execute(() -> {
                 if (client.player != null) {
                     client.player.sendMessage(
-                            Text.translatable("kfcudp.msg.guest_connect_failed"), false);
+                            Text.translatable("instant-p2p.msg.guest_connect_failed"), false);
                 }
             });
         }

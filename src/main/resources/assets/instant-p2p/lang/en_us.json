@@ -1,0 +1,37 @@
+{
+  "instant-p2p.invite": "Invite",
+
+  "instant-p2p.custom_room.title": "Create Room",
+  "instant-p2p.custom_room.game_mode": "Game Mode",
+  "instant-p2p.custom_room.max_players": "Max Players (%s)",
+  "instant-p2p.custom_room.start": "Start",
+  "instant-p2p.custom_room.allow_commands": "Allow Commands",
+
+  "instant-p2p.join_room.title": "Join Room",
+  "instant-p2p.join_room.code_label": "Invite Code",
+  "instant-p2p.join_room.join": "Join",
+  "instant-p2p.join_room.code_placeholder": "Enter invite code...",
+  "instant-p2p.join_room.server_name": "Custom Room",
+
+  "instant-p2p.msg.invite_prefix": "§b[Invite Code] §f",
+  "instant-p2p.msg.invite_suffix": " §7(Click to copy — expires if no one joins within 2 minutes)",
+  "instant-p2p.msg.click_to_copy": "§7Click to copy",
+  "instant-p2p.msg.invite_expired": "§cThe invite has expired.",
+  "instant-p2p.msg.invite_no_longer_expires": "§aA player has joined — the invite code no longer expires.",
+  "instant-p2p.msg.room_full": "§cThe room is full. (Max %s players)",
+  "instant-p2p.msg.not_whitelisted": "§cYou are not whitelisted on this server.",
+  "instant-p2p.msg.singleplay_only": "§cOnly available in singleplayer.",
+  "instant-p2p.msg.prev_invite_expired": "§cPrevious invite (%s) has expired.",
+  "instant-p2p.msg.host_failed": "§cFailed to start host.",
+  "instant-p2p.msg.room_closed": "§eThe host has closed the room.",
+  "instant-p2p.msg.connect_failed": "§cFailed to connect: %s",
+  "instant-p2p.msg.host_not_found": "§cCould not find the host. Double-check the invite code, or the host may not be online.",
+  "instant-p2p.msg.ice_failed": "§cThe relay service is currently unavailable. (STUN/TURN connection failed)",
+  "instant-p2p.msg.guest_connect_failed": "§7A player tried to join but the connection could not be established.",
+  "instant-p2p.msg.join_suffix_direct": "§a(Direct)",
+  "instant-p2p.msg.join_suffix_relay": "§b(Relay)",
+  "instant-p2p.msg.my_connection_direct": "§aYou are connected directly (P2P).",
+  "instant-p2p.msg.my_connection_relay": "§bYou are connected via the relay server (TURN).",
+  "instant-p2p.msg.signaling_unreachable": "§cThe signaling service is currently unavailable — retrying in the background. Players may not be able to join until this recovers.",
+  "instant-p2p.msg.signaling_recovered": "§aReconnected to the signaling service — the room is working normally again."
+}

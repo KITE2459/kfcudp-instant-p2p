@@ -5,7 +5,7 @@ plugins {
 
 version = property("mod.version") as String
 group = property("mod.group") as String
-base.archivesName = "kfcudp-${stonecutter.current.version}"
+base.archivesName = "instant-p2p-${stonecutter.current.version}"
 
 repositories {
     mavenCentral()
@@ -24,7 +24,7 @@ loom {
     }
 
     mods {
-        create("kfcudp") {
+        create("instant-p2p") {
             sourceSet(sourceSets["main"])
             sourceSet(sourceSets["client"])
         }
