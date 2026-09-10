@@ -3,8 +3,6 @@ package kfc.udp.client.webrtc;
 import dev.onvoid.webrtc.*;
 import dev.onvoid.webrtc.media.audio.AudioDeviceModule;
 import dev.onvoid.webrtc.media.audio.AudioLayer;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -22,6 +20,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+//? if >=26.1 {
+/*import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+*///?} else {
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.text.Text;
+//?}
 
 /**
  * Java 네이티브 WebRTC 호스트 — VILLASframework signaling 프로토콜.
@@ -184,6 +189,16 @@ public class WebRtcHost {
         } catch (RejectedExecutionException ignored) {}
     }
 
+    //? if >=26.1 {
+    /*private void notifyHost(String translationKey) {
+        Minecraft client = Minecraft.getInstance();
+        client.execute(() -> {
+            if (client.player != null) {
+                client.player.sendSystemMessage(Component.translatable(translationKey));
+            }
+        });
+    }
+    *///?} else {
     private void notifyHost(String translationKey) {
         MinecraftClient client = MinecraftClient.getInstance();
         client.execute(() -> {
@@ -192,6 +207,7 @@ public class WebRtcHost {
             }
         });
     }
+    //?}
 
     private void handleLobby(String json) {
         if (VillasMsg.has(json, "servers")) {
@@ -497,6 +513,17 @@ public class WebRtcHost {
          * 접속 시도가 끝내 연결로 안 이어졌을 때 방장 채팅으로만 알림 (조인자는 자기 화면에서 이미 봄).
          * IP는 넣지 않는다 — 방장이 스크린샷을 공유하면 그대로 노출된다.
          */
+        //? if >=26.1 {
+        /*private void notifyHostFailure() {
+            Minecraft client = Minecraft.getInstance();
+            client.execute(() -> {
+                if (client.player != null) {
+                    client.player.sendSystemMessage(
+                            Component.translatable("instant-p2p.msg.guest_connect_failed"));
+                }
+            });
+        }
+        *///?} else {
         private void notifyHostFailure() {
             MinecraftClient client = MinecraftClient.getInstance();
             client.execute(() -> {
@@ -506,6 +533,7 @@ public class WebRtcHost {
                 }
             });
         }
+        //?}
 
         /**
          * 직결(Direct)/중계(TURN) 여부를 기록해 둔다 — 이 시점엔 아직 로그인 전이라 UUID를

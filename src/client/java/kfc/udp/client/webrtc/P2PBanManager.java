@@ -7,14 +7,22 @@ import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.server.MinecraftServer;
 import com.mojang.brigadier.CommandDispatcher;
+//? if >=26.1 {
+/*import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.server.players.NameAndId;
+*///?} else {
 import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 //? if >=1.21.9
 //import net.minecraft.server.PlayerConfigEntry;
+//?}
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -28,8 +36,13 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 
+//? if >=26.1 {
+/*import static net.minecraft.commands.Commands.argument;
+import static net.minecraft.commands.Commands.literal;
+*///?} else {
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
+//?}
 
 public class P2PBanManager {
 
@@ -82,41 +95,67 @@ public class P2PBanManager {
     /** {@code MinecraftServer#isHost(GameProfile)} → {@code isHost(PlayerConfigEntry)} (1.21.9+) */
     private static boolean isHost(MinecraftServer server, GameProfile profile) {
         if (profile == null) return false;
-        //? if >=1.21.9 {
+        //? if >=26.1 {
+        /*return server.isSingleplayerOwner(new NameAndId(profile));
+        *///?}
+        //? if >=1.21.9 <26.1 {
         /*return server.isHost(new PlayerConfigEntry(profile));
-        *///?} else {
+        *///?}
+        //? if <1.21.9 {
         return server.isHost(profile);
         //?}
     }
 
     /** 다른 패키지(예: KfcudpClient)에서 "이 플레이어가 방장인가"를 물을 때 쓰는 공개 버전. */
+    //? if >=26.1 {
+    /*public static boolean isHost(MinecraftServer server, ServerPlayer player) {
+    *///?} else {
     public static boolean isHost(MinecraftServer server, ServerPlayerEntity player) {
+    //?}
         return player != null && isHost(server, player.getGameProfile());
     }
 
     /**
      * {@code ServerCommandSource#hasPermissionLevel(int)} 3단계 변천사:
-     *   1.21.5~1.21.8: 인스턴스 메서드 hasPermissionLevel(int)
      *   1.21.9~1.21.10: CommandManager.requirePermissionLevel(int) 정적 팩토리
      *   1.21.11+: CommandManager.requirePermissionLevel(PermissionCheck) — int 오버로드 삭제
      */
-    static Predicate<ServerCommandSource> requireAdmin() {
-        //? if >=1.21.11 {
-        /*return CommandManager.requirePermissionLevel(CommandManager.ADMINS_CHECK);
-        *///?}
-        //? if >=1.21.9 <1.21.11 {
-        /*return CommandManager.requirePermissionLevel(3);
-        *///?}
-        //? if <1.21.9 {
-        return src -> src.hasPermissionLevel(3);
-        //?}
+    //? if >=26.1 {
+    /*static Predicate<CommandSourceStack> requireAdmin() {
+        return Commands.hasPermission(Commands.LEVEL_ADMINS);
     }
+    *///?}
+    //? if >=1.21.11 <26.1 {
+    /*static Predicate<ServerCommandSource> requireAdmin() {
+        return CommandManager.requirePermissionLevel(CommandManager.ADMINS_CHECK);
+    }
+    *///?}
+    //? if >=1.21.9 <1.21.11 {
+    /*static Predicate<ServerCommandSource> requireAdmin() {
+        return CommandManager.requirePermissionLevel(3);
+    }
+    *///?}
+    //? if <1.21.9 {
+    static Predicate<ServerCommandSource> requireAdmin() {
+        return src -> src.hasPermissionLevel(3);
+    }
+    //?}
 
     /**
      * 방장은 op 권한이나 "Allow Commands" 설정과 무관하게 유저 제어 명령을
      * 쓸 수 있어야 한다 — 안 그러면 Allow Commands를 꺼둔 방장 본인도 ban/whitelist를
      * 못 쓰게 되고, 방을 통째로 닫는 것 말곤 할 수 있는 게 없어진다.
      */
+    //? if >=26.1 {
+    /*static Predicate<CommandSourceStack> requireAdminOrHost() {
+        Predicate<CommandSourceStack> admin = requireAdmin();
+        return src -> {
+            MinecraftServer server = src.getServer();
+            return (server != null && src.getEntity() instanceof ServerPlayer sp && isHost(server, sp))
+                    || admin.test(src);
+        };
+    }
+    *///?} else {
     static Predicate<ServerCommandSource> requireAdminOrHost() {
         Predicate<ServerCommandSource> admin = requireAdmin();
         return src -> {
@@ -125,6 +164,7 @@ public class P2PBanManager {
                     || admin.test(src);
         };
     }
+    //?}
 
     /** {@link #lookupProfile}의 결과 — 버전 무관하게 uuid+name만 필요할 때 쓰는 최소 표현. */
     public record ProfileLookup(UUID id, String name) {}
@@ -139,11 +179,17 @@ public class P2PBanManager {
      * 반환 타입이 {@code GameProfile} → {@code PlayerConfigEntry}로 바뀌었다.
      */
     static ProfileLookup lookupProfile(MinecraftServer server, String name) {
-        //? if >=1.21.9 {
+        //? if >=26.1 {
+        /*return server.services().nameToIdCache().get(name)
+                .map(e -> new ProfileLookup(e.id(), e.name()))
+                .orElse(null);
+        *///?}
+        //? if >=1.21.9 <26.1 {
         /*return server.getApiServices().nameToIdCache().findByName(name)
                 .map(e -> new ProfileLookup(e.id(), e.name()))
                 .orElse(null);*/
-        //?} else {
+        //?}
+        //? if <1.21.9 {
         return server.getUserCache().findByName(name)
                 .map(p -> new ProfileLookup(profileId(p), profileName(p)))
                 .orElse(null);
@@ -154,6 +200,32 @@ public class P2PBanManager {
     // 자동완성 제공자
     // -------------------------------------------------------------------------
 
+    //? if >=26.1 {
+    /*
+    private static final SuggestionProvider<CommandSourceStack> ONLINE_PLAYERS =
+            (ctx, builder) -> {
+                for (ServerPlayer sp : ctx.getSource().getServer().getPlayerList().getPlayers()) {
+                    builder.suggest(profileName(sp.getGameProfile()));
+                }
+                return builder.buildFuture();
+            };
+
+    private static final SuggestionProvider<CommandSourceStack> BANNED_PLAYER_NAMES =
+            (ctx, builder) -> {
+                for (JsonObject o : bannedPlayers.values()) {
+                    if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                }
+                return builder.buildFuture();
+            };
+
+    private static final SuggestionProvider<CommandSourceStack> BANNED_IPS_LIST =
+            (ctx, builder) -> {
+                for (String ip : bannedIps.keySet()) {
+                    builder.suggest(ip);
+                }
+                return builder.buildFuture();
+            };
+    *///?} else {
     /** 현재 접속 중인 플레이어 이름 자동완성 */
     private static final SuggestionProvider<ServerCommandSource> ONLINE_PLAYERS =
             (ctx, builder) -> {
@@ -180,6 +252,7 @@ public class P2PBanManager {
                 }
                 return builder.buildFuture();
             };
+    //?}
 
     // -------------------------------------------------------------------------
     // 데이터 로드 / 저장
@@ -328,6 +401,38 @@ public class P2PBanManager {
      * 거부 사유 Text 를 반환하면 플레이어는 월드에 스폰되기 전에 끊기므로
      * join/left 채팅 메시지가 남지 않는다. 통과면 null.
      */
+    //? if >=26.1 {
+    /*public static Component checkCanJoin(MinecraftServer server, SocketAddress address, GameProfile profile) {
+        if (server == null || profile == null) return null;
+        // 방장(싱글플레이 오너)은 어떤 경우에도 막지 않는다
+        if (isHost(server, profile)) return null;
+
+        String realIp = resolveRealIp(address);
+        if (realIp != null) uuidToRealIp.put(profileId(profile), realIp);
+
+        // IP는 로그에 남기지 않는다 — 방장이 버그 리포트로 로그를 그대로 공유하면
+        // 접속자의 실제 IP가 텍스트로 박제된다. 닉네임만으로 충분히 추적 가능.
+        String uuid = profileId(profile).toString();
+        if (isPlayerBanned(uuid)) {
+            LOG.info("[instant-p2p] login refused (banned): {}", profileName(profile));
+            return Component.literal("§cYou are banned: " + getBanReason(uuid));
+        }
+        if (!P2PWhitelistManager.canJoin(uuid)) {
+            LOG.info("[instant-p2p] login refused (not whitelisted): {}", profileName(profile));
+            return Component.translatable("instant-p2p.msg.not_whitelisted");
+        }
+        if (realIp != null && isIpBanned(realIp)) {
+            LOG.info("[instant-p2p] login refused (ip banned): {}", profileName(profile));
+            return Component.literal("§cYour IP is banned: " + getIpBanReason(realIp));
+        }
+        // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다
+        int max = roomMaxPlayers;
+        if (max > 0 && server.getPlayerCount() >= max) {
+            return Component.translatable("instant-p2p.msg.room_full", max);
+        }
+        return null;
+    }
+    *///?} else {
     public static Text checkCanJoin(MinecraftServer server, SocketAddress address, GameProfile profile) {
         if (server == null || profile == null) return null;
         // 방장(싱글플레이 오너)은 어떤 경우에도 막지 않는다
@@ -358,6 +463,7 @@ public class P2PBanManager {
         }
         return null;
     }
+    //?}
 
     // -------------------------------------------------------------------------
     // 커맨드 등록
@@ -365,11 +471,19 @@ public class P2PBanManager {
 
     /** openToLan 후 커맨드 매니저 재초기화로 날아간 명령어 재등록 */
     public static void reregisterToDispatcher(MinecraftServer server) {
+        //? if >=26.1 {
+        /*var dispatcher = server.getCommands().getDispatcher();
+        *///?} else {
         var dispatcher = server.getCommandManager().getDispatcher();
+        //?}
         registerBanCommands(dispatcher);
     }
 
+    //? if >=26.1 {
+    /*private static void registerBanCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+    *///?} else {
     private static void registerBanCommands(CommandDispatcher<ServerCommandSource> dispatcher) {
+    //?}
         // ban <player> [<reason>]
         dispatcher.register(literal("ban")
                 .requires(requireAdminOrHost())
@@ -432,6 +546,115 @@ public class P2PBanManager {
     // 커맨드 실행
     // -------------------------------------------------------------------------
 
+    //? if >=26.1 {
+    /*private static int executeBan(CommandSourceStack src, String name, String reason) {
+        MinecraftServer server = src.getServer();
+
+        // LAN이 열려 있지 않으면 ban 불가
+        if (!server.isPublished()) {
+            src.sendSuccess(() -> Component.literal("§cCannot ban players while not hosting a room."), false);
+            return 0;
+        }
+
+        // 접속 중이 아니어도 Mojang API/usercache로 조회 (바닐라 ban과 동일)
+        ProfileLookup lookup = lookupProfile(server, name);
+        if (lookup == null) {
+            src.sendSuccess(() -> Component.literal("§cCould not find a player named " + name), false);
+            return 0;
+        }
+
+        // 서버 오너(호스터)는 ban 불가
+        GameProfile syntheticProfile = new GameProfile(lookup.id(), lookup.name());
+        if (isHost(server, syntheticProfile)) {
+            src.sendSuccess(() -> Component.literal("§cYou cannot ban the room owner."), false);
+            return 0;
+        }
+
+        String r = reason != null ? reason : "Banned by operator.";
+        banPlayer(lookup.id().toString(), lookup.name(), r);
+        ServerPlayer online = server.getPlayerList().getPlayer(lookup.id());
+        if (online != null) {
+            online.connection.disconnect(Component.literal("§cYou have been banned: " + r));
+        }
+        src.sendSuccess(() -> Component.literal("§aBanned " + lookup.name()), false);
+        return 1;
+    }
+
+    private static int executeBanIp(CommandSourceStack src, String target, String reason) {
+        MinecraftServer server = src.getServer();
+
+        // LAN이 열려 있지 않으면 ban-ip 불가
+        if (!server.isPublished()) {
+            src.sendSuccess(() -> Component.literal("§cCannot ban players while not hosting a room."), false);
+            return 0;
+        }
+
+        // 플레이어 이름으로 입력된 경우 IP로 변환, 아니면 직접 IP로 취급
+        String ip = target;
+        ServerPlayer p = server.getPlayerList().getPlayerByName(target);
+        if (p != null) {
+            // 서버 오너(호스터)는 ban-ip 불가
+            if (isHost(server, p.getGameProfile())) {
+                src.sendSuccess(() -> Component.literal("§cYou cannot ban the room owner."), false);
+                return 0;
+            }
+            // p.getIp() 는 터널 때문에 항상 127.0.0.1 → 로그인 때 기록한 실제 IP 사용
+            ip = realIpOf(p.getUUID());
+            if (ip == null || ip.startsWith("127.")) {
+                src.sendSuccess(() -> Component.literal("§cCannot resolve the real IP of " + target + "."), false);
+                return 0;
+            }
+        }
+
+        String r = reason != null ? reason : "Banned by operator.";
+        banIp(ip, r);
+        final String finalIp = ip;
+        for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
+            if (isHost(server, sp.getGameProfile())) continue;
+            if (finalIp.equals(realIpOf(sp.getUUID()))) {
+                sp.connection.disconnect(Component.literal("§cYour IP has been banned: " + r));
+            }
+        }
+        src.sendSuccess(() -> Component.literal("§aBanned IP: " + finalIp), false);
+        return 1;
+    }
+
+    private static int executePardon(CommandSourceStack src, String name) {
+        pardonPlayer(name);
+        src.sendSuccess(() -> Component.literal("§aUnbanned " + name), false);
+        return 1;
+    }
+
+    private static int executePardonIp(CommandSourceStack src, String ip) {
+        pardonIp(ip);
+        src.sendSuccess(() -> Component.literal("§aUnbanned IP: " + ip), false);
+        return 1;
+    }
+
+    private static int executeKick(CommandSourceStack src, String name, String reason) {
+        MinecraftServer server = src.getServer();
+
+        if (!server.isPublished()) {
+            src.sendSuccess(() -> Component.literal("§cCannot kick players while not hosting a room."), false);
+            return 0;
+        }
+
+        ServerPlayer target = server.getPlayerList().getPlayerByName(name);
+        if (target == null) {
+            src.sendSuccess(() -> Component.literal("§cCould not find a player named " + name), false);
+            return 0;
+        }
+        if (isHost(server, target.getGameProfile())) {
+            src.sendSuccess(() -> Component.literal("§cYou cannot kick the room owner."), false);
+            return 0;
+        }
+
+        String r = reason != null ? reason : "Kicked by an operator.";
+        target.connection.disconnect(Component.literal("§c" + r));
+        src.sendSuccess(() -> Component.literal("§aKicked " + profileName(target.getGameProfile())), false);
+        return 1;
+    }
+    *///?} else {
     private static int executeBan(ServerCommandSource src, String name, String reason) {
         MinecraftServer server = src.getServer();
 
@@ -539,4 +762,5 @@ public class P2PBanManager {
         src.sendFeedback(() -> Text.literal("§aKicked " + profileName(target.getGameProfile())), false);
         return 1;
     }
+    //?}
 }

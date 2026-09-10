@@ -1,6 +1,10 @@
 package kfc.udp.client.mixin;
 
+//? if >=26.1 {
+/*import net.minecraft.server.players.PlayerList;
+*///?} else {
 import net.minecraft.server.PlayerManager;
+//?}
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.gen.Accessor;
@@ -15,7 +19,11 @@ import org.spongepowered.asm.mixin.gen.Accessor;
  * 8을 하드코딩해서 반환하는 방식으로 바뀌었으므로 그쪽은
  * {@link IntegratedServerMaxPlayersMixin}이 대신 처리한다.
  */
+//? if >=26.1 {
+/*@Mixin(PlayerList.class)
+*///?} else {
 @Mixin(PlayerManager.class)
+//?}
 public interface PlayerManagerAccessor {
 
     //? if <1.21.9 {

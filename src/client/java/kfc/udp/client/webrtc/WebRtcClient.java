@@ -3,9 +3,6 @@ package kfc.udp.client.webrtc;
 import dev.onvoid.webrtc.*;
 import dev.onvoid.webrtc.media.audio.AudioDeviceModule;
 import dev.onvoid.webrtc.media.audio.AudioLayer;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.DisconnectedScreen;
-import net.minecraft.text.Text;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -19,6 +16,15 @@ import java.nio.channels.SocketChannel;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+//? if >=26.1 {
+/*import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.DisconnectedScreen;
+import net.minecraft.network.chat.Component;
+*///?} else {
+import net.minecraft.client.MinecraftClient;
+import net.minecraft.client.gui.screen.DisconnectedScreen;
+import net.minecraft.text.Text;
+//?}
 
 /**
  * Java 네이티브 WebRTC 클라이언트(조인) — VILLASframework signaling 프로토콜.
@@ -35,6 +41,17 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   - 수신 버퍼는 ThreadLocal로 재사용, 송신은 ThreadLocal direct buffer
  */
 public class WebRtcClient {
+
+    //? if >=26.2 {
+    /*private static net.minecraft.client.gui.screens.Screen kfcudp$currentScreen(net.minecraft.client.Minecraft client) {
+        return client.gui.screen();
+    }
+    *///?}
+    //? if >=26.1 <26.2 {
+    /*private static net.minecraft.client.gui.screens.Screen kfcudp$currentScreen(net.minecraft.client.Minecraft client) {
+        return client.screen;
+    }
+    *///?}
 
     private static final Logger LOG = LoggerFactory.getLogger("webrtc-native");
 
@@ -116,7 +133,11 @@ public class WebRtcClient {
 
             if (!hostArrivedLatch.await(15, TimeUnit.SECONDS)) {
                 LOG.warn("[webrtc] host did not arrive in pair session (room={})", roomId);
+                //? if >=26.1 {
+                /*notifyFailure(Component.translatable("instant-p2p.msg.host_not_found"));
+                *///?} else {
                 notifyFailure(Text.translatable("instant-p2p.msg.host_not_found"));
+                //?}
                 close(); return;
             }
 
@@ -125,7 +146,11 @@ public class WebRtcClient {
 
             if (!readyLatch.await(30, TimeUnit.SECONDS)) {
                 LOG.warn("[webrtc] DataChannel open timed out");
+                //? if >=26.1 {
+                /*notifyFailure(Component.translatable("instant-p2p.msg.ice_failed"));
+                *///?} else {
                 notifyFailure(Text.translatable("instant-p2p.msg.ice_failed"));
+                //?}
                 close(); return;
             }
 
@@ -139,7 +164,11 @@ public class WebRtcClient {
         } catch (Exception e) {
             if (running.get()) {
                 LOG.warn("[webrtc] bridge error: {}", e.getMessage());
+                //? if >=26.1 {
+                /*notifyFailure(Component.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())));
+                *///?} else {
                 notifyFailure(Text.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())));
+                //?}
             }
             close();
         }
@@ -159,6 +188,16 @@ public class WebRtcClient {
     }
 
     /** 연결 실패를 실제 화면으로 보여준다 — 안 그러면 조인자는 원인도 모르고 로컬 소켓만 뚝 끊긴다. */
+    //? if >=26.1 {
+    /*private void notifyFailure(Component reason) {
+        Minecraft client = Minecraft.getInstance();
+        client.execute(() -> {
+            if (kfcudp$currentScreen(client) instanceof DisconnectedScreen) return;
+            client.setScreenAndShow(new DisconnectedScreen(
+                    kfcudp$currentScreen(client), Component.translatable("connect.failed"), reason));
+        });
+    }
+    *///?} else {
     private void notifyFailure(Text reason) {
         MinecraftClient client = MinecraftClient.getInstance();
         client.execute(() -> {
@@ -167,6 +206,7 @@ public class WebRtcClient {
                     client.currentScreen, Text.translatable("connect.failed"), reason));
         });
     }
+    //?}
 
     /**
      * MC 클라이언트 접속을 최대 {@link #ACCEPT_TIMEOUT_MS}까지 기다린다.

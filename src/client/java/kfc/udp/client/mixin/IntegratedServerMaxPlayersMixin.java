@@ -1,7 +1,11 @@
 package kfc.udp.client.mixin;
 
 import kfc.udp.client.webrtc.P2PBanManager;
+//? if >=26.1 {
+/*import net.minecraft.client.server.IntegratedServer;
+*///?} else {
 import net.minecraft.server.integrated.IntegratedServer;
+//?}
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -16,7 +20,14 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Mixin(IntegratedServer.class)
 public abstract class IntegratedServerMaxPlayersMixin {
 
-    //? if >=1.21.9 {
+    //? if >=26.1 {
+    /*@Inject(method = "getMaxPlayers", at = @At("HEAD"), cancellable = true)
+    private void kfcudp$getMaxPlayerCount(CallbackInfoReturnable<Integer> cir) {
+        int max = P2PBanManager.getRoomMaxPlayers();
+        if (max > 0) cir.setReturnValue(max);
+    }
+    *///?}
+    //? if >=1.21.9 <26.1 {
     /*@Inject(method = "getMaxPlayerCount", at = @At("HEAD"), cancellable = true)
     private void kfcudp$getMaxPlayerCount(CallbackInfoReturnable<Integer> cir) {
         int max = P2PBanManager.getRoomMaxPlayers();

@@ -1,7 +1,12 @@
 package kfc.udp.client.mixin;
 
+//? if >=26.1 {
+/*import net.minecraft.client.server.IntegratedServer;
+import net.minecraft.world.level.GameType;
+*///?} else {
 import net.minecraft.server.integrated.IntegratedServer;
 import net.minecraft.world.GameMode;
+//?}
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Mutable;
 import org.spongepowered.asm.mixin.gen.Accessor;
@@ -15,7 +20,19 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 @Mixin(IntegratedServer.class)
 public interface IntegratedServerAccessor {
 
+    //? if >=26.2 {
+    /*@Mutable
+    @Accessor("gameTypeForOtherPlayers")
+    void kfcudp$setForcedGameMode(GameType gameMode);
+    *///?}
+    //? if >=26.1 <26.2 {
+    /*@Mutable
+    @Accessor("publishedGameType")
+    void kfcudp$setForcedGameMode(GameType gameMode);
+    *///?}
+    //? if <26.1 {
     @Mutable
     @Accessor("forcedGameMode")
     void kfcudp$setForcedGameMode(GameMode gameMode);
+    //?}
 }

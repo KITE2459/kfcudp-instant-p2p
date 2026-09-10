@@ -1,6 +1,6 @@
 # 버전 무관 공통 값(mod.*)은 여기, loader/loom 버전은 gradle.properties 참고.
 # 버전별 값은 아래 [<version>] 테이블에.
-mod.version = "1.0.12"
+mod.version = "1.0.13"
 mod.group = "kfc.udp"
 
 ["1.21.5"]

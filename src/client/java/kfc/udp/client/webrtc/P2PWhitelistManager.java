@@ -6,9 +6,15 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.minecraft.server.MinecraftServer;
+//? if >=26.1 {
+/*import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerPlayer;
+*///?} else {
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
+//?}
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -18,8 +24,13 @@ import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+//? if >=26.1 {
+/*import static net.minecraft.commands.Commands.argument;
+import static net.minecraft.commands.Commands.literal;
+*///?} else {
 import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
+//?}
 
 /**
  * 바닐라 화이트리스트(whitelist on/off/add/remove/list)를 그대로 옮겨온 것.
@@ -46,6 +57,23 @@ public class P2PWhitelistManager {
     // 자동완성 제공자
     // -------------------------------------------------------------------------
 
+    //? if >=26.1 {
+    /*private static final SuggestionProvider<CommandSourceStack> ONLINE_PLAYERS =
+            (ctx, builder) -> {
+                for (ServerPlayer sp : ctx.getSource().getServer().getPlayerList().getPlayers()) {
+                    builder.suggest(P2PBanManager.profileName(sp.getGameProfile()));
+                }
+                return builder.buildFuture();
+            };
+
+    private static final SuggestionProvider<CommandSourceStack> WHITELISTED_PLAYER_NAMES =
+            (ctx, builder) -> {
+                for (JsonObject o : whitelist.values()) {
+                    if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                }
+                return builder.buildFuture();
+            };
+    *///?} else {
     private static final SuggestionProvider<ServerCommandSource> ONLINE_PLAYERS =
             (ctx, builder) -> {
                 for (ServerPlayerEntity sp : ctx.getSource().getServer().getPlayerManager().getPlayerList()) {
@@ -61,6 +89,7 @@ public class P2PWhitelistManager {
                 }
                 return builder.buildFuture();
             };
+    //?}
 
     // -------------------------------------------------------------------------
     // 데이터 로드 / 저장
@@ -138,7 +167,11 @@ public class P2PWhitelistManager {
 
     /** openToLan 후 커맨드 매니저 재초기화로 날아간 명령어 재등록 */
     public static void reregisterToDispatcher(MinecraftServer server) {
+        //? if >=26.1 {
+        /*registerCommands(server.getCommands().getDispatcher());
+        *///?} else {
         registerCommands(server.getCommandManager().getDispatcher());
+        //?}
     }
 
     public static void registerCommands() {
@@ -147,7 +180,11 @@ public class P2PWhitelistManager {
                 registerCommands(dispatcher));
     }
 
+    //? if >=26.1 {
+    /*private static void registerCommands(CommandDispatcher<CommandSourceStack> dispatcher) {
+    *///?} else {
     private static void registerCommands(CommandDispatcher<ServerCommandSource> dispatcher) {
+    //?}
         dispatcher.register(literal("whitelist")
                 .requires(P2PBanManager.requireAdminOrHost())
                 .then(literal("on").executes(ctx -> executeSetEnabled(ctx.getSource(), true)))
@@ -169,6 +206,55 @@ public class P2PWhitelistManager {
     // 커맨드 실행
     // -------------------------------------------------------------------------
 
+    //? if >=26.1 {
+    /*private static int executeSetEnabled(CommandSourceStack src, boolean value) {
+        setEnabled(value);
+        src.sendSuccess(() -> Component.literal(value
+                ? "§aWhitelist is now enabled."
+                : "§aWhitelist is now disabled."), false);
+        return 1;
+    }
+
+    private static int executeList(CommandSourceStack src) {
+        if (whitelist.isEmpty()) {
+            src.sendSuccess(() -> Component.literal("§7There are no whitelisted players."), false);
+            return 0;
+        }
+        StringBuilder names = new StringBuilder();
+        for (JsonObject o : whitelist.values()) {
+            if (names.length() > 0) names.append(", ");
+            names.append(o.get("name").getAsString());
+        }
+        src.sendSuccess(() -> Component.literal(
+                "§7There are " + whitelist.size() + " whitelisted player(s): " + names), false);
+        return whitelist.size();
+    }
+
+    private static int executeAdd(CommandSourceStack src, String name) {
+        MinecraftServer server = src.getServer();
+        // 접속 중이 아니어도 Mojang API/usercache로 조회 (바닐라 whitelist add와 동일)
+        P2PBanManager.ProfileLookup lookup = P2PBanManager.lookupProfile(server, name);
+        if (lookup == null) {
+            src.sendSuccess(() -> Component.literal("§cCould not find a player named " + name), false);
+            return 0;
+        }
+
+        addPlayer(lookup.id().toString(), lookup.name());
+        src.sendSuccess(() -> Component.literal("§aAdded " + lookup.name() + " to the whitelist"), false);
+        return 1;
+    }
+
+    private static int executeRemove(CommandSourceStack src, String name) {
+        boolean removed = removePlayer(name);
+        if (removed) {
+            src.sendSuccess(() -> Component.literal("§aRemoved " + name + " from the whitelist"), false);
+            return 1;
+        } else {
+            src.sendSuccess(() -> Component.literal("§cPlayer is not whitelisted: " + name), false);
+            return 0;
+        }
+    }
+    *///?} else {
     private static int executeSetEnabled(ServerCommandSource src, boolean value) {
         setEnabled(value);
         src.sendFeedback(() -> Text.literal(value
@@ -216,4 +302,5 @@ public class P2PWhitelistManager {
             return 0;
         }
     }
+    //?}
 }

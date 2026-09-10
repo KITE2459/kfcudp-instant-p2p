@@ -3,8 +3,13 @@ package kfc.udp.client.mixin;
 import kfc.udp.client.kcp.KcpAddressRegistry;
 import kfc.udp.client.kcp.KcpChannel;
 import kfc.udp.client.kcp.KcpExceptionHandler;
+//? if >=26.1 {
+/*import net.minecraft.network.Connection;
+import net.minecraft.network.protocol.PacketFlow;
+*///?} else {
 import net.minecraft.network.ClientConnection;
 import net.minecraft.network.NetworkSide;
+//?}
 import org.jetbrains.annotations.NotNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +30,11 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
+//? if >=26.1 {
+/*@Mixin(Connection.class)
+*///?} else {
 @Mixin(ClientConnection.class)
+//?}
 public abstract class ClientConnectionMixin {
 
     @Unique
@@ -46,7 +55,21 @@ public abstract class ClientConnectionMixin {
             (long)(Math.random() * 0xFFFFFFFFL) & 0xFFFFFFFFL
     );
 
-    //? if >=1.21.11 {
+    //? if >=26.1 {
+    /*@Inject(
+            method = "connect(Ljava/net/InetSocketAddress;Lnet/minecraft/server/network/EventLoopGroupHolder;Lnet/minecraft/network/Connection;)Lio/netty/channel/ChannelFuture;",
+            at = @At("HEAD"),
+            cancellable = true
+    )
+    private static void kfcudp$interceptConnect(
+            InetSocketAddress address,
+            net.minecraft.server.network.EventLoopGroupHolder backend,
+            Connection connection,
+            CallbackInfoReturnable<ChannelFuture> cir) {
+        kfcudp$doIntercept(address, connection, cir);
+    }
+    *///?}
+    //? if >=1.21.11 <26.1 {
     /*@Inject(
             method = "connect(Ljava/net/InetSocketAddress;Lnet/minecraft/network/NetworkingBackend;Lnet/minecraft/network/ClientConnection;)Lio/netty/channel/ChannelFuture;",
             at = @At("HEAD"),
@@ -59,8 +82,8 @@ public abstract class ClientConnectionMixin {
             CallbackInfoReturnable<ChannelFuture> cir) {
         kfcudp$doIntercept(address, connection, cir);
     }
-    *///?} else {
-    
+    *///?}
+    //? if <1.21.11 {
     @Inject(
             method = "connect(Ljava/net/InetSocketAddress;ZLnet/minecraft/network/ClientConnection;)Lio/netty/channel/ChannelFuture;",
             at = @At("HEAD"),
@@ -75,6 +98,36 @@ public abstract class ClientConnectionMixin {
     }
     //?}
 
+    //? if >=26.1 {
+    /*@Unique
+    private static void kfcudp$doIntercept(
+            InetSocketAddress address,
+            Connection connection,
+            CallbackInfoReturnable<ChannelFuture> cir) {
+
+        if (!KcpAddressRegistry.consumeIfKcp()) return;
+
+        final int conv = (int)(CONV_SEQ.getAndIncrement() & 0xFFFFFFFFL);
+        LOG.info("[kcp] Connecting via KCP conv=0x{}", Integer.toHexString(conv));
+
+        Bootstrap bootstrap = new Bootstrap();
+        bootstrap
+                .group(KCP_GROUP)
+                .channelFactory(() -> new KcpChannel(conv))
+                .handler(new ChannelInitializer<KcpChannel>() {
+                    @Override
+                    protected void initChannel(KcpChannel ch) {
+                        ChannelPipeline p = ch.pipeline();
+                        Connection.configureSerialization(p, PacketFlow.CLIENTBOUND, false, null);
+                        connection.configurePacketHandler(p);
+                        p.addLast("kcp-exception", KcpExceptionHandler.INSTANCE);
+                    }
+                });
+
+        ChannelFuture future = bootstrap.connect(address).syncUninterruptibly();
+        cir.setReturnValue(future);
+    }
+    *///?} else {
     @Unique
     private static void kfcudp$doIntercept(
             InetSocketAddress address,
@@ -103,4 +156,5 @@ public abstract class ClientConnectionMixin {
         ChannelFuture future = bootstrap.connect(address).syncUninterruptibly();
         cir.setReturnValue(future);
     }
+    //?}
 }

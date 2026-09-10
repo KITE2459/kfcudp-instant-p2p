@@ -14,7 +14,8 @@
   "instant-p2p.join_room.server_name": "Custom Room",
 
   "instant-p2p.msg.invite_prefix": "§b[Invite Code] §f",
-  "instant-p2p.msg.invite_suffix": " §7(Click to copy — expires if no one joins within 2 minutes)",
+  "instant-p2p.msg.invite_suffix": " §7(Click to copy)",
+  "instant-p2p.msg.invite_expiry_notice": "§7Expires if no one joins within 2 minutes",
   "instant-p2p.msg.click_to_copy": "§7Click to copy",
   "instant-p2p.msg.invite_expired": "§cThe invite has expired",
   "instant-p2p.msg.invite_no_longer_expires": "§aA player has joined — the invite code no longer expires",

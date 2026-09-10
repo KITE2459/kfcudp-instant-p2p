@@ -14,7 +14,8 @@
   "instant-p2p.join_room.server_name": "커스텀 방",
 
   "instant-p2p.msg.invite_prefix": "§b[초대코드] §f",
-  "instant-p2p.msg.invite_suffix": " §7(클릭하여 복사 — 2분 이상 아무도 접속하지 않으면 만료됩니다)",
+  "instant-p2p.msg.invite_suffix": " §7(클릭하여 복사)",
+  "instant-p2p.msg.invite_expiry_notice": "§72분 이상 아무도 접속하지 않으면 만료됩니다",
   "instant-p2p.msg.click_to_copy": "§7클릭해서 복사",
   "instant-p2p.msg.invite_expired": "§c초대장이 만료되었습니다",
   "instant-p2p.msg.invite_no_longer_expires": "§a플레이어가 접속해서 이제부터 초대 코드가 만료되지 않습니다",

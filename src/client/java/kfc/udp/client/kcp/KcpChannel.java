@@ -3,7 +3,6 @@ package kfc.udp.client.kcp;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.*;
-import io.netty.channel.ChannelException;
 import io.netty.channel.nio.AbstractNioMessageChannel;
 import io.netty.channel.nio.NioEventLoop;
 import io.netty.util.internal.StringUtil;
