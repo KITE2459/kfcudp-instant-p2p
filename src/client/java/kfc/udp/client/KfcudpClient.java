@@ -9,11 +9,14 @@ import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.fabric.api.client.screen.v1.ScreenEvents;
 import net.fabricmc.fabric.api.client.screen.v1.Screens;
+import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import kfc.udp.client.gui.JoinRoomScreen;
 //? if >=26.1 {
 /*import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.GenericMessageScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.client.gui.components.Button;
@@ -29,6 +32,7 @@ import net.minecraft.world.level.GameType;
 *///?} else {
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.GameMenuScreen;
+import net.minecraft.client.gui.screen.MessageScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.server.integrated.IntegratedServer;
@@ -60,13 +64,25 @@ public class KfcudpClient implements ClientModInitializer {
     /** 게스트가 한 번이라도 접속하면 true — 이후로는 미접속 만료 타이머를 다시 걸지 않는다. */
     private static boolean inviteEverJoined = false;
 
+    /**
+     * 정원(N/M) 표시용 — 접속자는 방장의 {@link #activeMaxPlayers}를 직접 모르므로,
+     * 방장이 JOIN 완료 시점에 이 접두사로 시작하는 시스템 메시지로 몰래 보내준다.
+     * {@code ClientReceiveMessageEvents.ALLOW_GAME}에서 이 접두사를 가로채 채팅에는
+     * 안 띄우고 숫자만 파싱해서 저장한다. 새 커스텀 네트워킹 패킷을 추가하는 대신
+     * 이미 쓰고 있는 바닐라 채팅 경로를 재사용 — VILLASframework 시그널링 스키마는
+     * 서버가 고정해 둔 거라 건드리지 않는 게 안전하다(WebRtcHost 클래스 주석 참고).
+     */
+    private static final String CAPACITY_MARKER = "kfcudp:capacity:";
+    /** 접속자 쪽에서 파싱해 캐시해 둔 방 정원. 0이면 아직 못 받음(host이거나, 마커 도착 전). */
+    private static volatile int guestRoomMaxPlayers = 0;
+
     /** 이전 게스트가 실제로 나갈 때까지 미뤄둔 방 오픈 파라미터. null이면 대기 중인 게 없음. */
     private static PendingRoom pendingRoom = null;
 
     //? if >=26.1 {
-    /*private record PendingRoom(GameType gameMode, int maxPlayers, boolean allowCheats) {}
+    /*private record PendingRoom(GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {}
     *///?} else {
-    private record PendingRoom(GameMode gameMode, int maxPlayers, boolean allowCheats) {}
+    private record PendingRoom(GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {}
     //?}
 
     //? if >=26.2 {
@@ -94,6 +110,15 @@ public class KfcudpClient implements ClientModInitializer {
     //? if >=26.2 {
     /*private static void kfcudp$applyWorldAllowCommands(net.minecraft.client.server.IntegratedServer server, boolean allowCheats) {
         server.setWorldAllowCommands(allowCheats);
+        // setWorldAllowCommands() 안의 updateCommandsAllowedForOtherPlayers()는
+        // IntegratedServer가 따로 캐시해 둔 commandsAllowedForOtherPlayers 필드가
+        // null이 아니면 그 값을 그대로 PlayerList에 재전파한다. 그 필드는 최초
+        // publishServer() 호출(진짜 Open to LAN) 때 딱 한 번만 세팅되고 그 뒤로는
+        // 아무도 안 건드려서, "이미 열려 있어 재바인드 없이 값만 갱신"하는 이
+        // 경로에서 계속 최초 오픈 당시 값으로 되돌아간다 — 방을 다시 열어도
+        // 접속자 쪽 치트 설정이 1차 값에 고정되는 버그의 원인. 캐시 필드 자체를
+        // 직접 갱신해야 한다.
+        server.setCommandsAllowedForOtherPlayers(allowCheats);
     }
     *///?}
     //? if >=26.1 <26.2 {
@@ -135,7 +160,13 @@ public class KfcudpClient implements ClientModInitializer {
 
             if (!(screen instanceof PauseScreen gameMenu)) return;
             if (!gameMenu.showsPauseMenu()) return;
-            if (!client.isLocalServer()) return;
+
+            boolean isHost = client.isLocalServer();
+            // 접속자 쪽엔 Custom Room 버튼이 없으니, "우리 방에 webrtc로 들어와 있는
+            // 세션인지"는 활성 webrtc 연결 여부로 판별한다 — JOIN 메시지에서 쓰는
+            // 것과 동일한 신호(WebRtcBridge.getActiveConnectionUsesRelay()).
+            boolean isGuestSession = !isHost && WebRtcBridge.getActiveConnectionUsesRelay() != null;
+            if (!isHost && !isGuestSession) return;
 
             int btnW = 100;
             int btnH = 20;
@@ -144,25 +175,52 @@ public class KfcudpClient implements ClientModInitializer {
 
             java.util.List<net.minecraft.client.gui.components.AbstractWidget> added = new java.util.ArrayList<>();
 
-            Button customRoomBtn = Button.builder(
-                            Component.translatable("instant-p2p.custom_room.title"),
-                            button -> client.setScreenAndShow(new CustomRoomScreen(screen))
-                    ).bounds(btnX, btnY, btnW, btnH).build();
-            Screens.getWidgets(screen).add(customRoomBtn);
-            added.add(customRoomBtn);
+            if (isHost) {
+                Button customRoomBtn = Button.builder(
+                                Component.translatable("instant-p2p.custom_room.title"),
+                                button -> client.setScreenAndShow(new CustomRoomScreen(screen))
+                        ).bounds(btnX, btnY, btnW, btnH).build();
+                Screens.getWidgets(screen).add(customRoomBtn);
+                added.add(customRoomBtn);
 
-            // 방이 열려 있으면 초대 코드를 다시 복사할 수 있게 바로 밑에 표시
-            if (activeInviteCode != null) {
-                String code = activeInviteCode;
-                Button codeBtn = Button.builder(
-                                Component.literal(code).withStyle(ChatFormatting.YELLOW),
-                                button -> client.keyboardHandler.setClipboard(code)
-                        ).bounds(btnX, btnY + btnH + 2, btnW, btnH)
-                                .tooltip(Tooltip.create(
-                                        Component.translatable("instant-p2p.msg.click_to_copy")))
-                                .build();
-                Screens.getWidgets(screen).add(codeBtn);
-                added.add(codeBtn);
+                // 방이 열려 있으면 초대 코드를 다시 복사할 수 있게 바로 밑에 표시
+                if (activeInviteCode != null) {
+                    String code = activeInviteCode;
+                    Button codeBtn = Button.builder(
+                                    Component.literal(code).withStyle(ChatFormatting.YELLOW),
+                                    button -> client.keyboardHandler.setClipboard(code)
+                            ).bounds(btnX, btnY + btnH + 2, btnW, btnH)
+                                    .tooltip(Tooltip.create(
+                                            Component.translatable("instant-p2p.msg.click_to_copy")))
+                                    .build();
+                    Screens.getWidgets(screen).add(codeBtn);
+                    added.add(codeBtn);
+                }
+            }
+
+            // 인원 표시(N/M) — 버튼이 아니라 초대 코드 아래에 작은 흰색 그림자
+            // 텍스트로 표시한다. 방장은 직접 아는 값, 접속자는 JOIN 시점에 몰래 받아
+            // 캐시해 둔 값(guestRoomMaxPlayers)을 쓴다.
+            Integer current = null, max = null;
+            if (isHost && activeInviteCode != null) {
+                IntegratedServer server = client.getSingleplayerServer();
+                if (server != null) {
+                    current = server.getPlayerList().getPlayers().size();
+                    max = activeMaxPlayers;
+                }
+            } else if (isGuestSession && guestRoomMaxPlayers > 0 && client.getConnection() != null) {
+                current = client.getConnection().getOnlinePlayers().size();
+                max = guestRoomMaxPlayers;
+            }
+            if (current != null) {
+                net.minecraft.client.gui.components.StringWidget countText =
+                        new net.minecraft.client.gui.components.StringWidget(
+                                Component.translatable("instant-p2p.pause.player_count", current, max),
+                                client.font);
+                countText.setX(btnX + (btnW - countText.getWidth()) / 2);
+                countText.setY(btnY + (btnH + 2) * 2 + 4);
+                Screens.getWidgets(screen).add(countText);
+                added.add(countText);
             }
 
             kfcudp$injectedWidgets.put(screen, added);
@@ -203,7 +261,7 @@ public class KfcudpClient implements ClientModInitializer {
             if (server == null || server.getPlayerCount() <= 1) {
                 PendingRoom p = pendingRoom;
                 pendingRoom = null;
-                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats());
+                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats(), p.manageCommands());
             }
         });
 
@@ -215,6 +273,10 @@ public class KfcudpClient implements ClientModInitializer {
             if (activeInviteCode == null || inviteEverJoined) return;
             if (P2PBanManager.isHost(server, handler.player)) return;
             inviteEverJoined = true;
+            // 접속자는 방 정원(activeMaxPlayers)을 직접 모르니, 채팅에는 안 뜨는
+            // 마커 메시지로 몰래 알려준다 — ClientReceiveMessageEvents.ALLOW_GAME에서
+            // 가로채 파싱한다. CAPACITY_MARKER 필드 주석 참고.
+            handler.player.sendSystemMessage(Component.literal(CAPACITY_MARKER + activeMaxPlayers), false);
             Minecraft client = Minecraft.getInstance();
             client.execute(() -> {
                 if (client.player != null) {
@@ -234,6 +296,16 @@ public class KfcudpClient implements ClientModInitializer {
                     : "instant-p2p.msg.my_connection_direct"));
         });
 
+        // 방장이 몰래 보낸 정원(N/M) 마커 메시지를 채팅에 띄우지 않고 가로채 파싱한다.
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
+            String s = message.getString();
+            if (!s.startsWith(CAPACITY_MARKER)) return true;
+            try {
+                guestRoomMaxPlayers = Integer.parseInt(s.substring(CAPACITY_MARKER.length()));
+            } catch (NumberFormatException ignored) {}
+            return false;
+        });
+
         // ban/whitelist 명령어 등록 (리슨 서버에서도 동작)
         // 밴/화이트리스트/정원 체크는 PlayerManagerMixin → P2PBanManager.checkCanJoin 에서
         // LOGIN 단계에 처리한다. JOIN 이벤트에서 끊으면 이미 월드에 스폰된 뒤라
@@ -245,6 +317,7 @@ public class KfcudpClient implements ClientModInitializer {
         // 즉시 kill하면 0x1B Disconnect 패킷이 유실되어 서버에 고스트 잔류.
         // 1초 대기 후 종료 — 패킷 전송 완료 후 kill.
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            guestRoomMaxPlayers = 0;
             Thread t = new Thread(() -> {
                 // DISCONNECT 시점에 0x1B는 이미 로컬 TCP에 쓰임.
                 // 1초 대기로 KCP가 서버에 전달할 시간 확보 후 kill.
@@ -253,6 +326,15 @@ public class KfcudpClient implements ClientModInitializer {
             }, "kcp-delayed-stop");
             t.setDaemon(true);
             t.start();
+        });
+
+        // "Save and Quit to Title"로 월드를 닫을 때도 방 재생성과 똑같이 접속자에게
+        // 정상 Disconnect 패킷("호스트가 방을 닫았습니다")을 먼저 보낸다. 이게 없으면
+        // 바닐라가 네트워크 채널을 그냥 끊어버려서 접속자 쪽엔 "연결 끊김" 같은 날것의
+        // 에러 화면이 뜬다 — closeRoomGracefully()의 주석 참고. JVM 자체는 안 죽으므로
+        // cancelInvite()의 비동기 지연 종료가 끝까지 안전하게 실행된다.
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            if (activeInviteCode != null) cancelInvite();
         });
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -293,7 +375,13 @@ public class KfcudpClient implements ClientModInitializer {
 
             if (!(screen instanceof GameMenuScreen gameMenu)) return;
             if (!gameMenu.shouldShowMenu()) return;
-            if (!client.isInSingleplayer()) return;
+
+            boolean isHost = client.isInSingleplayer();
+            // 접속자 쪽엔 Custom Room 버튼이 없으니, "우리 방에 webrtc로 들어와 있는
+            // 세션인지"는 활성 webrtc 연결 여부로 판별한다 — JOIN 메시지에서 쓰는
+            // 것과 동일한 신호(WebRtcBridge.getActiveConnectionUsesRelay()).
+            boolean isGuestSession = !isHost && WebRtcBridge.getActiveConnectionUsesRelay() != null;
+            if (!isHost && !isGuestSession) return;
 
             int btnW = 100;
             int btnH = 20;
@@ -302,25 +390,52 @@ public class KfcudpClient implements ClientModInitializer {
 
             java.util.List<net.minecraft.client.gui.widget.ClickableWidget> added = new java.util.ArrayList<>();
 
-            ButtonWidget customRoomBtn = ButtonWidget.builder(
-                            Text.translatable("instant-p2p.custom_room.title"),
-                            button -> client.setScreen(new CustomRoomScreen(screen))
-                    ).dimensions(btnX, btnY, btnW, btnH).build();
-            Screens.getButtons(screen).add(customRoomBtn);
-            added.add(customRoomBtn);
+            if (isHost) {
+                ButtonWidget customRoomBtn = ButtonWidget.builder(
+                                Text.translatable("instant-p2p.custom_room.title"),
+                                button -> client.setScreen(new CustomRoomScreen(screen))
+                        ).dimensions(btnX, btnY, btnW, btnH).build();
+                Screens.getButtons(screen).add(customRoomBtn);
+                added.add(customRoomBtn);
 
-            // 방이 열려 있으면 초대 코드를 다시 복사할 수 있게 바로 밑에 표시
-            if (activeInviteCode != null) {
-                String code = activeInviteCode;
-                ButtonWidget codeBtn = ButtonWidget.builder(
-                                Text.literal(code).formatted(Formatting.YELLOW),
-                                button -> client.keyboard.setClipboard(code)
-                        ).dimensions(btnX, btnY + btnH + 2, btnW, btnH)
-                                .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
-                                        Text.translatable("instant-p2p.msg.click_to_copy")))
-                                .build();
-                Screens.getButtons(screen).add(codeBtn);
-                added.add(codeBtn);
+                // 방이 열려 있으면 초대 코드를 다시 복사할 수 있게 바로 밑에 표시
+                if (activeInviteCode != null) {
+                    String code = activeInviteCode;
+                    ButtonWidget codeBtn = ButtonWidget.builder(
+                                    Text.literal(code).formatted(Formatting.YELLOW),
+                                    button -> client.keyboard.setClipboard(code)
+                            ).dimensions(btnX, btnY + btnH + 2, btnW, btnH)
+                                    .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
+                                            Text.translatable("instant-p2p.msg.click_to_copy")))
+                                    .build();
+                    Screens.getButtons(screen).add(codeBtn);
+                    added.add(codeBtn);
+                }
+            }
+
+            // 인원 표시(N/M) — 버튼이 아니라 초대 코드 아래에 작은 흰색 그림자
+            // 텍스트로 표시한다. 방장은 직접 아는 값, 접속자는 JOIN 시점에 몰래 받아
+            // 캐시해 둔 값(guestRoomMaxPlayers)을 쓴다.
+            Integer current = null, max = null;
+            if (isHost && activeInviteCode != null) {
+                IntegratedServer server = client.getServer();
+                if (server != null) {
+                    current = server.getPlayerManager().getPlayerList().size();
+                    max = activeMaxPlayers;
+                }
+            } else if (isGuestSession && guestRoomMaxPlayers > 0 && client.getNetworkHandler() != null) {
+                current = client.getNetworkHandler().getPlayerList().size();
+                max = guestRoomMaxPlayers;
+            }
+            if (current != null) {
+                net.minecraft.client.gui.widget.TextWidget countText =
+                        new net.minecraft.client.gui.widget.TextWidget(
+                                Text.translatable("instant-p2p.pause.player_count", current, max),
+                                client.textRenderer);
+                countText.setX(btnX + (btnW - countText.getWidth()) / 2);
+                countText.setY(btnY + (btnH + 2) * 2 + 4);
+                Screens.getButtons(screen).add(countText);
+                added.add(countText);
             }
 
             kfcudp$injectedWidgets.put(screen, added);
@@ -361,7 +476,7 @@ public class KfcudpClient implements ClientModInitializer {
             if (server == null || server.getCurrentPlayerCount() <= 1) {
                 PendingRoom p = pendingRoom;
                 pendingRoom = null;
-                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats());
+                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats(), p.manageCommands());
             }
         });
 
@@ -373,6 +488,10 @@ public class KfcudpClient implements ClientModInitializer {
             if (activeInviteCode == null || inviteEverJoined) return;
             if (P2PBanManager.isHost(server, handler.player)) return;
             inviteEverJoined = true;
+            // 접속자는 방 정원(activeMaxPlayers)을 직접 모르니, 채팅에는 안 뜨는
+            // 마커 메시지로 몰래 알려준다 — ClientReceiveMessageEvents.ALLOW_GAME에서
+            // 가로채 파싱한다. CAPACITY_MARKER 필드 주석 참고.
+            handler.player.sendMessage(Text.literal(CAPACITY_MARKER + activeMaxPlayers), false);
             MinecraftClient client = MinecraftClient.getInstance();
             client.execute(() -> {
                 if (client.player != null) {
@@ -392,6 +511,16 @@ public class KfcudpClient implements ClientModInitializer {
                     : "instant-p2p.msg.my_connection_direct"), false);
         });
 
+        // 방장이 몰래 보낸 정원(N/M) 마커 메시지를 채팅에 띄우지 않고 가로채 파싱한다.
+        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
+            String s = message.getString();
+            if (!s.startsWith(CAPACITY_MARKER)) return true;
+            try {
+                guestRoomMaxPlayers = Integer.parseInt(s.substring(CAPACITY_MARKER.length()));
+            } catch (NumberFormatException ignored) {}
+            return false;
+        });
+
         // ban/whitelist 명령어 등록 (리슨 서버에서도 동작)
         // 밴/화이트리스트/정원 체크는 PlayerManagerMixin → P2PBanManager.checkCanJoin 에서
         // LOGIN 단계에 처리한다. JOIN 이벤트에서 끊으면 이미 월드에 스폰된 뒤라
@@ -403,6 +532,7 @@ public class KfcudpClient implements ClientModInitializer {
         // 즉시 kill하면 0x1B Disconnect 패킷이 유실되어 서버에 고스트 잔류.
         // 1초 대기 후 종료 — 패킷 전송 완료 후 kill.
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
+            guestRoomMaxPlayers = 0;
             Thread t = new Thread(() -> {
                 // DISCONNECT 시점에 0x1B는 이미 로컬 TCP에 쓰임.
                 // 1초 대기로 KCP가 서버에 전달할 시간 확보 후 kill.
@@ -411,6 +541,15 @@ public class KfcudpClient implements ClientModInitializer {
             }, "kcp-delayed-stop");
             t.setDaemon(true);
             t.start();
+        });
+
+        // "Save and Quit to Title"로 월드를 닫을 때도 방 재생성과 똑같이 접속자에게
+        // 정상 Disconnect 패킷("호스트가 방을 닫았습니다")을 먼저 보낸다. 이게 없으면
+        // 바닐라가 네트워크 채널을 그냥 끊어버려서 접속자 쪽엔 "연결 끊김" 같은 날것의
+        // 에러 화면이 뜬다 — closeRoomGracefully()의 주석 참고. JVM 자체는 안 죽으므로
+        // cancelInvite()의 비동기 지연 종료가 끝까지 안전하게 실행된다.
+        ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            if (activeInviteCode != null) cancelInvite();
         });
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -426,7 +565,7 @@ public class KfcudpClient implements ClientModInitializer {
      */
     //? if >=26.1 {
     /*public static void startCustomRoom(Minecraft client,
-                                       GameType gameMode, int maxPlayers, boolean allowCheats) {
+                                       GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
         if (client.player == null) return;
 
         IntegratedServer server = client.getSingleplayerServer();
@@ -445,16 +584,16 @@ public class KfcudpClient implements ClientModInitializer {
         // 게스트가 아직 남아 있으면(퇴장 처리가 비동기라 바로 안 빠짐) "떠났습니다"
         // 메시지가 먼저 뜨도록 방장만 남을 때까지 기다렸다가 새 방을 연다.
         if (server.getPlayerCount() > 1) {
-            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats);
+            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats, manageCommands);
             client.setScreenAndShow(null);
             return;
         }
 
-        openRoomNow(client, gameMode, maxPlayers, allowCheats);
+        openRoomNow(client, gameMode, maxPlayers, allowCheats, manageCommands);
     }
     *///?} else {
     public static void startCustomRoom(MinecraftClient client,
-                                       GameMode gameMode, int maxPlayers, boolean allowCheats) {
+                                       GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
         if (client.player == null) return;
 
         IntegratedServer server = client.getServer();
@@ -473,24 +612,27 @@ public class KfcudpClient implements ClientModInitializer {
         // 게스트가 아직 남아 있으면(퇴장 처리가 비동기라 바로 안 빠짐) "떠났습니다"
         // 메시지가 먼저 뜨도록 방장만 남을 때까지 기다렸다가 새 방을 연다.
         if (server.getCurrentPlayerCount() > 1) {
-            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats);
+            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats, manageCommands);
             client.setScreen(null);
             return;
         }
 
-        openRoomNow(client, gameMode, maxPlayers, allowCheats);
+        openRoomNow(client, gameMode, maxPlayers, allowCheats, manageCommands);
     }
     //?}
 
     //? if >=26.1 {
     /*private static void openRoomNow(Minecraft client,
-                                     GameType gameMode, int maxPlayers, boolean allowCheats) {
+                                     GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
         if (client.player == null) return;
         IntegratedServer server = client.getSingleplayerServer();
         if (server == null) return;
 
         activeMaxPlayers = maxPlayers;
         P2PBanManager.setRoomMaxPlayers(maxPlayers);
+        // "관리 명령어" 옵션은 Allow Commands(치트)와 완전히 독립 — 방장은 이 값과
+        // 무관하게 항상 kick/ban/whitelist를 쓸 수 있다(P2PBanManager.requireAdminOrHost).
+        P2PBanManager.setGuestManagementEnabled(manageCommands);
         // 화이트리스트 on/off는 세션 간 안 남기고 방 열 때마다 꺼진 상태로 시작
         P2PWhitelistManager.setEnabled(false);
 
@@ -559,13 +701,16 @@ public class KfcudpClient implements ClientModInitializer {
     }
     *///?} else {
     private static void openRoomNow(MinecraftClient client,
-                                     GameMode gameMode, int maxPlayers, boolean allowCheats) {
+                                     GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
         if (client.player == null) return;
         IntegratedServer server = client.getServer();
         if (server == null) return;
 
         activeMaxPlayers = maxPlayers;
         P2PBanManager.setRoomMaxPlayers(maxPlayers);
+        // "관리 명령어" 옵션은 Allow Commands(치트)와 완전히 독립 — 방장은 이 값과
+        // 무관하게 항상 kick/ban/whitelist를 쓸 수 있다(P2PBanManager.requireAdminOrHost).
+        P2PBanManager.setGuestManagementEnabled(manageCommands);
         // 화이트리스트 on/off는 세션 간 안 남기고 방 열 때마다 꺼진 상태로 시작
         P2PWhitelistManager.setEnabled(false);
 
@@ -640,12 +785,66 @@ public class KfcudpClient implements ClientModInitializer {
     //?}
 
     private static void cancelInvite() {
+        cancelInvite(null, false);
+    }
+
+    //? if >=26.1 {
+    /*private static void cancelInvite(IntegratedServer explicitServer, boolean waitForClose) {
         activeInviteCode = null;
         inviteTicksRemaining = 0;
         inviteEverJoined = false;
         P2PBanManager.setRoomMaxPlayers(0);
-        closeRoomGracefully();
+        P2PBanManager.setGuestManagementEnabled(false);
+        closeRoomGracefully(explicitServer, waitForClose);
     }
+
+    // ServerDisconnectStopMixin(서버 스레드, 안전망)이 호출한다. Mixin이 들고 있는
+    // 서버 인스턴스를 그대로 받는다(client.getSingleplayerServer()로 다시 조회하면
+    // 이미 null로 비워진 뒤일 수 있다).
+    public static void kfcudp$onWorldStopping(IntegratedServer explicitServer) {
+        if (activeInviteCode != null) cancelInvite(explicitServer, false);
+    }
+
+    // IntegratedServerStopMixin(stop/halt HEAD)이 호출한다 — 실제로 방을 정리하는
+    // 건 거의 항상 이쪽이고, 이 지점은 렌더 스레드다. 그대로 블로킹해서 기다리면
+    // "Saving level" 화면을 그릴 기회조차 없이 그 프레임에 멈춘 것처럼 보인다
+    // (렌더 루프 자체가 우리 sleep 안에 갇히므로) — 블로킹 전에 그 화면을 먼저
+    // 강제로 한 프레임 그려서 바닐라가 종료할 때와 똑같이 보이게 한다.
+    public static void kfcudp$onIntegratedServerStopping(IntegratedServer explicitServer) {
+        if (activeInviteCode == null) return;
+        Minecraft.getInstance().setScreenAndShow(
+                new GenericMessageScreen(Component.translatable("menu.savingLevel")));
+        cancelInvite(explicitServer, true);
+    }
+    *///?} else {
+    private static void cancelInvite(IntegratedServer explicitServer, boolean waitForClose) {
+        activeInviteCode = null;
+        inviteTicksRemaining = 0;
+        inviteEverJoined = false;
+        P2PBanManager.setRoomMaxPlayers(0);
+        P2PBanManager.setGuestManagementEnabled(false);
+        closeRoomGracefully(explicitServer, waitForClose);
+    }
+
+    // ServerDisconnectStopMixin(서버 스레드, 안전망)이 호출한다. Mixin이 들고 있는
+    // 서버 인스턴스를 그대로 받는다(client.getServer()로 다시 조회하면 이미 null로
+    // 비워진 뒤일 수 있다).
+    public static void kfcudp$onWorldStopping(IntegratedServer explicitServer) {
+        if (activeInviteCode != null) cancelInvite(explicitServer, false);
+    }
+
+    // IntegratedServerStopMixin(stop/halt HEAD)이 호출한다 — 실제로 방을 정리하는
+    // 건 거의 항상 이쪽이고, 이 지점은 렌더 스레드다. 그대로 블로킹해서 기다리면
+    // "Saving level" 화면을 그릴 기회조차 없이 그 프레임에 멈춘 것처럼 보인다
+    // (렌더 루프 자체가 우리 sleep 안에 갇히므로) — 블로킹 전에 그 화면을 먼저
+    // 강제로 한 프레임 그려서 바닐라가 종료할 때와 똑같이 보이게 한다.
+    public static void kfcudp$onIntegratedServerStopping(IntegratedServer explicitServer) {
+        if (activeInviteCode == null) return;
+        MinecraftClient.getInstance().setScreenAndRender(
+                new MessageScreen(Text.translatable("menu.savingLevel")));
+        cancelInvite(explicitServer, true);
+    }
+    //?}
 
     /**
      * 게스트를 먼저 정상적인 사유로 끊고(0x1B Disconnect), 그 패킷이 터널을
@@ -655,17 +854,27 @@ public class KfcudpClient implements ClientModInitializer {
      * 뚝 끊긴 걸로 보여서 "Internal Exception: connection reset" 같은 날것의
      * 에러 화면이 뜬다 — 정상 Disconnect 패킷이 먼저 지나가야 "방장이 방을
      * 닫았습니다" 같은 깔끔한 화면이 뜬다.
+     * <p>
+     * {@code explicitServer}가 있으면(월드 종료 경로) 그걸 그대로 쓰고, 없으면(방
+     * 재생성 경로, null) {@code client}에서 새로 조회한다. {@code waitForClose}는
+     * kfcudp$onIntegratedServerStopping이 "Saving level" 화면을 이미 그린 뒤에만
+     * true로 넘어온다 — 그 전에는 절대 렌더 스레드를 블로킹하면 안 된다.
      */
     //? if >=26.1 {
-    /*private static void closeRoomGracefully() {
+    /*private static void closeRoomGracefully(IntegratedServer explicitServer, boolean waitForClose) {
         try {
-            Minecraft client = Minecraft.getInstance();
-            IntegratedServer server = client.getSingleplayerServer();
+            IntegratedServer server = explicitServer != null ? explicitServer : Minecraft.getInstance().getSingleplayerServer();
             if (server != null) {
-                server.execute(() -> {
+                final IntegratedServer finalServer = server;
+                // execute()는 큐잉만 하고 안 기다리는데, SERVER_STOPPING/onDisconnected
+                // 경로는 이미 서버 스레드 안이라 그러면 서버가 틱 루프를 멈춘 뒤라
+                // 영영 실행 안 될 수 있다. executeBlocking()은 이미 서버 스레드면
+                // 즉시 실행하고, 아니면(방 재생성, 클라이언트 스레드) 큐잉 후
+                // 완료까지 기다린다.
+                finalServer.executeBlocking(() -> {
                     try {
-                        for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
-                            if (P2PBanManager.isHost(server, sp)) continue;
+                        for (ServerPlayer sp : finalServer.getPlayerList().getPlayers()) {
+                            if (P2PBanManager.isHost(finalServer, sp)) continue;
                             sp.connection.disconnect(Component.translatable("instant-p2p.msg.room_closed"));
                         }
                     } catch (Exception e) {
@@ -676,28 +885,22 @@ public class KfcudpClient implements ClientModInitializer {
         } catch (Exception e) {
             LOG.warn("[instant-p2p] closeRoomGracefully failed: {}", e.getMessage());
         }
-
-        // 연달아 새 방을 열면 startCustomRoom → WebRtcBridge.startHost가 이미 이전
-        // 인스턴스를 동기적으로 닫아 둔다 — 이 지연 스레드는 그 사이 새 방이
-        // 열리지 않았을 때만(토큰이 여전히 현재 호스트일 때만) 실제로 멈춘다.
-        Object hostToken = WebRtcBridge.currentHostToken();
-        Thread t = new Thread(() -> {
-            try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
-            WebRtcBridge.stopHostIfCurrent(hostToken);
-        }, "kfcudp-room-close");
-        t.setDaemon(true);
-        t.start();
+        kfcudp$delayedStopHost(waitForClose);
     }
     *///?} else {
-    private static void closeRoomGracefully() {
+    private static void closeRoomGracefully(IntegratedServer explicitServer, boolean waitForClose) {
         try {
-            MinecraftClient client = MinecraftClient.getInstance();
-            IntegratedServer server = client.getServer();
+            IntegratedServer server = explicitServer != null ? explicitServer : MinecraftClient.getInstance().getServer();
             if (server != null) {
-                server.execute(() -> {
+                final IntegratedServer finalServer = server;
+                // execute()의 "sync" 버전이라길래 executeSync()를 썼었는데, 실제로는
+                // 그냥 execute()의 별칭이라 전혀 안 기다린다(바이트코드 확인) — 진짜
+                // "이미 서버 스레드면 즉시 실행, 아니면 큐잉 후 완료까지 대기"하는
+                // 건 submitAndJoin()이다(바닐라 disconnect() 내부에서도 이걸 쓴다).
+                finalServer.submitAndJoin(() -> {
                     try {
-                        for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
-                            if (P2PBanManager.isHost(server, sp)) continue;
+                        for (ServerPlayerEntity sp : finalServer.getPlayerManager().getPlayerList()) {
+                            if (P2PBanManager.isHost(finalServer, sp)) continue;
                             sp.networkHandler.disconnect(Text.translatable("instant-p2p.msg.room_closed"));
                         }
                     } catch (Exception e) {
@@ -708,11 +911,22 @@ public class KfcudpClient implements ClientModInitializer {
         } catch (Exception e) {
             LOG.warn("[instant-p2p] closeRoomGracefully failed: {}", e.getMessage());
         }
+        kfcudp$delayedStopHost(waitForClose);
+    }
+    //?}
 
-        // 연달아 새 방을 열면 startCustomRoom → WebRtcBridge.startHost가 이미 이전
-        // 인스턴스를 동기적으로 닫아 둔다 — 이 지연 스레드는 그 사이 새 방이
-        // 열리지 않았을 때만(토큰이 여전히 현재 호스트일 때만) 실제로 멈춘다.
+    // 연달아 새 방을 열면 startCustomRoom → WebRtcBridge.startHost가 이미 이전
+    // 인스턴스를 동기적으로 닫아 둔다 — 그 사이 새 방이 열리지 않았을 때만(토큰이
+    // 여전히 현재 호스트일 때만) 실제로 멈춘다. waitForClose면("Saving level" 화면을
+    // 이미 그려 둔 월드 종료 경로) 이 지연 자체가 호출자를 블로킹하고, 아니면(방
+    // 재생성) 별도 스레드로 흘려보내 게임을 안 멈추게 한다.
+    private static void kfcudp$delayedStopHost(boolean waitForClose) {
         Object hostToken = WebRtcBridge.currentHostToken();
+        if (waitForClose) {
+            try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
+            WebRtcBridge.stopHostIfCurrent(hostToken);
+            return;
+        }
         Thread t = new Thread(() -> {
             try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
             WebRtcBridge.stopHostIfCurrent(hostToken);
@@ -720,7 +934,6 @@ public class KfcudpClient implements ClientModInitializer {
         t.setDaemon(true);
         t.start();
     }
-    //?}
 
     private static String generateCode() {
         StringBuilder sb = new StringBuilder(10);

@@ -303,11 +303,16 @@ public class WebRtcHost {
         }
     }
 
-    /** ICE 서버 구성: 시그널링 서버 relays 우선, 없으면 P2PConfig 기본값 */
-    private RTCConfiguration buildConfig() {
+    /**
+     * ICE 서버 구성: 시그널링 서버 relays 우선, 없으면 P2PConfig 기본값.
+     * @param allowRelay false면 TURN 후보를 아예 안 만든다 — 조인자의 1차(직결 전용)
+     *                    OFFER에 맞춰 이쪽도 같은 단계로 맞춰야 릴레이 pair가 안 생긴다.
+     *                    {@link PairSignal#handlePair} 참고.
+     */
+    private RTCConfiguration buildConfig(boolean allowRelay) {
         RTCConfiguration config = new RTCConfiguration();
         // ICE 서버 구성 (relay-only 여부는 P2PConfig.RELAY_ONLY)
-        IceConfig.apply(config, serverRelays, "host");
+        IceConfig.apply(config, serverRelays, "host", allowRelay);
         // 디버그/특수 네트워크 환경용: any-address 포트 강제 (-Dkfcudp.ice.anyaddress=true)
         if (Boolean.getBoolean("kfcudp.ice.anyaddress")) {
             config.portAllocatorConfig.setDisableAdapterEnumeration(true);
@@ -324,6 +329,8 @@ public class WebRtcHost {
         volatile WebSocketClient ws;
         volatile HostSession session;
         volatile boolean closed;
+        /** 직전에 처리한 OFFER SDP — 재전달(중복) 판별용. */
+        volatile String lastOfferSdp;
 
         PairSignal(String sid, String clientIp) {
             this.sid = sid;
@@ -378,10 +385,27 @@ public class WebRtcHost {
                 String sdpType = VillasMsg.field(desc, "type");
                 String sdp     = VillasMsg.field(desc, "spd");
                 if (!"offer".equalsIgnoreCase(sdpType) || sdp == null || sdp.isEmpty()) return;
-                if (session != null) return; // 중복 OFFER 무시
-                LOG.info("[host] OFFER received sid={}", sid);
+                if (sdp.equals(lastOfferSdp)) return; // 같은 OFFER 재전달 — 무시
+
+                // 조인자는 1차로 직결 전용(TURN 없음)을 시도했다가 실패하면 2차로
+                // 릴레이 포함해서 새 OFFER를 다시 보낸다(WebRtcClient.attemptConnection
+                // 참고) — 이쪽도 같은 단계에 맞춰 buildConfig를 다시 해야
+                // 릴레이 pair가 양쪽 다 안 만들어지거나 양쪽 다 만들어지거나로 맞는다.
+                HostSession old = session;
+                boolean allowRelay;
+                if (old != null) {
+                    if (old.dcOpened) return; // 이미 연결 성사 — 재전달/지연 메시지로 보고 무시
+                    LOG.info("[host] renegotiation OFFER received sid={}", sid);
+                    old.close(); // 페어 시그널링(this)은 유지, WebRTC 세션만 정리
+                    allowRelay = true; // 재협상 = 조인자의 1차 시도 실패 = 2차(릴레이 허용)
+                } else {
+                    allowRelay = false; // 최초 OFFER = 1차(직결 전용) 시도
+                }
+                lastOfferSdp = sdp;
+                LOG.info("[host] OFFER received sid={} (allowRelay={})", sid, allowRelay);
                 final PairSignal self = this;
-                worker.execute(() -> startSession(self, sdp));
+                final boolean finalAllowRelay = allowRelay;
+                worker.execute(() -> startSession(self, sdp, finalAllowRelay));
             } else if (VillasMsg.has(json, "candidate")) {
                 String cand = VillasMsg.object(json, "candidate");
                 if (cand == null) return;
@@ -418,12 +442,12 @@ public class WebRtcHost {
 
     // ── WebRTC 세션 ───────────────────────────────────────────────────────────
 
-    private void startSession(PairSignal pair, String offerSdp) {
+    private void startSession(PairSignal pair, String offerSdp, boolean allowRelay) {
         if (!running.get() || pair.closed) return;
         HostSession session = new HostSession(pair);
         pair.session = session;
         try {
-            session.begin(offerSdp);
+            session.begin(offerSdp, allowRelay);
         } catch (Exception e) {
             LOG.warn("[host] New WebRTC session failed: {}", e.toString());
             pair.close();
@@ -457,8 +481,8 @@ public class WebRtcHost {
             this.clientIp = pair.clientIp;
         }
 
-        void begin(String offerSdp) {
-            peerConnection = factory.createPeerConnection(buildConfig(), new PeerConnectionObserver() {
+        void begin(String offerSdp, boolean allowRelay) {
+            peerConnection = factory.createPeerConnection(buildConfig(allowRelay), new PeerConnectionObserver() {
                 @Override
                 public void onIceCandidate(RTCIceCandidate candidate) {
                     pair.send(VillasMsg.candidate(candidate.sdp,
@@ -469,9 +493,8 @@ public class WebRtcHost {
                 public void onIceConnectionChange(RTCIceConnectionState state) {
                     // FAILED에서만 종료, DISCONNECTED는 자동 복구 대기
                     if (state == RTCIceConnectionState.FAILED) {
-                        LOG.warn("[host] ICE failed sid={}", sid);
-                        if (!dcOpened) notifyHostFailure();
-                        pair.close();
+                        LOG.warn("[host] ICE failed sid={} (allowRelay={})", sid, allowRelay);
+                        onAttemptFailed(allowRelay);
                     } else if (state == RTCIceConnectionState.DISCONNECTED) {
                         LOG.warn("[host] ICE disconnected sid={}, waiting for reconnect...", sid);
                     }
@@ -501,12 +524,26 @@ public class WebRtcHost {
             try {
                 scheduler.schedule(() -> {
                     if (!closed.get() && dcOpenLatch.getCount() > 0) {
-                        LOG.warn("[host] handshake timeout sid={}", sid);
-                        notifyHostFailure();
-                        pair.close();
+                        LOG.warn("[host] handshake timeout sid={} (allowRelay={})", sid, allowRelay);
+                        onAttemptFailed(allowRelay);
                     }
                 }, HANDSHAKE_TIMEOUT_MS, TimeUnit.MILLISECONDS);
             } catch (RejectedExecutionException ignored) {}
+        }
+
+        /**
+         * 이번 시도(직결 전용/릴레이 포함)가 ICE 실패나 핸드셰이크 타임아웃으로 끝났을 때.
+         * allowRelay=false(1차, 직결 전용)면 조인자가 알아서 릴레이 포함 재협상 OFFER를
+         * 다시 보낼 것이므로 — 이 세션만 조용히 정리하고 페어 시그널링(pair)은 살려둔다.
+         * allowRelay=true(2차, 최종)면 더 이상 재시도가 없으므로 진짜 실패로 취급한다.
+         */
+        private void onAttemptFailed(boolean allowRelay) {
+            if (allowRelay) {
+                if (!dcOpened) notifyHostFailure();
+                pair.close();
+            } else {
+                close();
+            }
         }
 
         /**

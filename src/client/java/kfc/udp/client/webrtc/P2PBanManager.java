@@ -9,12 +9,10 @@ import net.minecraft.server.MinecraftServer;
 import com.mojang.brigadier.CommandDispatcher;
 //? if >=26.1 {
 /*import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.NameAndId;
 *///?} else {
-import net.minecraft.server.command.CommandManager;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
@@ -70,6 +68,14 @@ public class P2PBanManager {
     /** 방 정원 게이트. KfcudpClient 가 방을 열 때 세팅, 닫을 때 0. */
     private static volatile int roomMaxPlayers = 0;
 
+    /**
+     * "관리 명령어(kick/ban/whitelist)" 를 접속자에게도 열어줄지. 방장은 이 값과
+     * 무관하게 항상 쓸 수 있다({@link #requireAdminOrHost}). Allow Commands(치트)와는
+     * 완전히 독립된 별도 옵션 — KfcudpClient 가 방 열 때 Custom Room 화면에서 고른
+     * 값으로 세팅하고, 방 닫을 때 false로 되돌린다.
+     */
+    private static volatile boolean guestManagementEnabled = false;
+
     // -------------------------------------------------------------------------
     // 버전 호환 헬퍼 — 1.21.9에서 GameProfile/isHost/권한 체크 API가 바뀜
     // -------------------------------------------------------------------------
@@ -116,52 +122,32 @@ public class P2PBanManager {
     }
 
     /**
-     * {@code ServerCommandSource#hasPermissionLevel(int)} 3단계 변천사:
-     *   1.21.9~1.21.10: CommandManager.requirePermissionLevel(int) 정적 팩토리
-     *   1.21.11+: CommandManager.requirePermissionLevel(PermissionCheck) — int 오버로드 삭제
-     */
-    //? if >=26.1 {
-    /*static Predicate<CommandSourceStack> requireAdmin() {
-        return Commands.hasPermission(Commands.LEVEL_ADMINS);
-    }
-    *///?}
-    //? if >=1.21.11 <26.1 {
-    /*static Predicate<ServerCommandSource> requireAdmin() {
-        return CommandManager.requirePermissionLevel(CommandManager.ADMINS_CHECK);
-    }
-    *///?}
-    //? if >=1.21.9 <1.21.11 {
-    /*static Predicate<ServerCommandSource> requireAdmin() {
-        return CommandManager.requirePermissionLevel(3);
-    }
-    *///?}
-    //? if <1.21.9 {
-    static Predicate<ServerCommandSource> requireAdmin() {
-        return src -> src.hasPermissionLevel(3);
-    }
-    //?}
-
-    /**
-     * 방장은 op 권한이나 "Allow Commands" 설정과 무관하게 유저 제어 명령을
-     * 쓸 수 있어야 한다 — 안 그러면 Allow Commands를 꺼둔 방장 본인도 ban/whitelist를
+     * 방장은 "관리 명령어" 옵션이나 "Allow Commands" 설정과 무관하게 유저 제어
+     * 명령을 쓸 수 있어야 한다 — 안 그러면 두 옵션을 다 꺼둔 방장 본인도 ban/whitelist를
      * 못 쓰게 되고, 방을 통째로 닫는 것 말곤 할 수 있는 게 없어진다.
+     * <p>
+     * 방장이 아닌 접속자는 순전히 {@link #guestManagementEnabled}("관리 명령어" 옵션)
+     * 로만 결정된다. 바닐라의 {@code hasPermissionLevel}/{@code Commands.hasPermission}
+     * 경로는 절대 타지 않는다 — {@code PlayerManager.isOperator()}가
+     * {@code ops.contains(entry) || (isHost && areCommandsAllowed) || cheatsAllowed}로
+     * 구현돼 있어서, "Allow Commands"(치트)가 켜지면 방장이 아닌 접속자까지 전부 op
+     * 취급되어 버린다. 즉 여기서 바닐라 권한 체크를 조금이라도 섞으면 치트 on일 때
+     * 관리 명령어 옵션이 꺼져 있어도 무시되고, 치트와 관리가 서로 독립일 수 없게 된다.
      */
     //? if >=26.1 {
     /*static Predicate<CommandSourceStack> requireAdminOrHost() {
-        Predicate<CommandSourceStack> admin = requireAdmin();
         return src -> {
             MinecraftServer server = src.getServer();
-            return (server != null && src.getEntity() instanceof ServerPlayer sp && isHost(server, sp))
-                    || admin.test(src);
+            if (server != null && src.getEntity() instanceof ServerPlayer sp && isHost(server, sp)) return true;
+            return guestManagementEnabled;
         };
     }
     *///?} else {
     static Predicate<ServerCommandSource> requireAdminOrHost() {
-        Predicate<ServerCommandSource> admin = requireAdmin();
         return src -> {
             MinecraftServer server = src.getServer();
-            return (server != null && src.getEntity() instanceof ServerPlayerEntity sp && isHost(server, sp))
-                    || admin.test(src);
+            if (server != null && src.getEntity() instanceof ServerPlayerEntity sp && isHost(server, sp)) return true;
+            return guestManagementEnabled;
         };
     }
     //?}
@@ -392,6 +378,15 @@ public class P2PBanManager {
         return roomMaxPlayers;
     }
 
+    /** Custom Room "관리 명령어" 옵션 — 켜지면 접속자도 kick/ban/whitelist를 쓸 수 있다. */
+    public static void setGuestManagementEnabled(boolean enabled) {
+        guestManagementEnabled = enabled;
+    }
+
+    public static boolean isGuestManagementEnabled() {
+        return guestManagementEnabled;
+    }
+
     // -------------------------------------------------------------------------
     // 로그인(LOGIN) 단계 밴 체크 — PlayerManagerMixin 에서 호출
     // -------------------------------------------------------------------------
@@ -534,7 +529,33 @@ public class P2PBanManager {
                                 .executes(ctx -> executeKick(ctx.getSource(),
                                         StringArgumentType.getString(ctx, "player"),
                                         StringArgumentType.getString(ctx, "reason"))))));
+
+        // "ban"/"ban-ip"/"pardon"/"pardon-ip"/"kick"은 바닐라도 등록하는 이름이라,
+        // 위 .requires()가 addChild() 병합 과정에서 조용히 버려지고 바닐라 쪽
+        // requirement가 그대로 남아있을 수 있다 — 실제로 트리에 남은 노드를 찾아
+        // 강제로 덮어쓴다. CommandNodeAccessor 클래스 주석 참고.
+        forceRequirement(dispatcher, "ban");
+        forceRequirement(dispatcher, "ban-ip");
+        forceRequirement(dispatcher, "pardon");
+        forceRequirement(dispatcher, "pardon-ip");
+        forceRequirement(dispatcher, "kick");
     }
+
+    //? if >=26.1 {
+    /*private static void forceRequirement(CommandDispatcher<CommandSourceStack> dispatcher, String name) {
+        var node = dispatcher.getRoot().getChild(name);
+        if (node instanceof kfc.udp.client.mixin.CommandNodeAccessor accessor) {
+            accessor.kfcudp$setRequirement(requireAdminOrHost());
+        }
+    }
+    *///?} else {
+    private static void forceRequirement(CommandDispatcher<ServerCommandSource> dispatcher, String name) {
+        var node = dispatcher.getRoot().getChild(name);
+        if (node instanceof kfc.udp.client.mixin.CommandNodeAccessor accessor) {
+            accessor.kfcudp$setRequirement(requireAdminOrHost());
+        }
+    }
+    //?}
 
     public static void registerCommands() {
         load();

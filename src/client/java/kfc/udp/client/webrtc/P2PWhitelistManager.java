@@ -200,6 +200,14 @@ public class P2PWhitelistManager {
                                 .suggests(WHITELISTED_PLAYER_NAMES)
                                 .executes(ctx -> executeRemove(ctx.getSource(),
                                         StringArgumentType.getString(ctx, "player"))))));
+
+        // "whitelist"도 바닐라가 등록하는 이름이라 위 .requires()가 addChild() 병합
+        // 과정에서 조용히 버려질 수 있다 — 실제로 트리에 남은 노드를 찾아 강제로
+        // 덮어쓴다. P2PBanManager.forceRequirement / CommandNodeAccessor 주석 참고.
+        var node = dispatcher.getRoot().getChild("whitelist");
+        if (node instanceof kfc.udp.client.mixin.CommandNodeAccessor accessor) {
+            accessor.kfcudp$setRequirement(P2PBanManager.requireAdminOrHost());
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -6,6 +6,9 @@
   "instant-p2p.custom_room.max_players": "최대 인원 (%s)",
   "instant-p2p.custom_room.start": "시작",
   "instant-p2p.custom_room.allow_commands": "명령어 허용",
+  "instant-p2p.custom_room.manage_commands": "관리 명령어 허용 (kick/ban/whitelist)",
+
+  "instant-p2p.pause.player_count": "인원 %s / %s",
 
   "instant-p2p.join_room.title": "커스텀 방 입장하기",
   "instant-p2p.join_room.code_label": "초대 코드",
@@ -24,7 +27,7 @@
   "instant-p2p.msg.singleplay_only": "§c싱글플레이에서만 사용 가능합니다",
   "instant-p2p.msg.prev_invite_expired": "§c이전 초대장(%s)이 만료되었습니다",
   "instant-p2p.msg.host_failed": "§c호스트 실행에 실패했습니다",
-  "instant-p2p.msg.room_closed": "§e방장이 방을 닫았습니다",
+  "instant-p2p.msg.room_closed": "§e호스트가 방을 닫았습니다",
   "instant-p2p.msg.connect_failed": "§c접속에 실패했습니다: %s",
   "instant-p2p.msg.host_not_found": "§c호스트를 찾을 수 없습니다. 초대 코드를 다시 확인해주세요 (호스트가 접속 중이 아닐 수 있습니다)",
   "instant-p2p.msg.ice_failed": "§c현재 서버 점검 중으로 이용하실 수 없습니다 (STUN/TURN 연결 실패)",

@@ -63,6 +63,16 @@ public class WebRtcClient {
     /** MC 클라이언트 접속 대기 한도 */
     private static final int ACCEPT_TIMEOUT_MS = 120_000;
 
+    /**
+     * 1차(직결 전용) 시도 한도. 시그널링/coturn이 전부 가까이(수십 ms 이내) 있는
+     * 배포 환경 기준 — 홀펀칭이 되는 조합이면 이 안에 거의 항상 판명난다.
+     * 안 되면(양쪽 다 대칭형 NAT 등) 더 기다려도 대개 소용없으므로 바로
+     * 2차(릴레이 포함) 시도로 넘어간다. {@link IceConfig} 클래스 주석 참고.
+     */
+    private static final int DIRECT_ATTEMPT_TIMEOUT_MS = 2_000;
+    /** 2차(릴레이 포함) 시도까지 포함한 최종 한도 — 기존 동작과 동일하게 유지. */
+    private static final int RELAY_ATTEMPT_TIMEOUT_MS  = 30_000;
+
     // ── 인스턴스 필드 ─────────────────────────────────────────────────────────
 
     private final String roomId;
@@ -141,17 +151,29 @@ public class WebRtcClient {
                 close(); return;
             }
 
-            initPeerConnection();
-            createOffer();
+            // 1차: TURN 후보 자체를 안 만들어서 릴레이 pair가 생길 수 없게 한 뒤
+            // 직결(host/srflx)만 시도한다. 짧은 시간 안에 안 되면 2차로 TURN을
+            // 포함해서 재시도한다 — TURN allocate가 홀펀칭보다 먼저 성사돼서
+            // 직결이 가능한데도 릴레이로 확정돼버리는 경쟁을 피하기 위함.
+            // IceConfig 클래스 주석 참고.
+            boolean connected = attemptConnection(false, DIRECT_ATTEMPT_TIMEOUT_MS);
+            if (!connected && running.get()) {
+                LOG.info("[webrtc] direct-only attempt did not complete within {}ms, retrying with relay allowed",
+                        DIRECT_ATTEMPT_TIMEOUT_MS);
+                connected = attemptConnection(true, RELAY_ATTEMPT_TIMEOUT_MS);
+            }
 
-            if (!readyLatch.await(30, TimeUnit.SECONDS)) {
-                LOG.warn("[webrtc] DataChannel open timed out");
-                //? if >=26.1 {
-                /*notifyFailure(Component.translatable("instant-p2p.msg.ice_failed"));
-                *///?} else {
-                notifyFailure(Text.translatable("instant-p2p.msg.ice_failed"));
-                //?}
-                close(); return;
+            if (!connected) {
+                if (running.get()) {
+                    LOG.warn("[webrtc] DataChannel open timed out");
+                    //? if >=26.1 {
+                    /*notifyFailure(Component.translatable("instant-p2p.msg.ice_failed"));
+                    *///?} else {
+                    notifyFailure(Text.translatable("instant-p2p.msg.ice_failed"));
+                    //?}
+                    close();
+                }
+                return;
             }
 
             // 연결 완료 — 조인 알림용 로비 접속은 정리
@@ -361,7 +383,7 @@ public class WebRtcClient {
 
     // ── DataChannel → MC ──────────────────────────────────────────────────────
 
-    private void setupDataChannel(RTCDataChannel channel) {
+    private void setupDataChannel(RTCDataChannel channel, CountDownLatch settled, AtomicBoolean succeeded) {
         channel.registerObserver(new RTCDataChannelObserver() {
             @Override
             public void onBufferedAmountChange(long previousAmount) {
@@ -377,6 +399,8 @@ public class WebRtcClient {
             public void onStateChange() {
                 RTCDataChannelState state = channel.getState();
                 if (state == RTCDataChannelState.OPEN) {
+                    succeeded.set(true);
+                    settled.countDown();
                     readyLatch.countDown();
                     resolveConnectionType();
                 } else if (state == RTCDataChannelState.CLOSED) {
@@ -400,14 +424,37 @@ public class WebRtcClient {
 
     // ── PeerConnection ────────────────────────────────────────────────────────
 
-    private void initPeerConnection() {
-        // DataChannel 전용 — dummy audio로 오디오 장치 초기화 생략
-        audioModule = new AudioDeviceModule(AudioLayer.kDummyAudio);
-        factory = new PeerConnectionFactory(audioModule);
+    /**
+     * 한 단계(직결 전용 또는 릴레이 포함) 연결 시도를 수행하고 성공 여부를 반환한다.
+     * 실패/타임아웃이면 이번 시도의 PeerConnection/DataChannel을 정리해서
+     * (시그널링 웹소켓은 유지한 채로) 다음 시도가 깨끗한 상태에서 시작하게 한다.
+     */
+    private boolean attemptConnection(boolean allowRelay, long timeoutMs) throws InterruptedException {
+        // 이전 시도에서 남은 버퍼링된 answer/candidate는 이번 시도의 SDP와 안 맞으므로 버린다.
+        pendingAnswer = null;
+        synchronized (pendingIce) { pendingIce.clear(); }
+
+        CountDownLatch settled = new CountDownLatch(1);
+        AtomicBoolean succeeded = new AtomicBoolean(false);
+        initPeerConnection(allowRelay, settled, succeeded);
+        createOffer();
+
+        settled.await(timeoutMs, TimeUnit.MILLISECONDS);
+        if (succeeded.get()) return true;
+        teardownPeerConnection();
+        return false;
+    }
+
+    private void initPeerConnection(boolean allowRelay, CountDownLatch settled, AtomicBoolean succeeded) {
+        // DataChannel 전용 — dummy audio로 오디오 장치 초기화 생략. factory는 시도 간 재사용.
+        if (factory == null) {
+            audioModule = new AudioDeviceModule(AudioLayer.kDummyAudio);
+            factory = new PeerConnectionFactory(audioModule);
+        }
 
         RTCConfiguration config = new RTCConfiguration();
         // ICE 서버 구성 (relay-only 여부는 P2PConfig.RELAY_ONLY)
-        IceConfig.apply(config, serverRelays, "client");
+        IceConfig.apply(config, serverRelays, "client", allowRelay);
 
         // 디버그/특수 네트워크 환경용: any-address 포트 강제 (-Dkfcudp.ice.anyaddress=true)
         if (Boolean.getBoolean("kfcudp.ice.anyaddress")) {
@@ -424,10 +471,13 @@ public class WebRtcClient {
 
             @Override
             public void onIceConnectionChange(RTCIceConnectionState state) {
-                // Host와 동일: FAILED에서만 종료, DISCONNECTED는 자동 복구 대기
                 if (state == RTCIceConnectionState.FAILED) {
-                    LOG.warn("[webrtc] ICE failed");
-                    close();
+                    LOG.warn("[webrtc] ICE failed (allowRelay={})", allowRelay);
+                    // 이번 시도가 아직 확정 전이면(settled 대기 중) 실패로 확정만 시키고
+                    // attemptConnection이 알아서 다음 단계로 넘어가게 한다. 이미 확정된
+                    // 뒤(= 최종 성공 이후)의 FAILED만 진짜 종료 사유다.
+                    if (settled.getCount() > 0) settled.countDown();
+                    else close();
                 } else if (state == RTCIceConnectionState.DISCONNECTED) {
                     LOG.warn("[webrtc] ICE disconnected, waiting for reconnect...");
                 }
@@ -437,11 +487,29 @@ public class WebRtcClient {
         RTCDataChannelInit dcInit = new RTCDataChannelInit();
         dcInit.ordered = true;
         dataChannel = peerConnection.createDataChannel("minecraft", dcInit);
-        setupDataChannel(dataChannel);
+        setupDataChannel(dataChannel, settled, succeeded);
 
         synchronized (pendingIce) {
             for (RTCIceCandidate ic : pendingIce) peerConnection.addIceCandidate(ic);
             pendingIce.clear();
+        }
+    }
+
+    /** 실패/타임아웃한 시도의 PeerConnection/DataChannel만 정리한다 — 시그널링은 그대로 둔다. */
+    private void teardownPeerConnection() {
+        RTCDataChannel dc = dataChannel;
+        dataChannel = null;
+        if (dc != null) {
+            try {
+                dc.unregisterObserver();
+                dc.close();
+                dc.dispose();
+            } catch (Exception ignored) {}
+        }
+        RTCPeerConnection pc = peerConnection;
+        peerConnection = null;
+        if (pc != null) {
+            try { pc.close(); } catch (Exception ignored) {}
         }
     }
 
@@ -497,8 +565,25 @@ public class WebRtcClient {
             dataChannel.dispose();
         }} catch (Exception ignored) {}
         try { if (peerConnection != null) peerConnection.close(); } catch (Exception ignored) {}
-        try { if (factory != null)        factory.dispose();       } catch (Exception ignored) {}
-        try { if (audioModule != null)    audioModule.dispose();   } catch (Exception ignored) {}
+
+        // factory.dispose()는 자신이 소유한 워커/시그널링 스레드를 내부적으로 join한다.
+        // 그런데 close()는 onStateChange/onIceConnectionChange 콜백(=바로 그 스레드)에서도
+        // 호출될 수 있어서, 콜백 스택 안에서 곧장 dispose()를 부르면 스레드가 자기
+        // 자신을 join하며 영원히 멈춘다 — "Client shutdown from post-main" watchdog
+        // 크래시의 원인. 콜백 스레드가 먼저 리턴하도록 네이티브 해제는 별도 스레드로 미룬다.
+        PeerConnectionFactory f = factory;
+        factory = null;
+        AudioDeviceModule am = audioModule;
+        audioModule = null;
+        if (f != null || am != null) {
+            Thread cleanup = new Thread(() -> {
+                try { if (f != null) f.dispose(); } catch (Exception ignored) {}
+                try { if (am != null) am.dispose(); } catch (Exception ignored) {}
+            }, "webrtc-client-close");
+            cleanup.setDaemon(true);
+            cleanup.start();
+        }
+
         if (pairWs != null)     pairWs.close();
         if (announceWs != null) announceWs.close();
     }

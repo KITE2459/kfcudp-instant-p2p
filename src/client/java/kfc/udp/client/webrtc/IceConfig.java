@@ -28,6 +28,15 @@ import java.util.Set;
  * <p>양쪽(호스트·조인자) 모두 같은 모드로 동작해야 의미가 있다.
  * 한쪽만 RELAY 면 상대의 host 후보와 페어링되어 결국 릴레이를 지나긴 하지만
  * 경로 선택이 비대칭이 된다.
+ *
+ * <p><b>직결 우선 재시도</b> ({@code allowRelay} 파라미터): TURN allocate가 STUN
+ * 홀펀칭보다 먼저 성사돼버리면 ICE는 (더 나은 경로를 기다리지 않고) 먼저 성공한
+ * pair를 그냥 채택한다 — 즉 직결이 가능한데도 릴레이로 확정되는 경우가 생긴다.
+ * 이를 피하려고 {@link WebRtcClient}/{@link WebRtcHost}는 1차로 {@code allowRelay=false}
+ * (TURN 후보 자체가 없음)로 시도해서 릴레이 pair가 아예 생길 수 없게 하고, 짧은
+ * 시간 안에 안 되면(2차) {@code allowRelay=true}로 재시도한다. 이때도 양쪽이
+ * 같은 단계로 맞춰서 재시도해야 한다 — 조인자가 보내는 OFFER 재협상 횟수로
+ * 호스트가 단계를 유추한다({@link WebRtcHost.PairSignal} 참고).
  */
 final class IceConfig {
 
@@ -36,21 +45,29 @@ final class IceConfig {
     private IceConfig() {}
 
     /**
-     * @param config  채워 넣을 RTCConfiguration
-     * @param relays  시그널링 서버가 내려준 {url, username, credential} 목록 (없으면 빈 리스트)
-     * @param tag     로그 태그 ("host" / "client")
+     * @param config     채워 넣을 RTCConfiguration
+     * @param relays     시그널링 서버가 내려준 {url, username, credential} 목록 (없으면 빈 리스트)
+     * @param tag        로그 태그 ("host" / "client")
+     * @param allowRelay false면 TURN 후보를 아예 만들지 않는다 — "직결 우선 시도" 1단계용.
+     *                    host/srflx 후보만 만들어지므로 릴레이 pair가 애초에 존재할 수 없다.
+     *                    {@link P2PConfig#RELAY_ONLY}가 true면 이 값과 무관하게 강제로 릴레이 전용이 된다
+     *                    (사용자가 명시적으로 지정한 디버그 모드라 우선한다).
      */
-    static void apply(RTCConfiguration config, List<String[]> relays, String tag) {
+    static void apply(RTCConfiguration config, List<String[]> relays, String tag, boolean allowRelay) {
         final boolean relayOnly = P2PConfig.RELAY_ONLY;
+        if (relayOnly) allowRelay = true;
 
         List<RTCIceServer> chosen = new ArrayList<>();
         Set<String> urls = new LinkedHashSet<>();
         int droppedStun = 0;
+        int droppedTurn = 0;
 
         if (relays != null) {
             for (String[] r : relays) {
                 if (r == null || r[0] == null || r[0].isEmpty()) continue;
-                if (relayOnly && !isTurn(r[0])) { droppedStun++; continue; }
+                boolean isTurnUrl = isTurn(r[0]);
+                if (relayOnly && !isTurnUrl) { droppedStun++; continue; }
+                if (!allowRelay && isTurnUrl) { droppedTurn++; continue; }
                 if (!urls.add(r[0])) continue;
                 RTCIceServer s = new RTCIceServer();
                 s.urls.add(r[0]);
@@ -69,7 +86,7 @@ final class IceConfig {
                 stun.urls.add(P2PConfig.STUN_URL);
                 chosen.add(stun);
             }
-            if (urls.add(P2PConfig.TURN_URL)) {
+            if (allowRelay && urls.add(P2PConfig.TURN_URL)) {
                 RTCIceServer turn = new RTCIceServer();
                 turn.urls.add(P2PConfig.TURN_URL);
                 addTcpFallback(turn, P2PConfig.TURN_URL);
@@ -86,6 +103,10 @@ final class IceConfig {
             LOG.info("[{}] ICE relay-only mode: {} TURN server(s){}",
                     tag, chosen.size(),
                     droppedStun > 0 ? " (" + droppedStun + " STUN entr(ies) dropped)" : "");
+        } else if (!allowRelay) {
+            LOG.info("[{}] ICE direct-only mode: {} server(s){}",
+                    tag, chosen.size(),
+                    droppedTurn > 0 ? " (" + droppedTurn + " TURN entr(ies) dropped)" : "");
         } else {
             LOG.info("[{}] ICE normal mode: {} server(s)", tag, chosen.size());
         }

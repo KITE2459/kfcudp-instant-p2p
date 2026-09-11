@@ -6,6 +6,9 @@
   "instant-p2p.custom_room.max_players": "Max Players (%s)",
   "instant-p2p.custom_room.start": "Start",
   "instant-p2p.custom_room.allow_commands": "Allow Commands",
+  "instant-p2p.custom_room.manage_commands": "Allow Management Commands (kick/ban/whitelist)",
+
+  "instant-p2p.pause.player_count": "Players %s / %s",
 
   "instant-p2p.join_room.title": "Join Room",
   "instant-p2p.join_room.code_label": "Invite Code",

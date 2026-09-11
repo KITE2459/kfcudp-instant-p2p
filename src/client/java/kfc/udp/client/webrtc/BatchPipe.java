@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.channels.GatheringByteChannel;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
 /**
@@ -145,11 +146,30 @@ final class BatchPipe {
             }
         }
 
+        /**
+         * 큐에 이미 쌓인 청크(예: 막 도착한 정상 Disconnect 패킷)는 버리지 않고
+         * writer 스레드가 다 쓰게 놔둔 뒤에야 종료한다 — 예전엔 {@code q.clear()}로
+         * 즉시 비워서 이 순간 큐에 있던 데이터가 통째로 유실됐다(방 재생성/월드 종료
+         * 시 접속자에게 "호스트가 방을 닫았습니다" 대신 "연결 끊김"이 뜨던 원인).
+         * POISON을 큐 맨 뒤에 넣으면 그 앞의 실제 청크들부터 순서대로 flush된다.
+         */
         void close() {
             if (closed) return;
             closed = true;
-            q.clear();
-            q.offer(POISON);
+            try {
+                // put() 대신 타임아웃 있는 offer() — 소켓이 이미 끊겨 writer가 write()에
+                // 멈춰 있으면 큐가 안 빠지고 계속 가득 찬 채일 수 있는데, 그런 경우까지
+                // close()가 영원히 블로킹되면 안 된다.
+                if (!q.offer(POISON, 2, TimeUnit.SECONDS)) return;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return;
+            }
+            try {
+                thread.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 

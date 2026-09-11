@@ -34,12 +34,14 @@ public class CustomRoomScreen extends Screen {
     private static final Component GAME_MODE_TEXT     = Component.translatable("instant-p2p.custom_room.game_mode");
     private static final Component MAX_PLAYERS_TEXT   = Component.translatable("instant-p2p.custom_room.max_players", MAX_PLAYERS);
     private static final Component ALLOW_COMMANDS_TEXT = Component.translatable("instant-p2p.custom_room.allow_commands");
+    private static final Component MANAGE_COMMANDS_TEXT = Component.translatable("instant-p2p.custom_room.manage_commands");
     private static final Component START_TEXT         = Component.translatable("instant-p2p.custom_room.start");
     *///?} else {
     private static final Text TITLE_TEXT        = Text.translatable("instant-p2p.custom_room.title");
     private static final Text GAME_MODE_TEXT     = Text.translatable("instant-p2p.custom_room.game_mode");
     private static final Text MAX_PLAYERS_TEXT   = Text.translatable("instant-p2p.custom_room.max_players", MAX_PLAYERS);
     private static final Text ALLOW_COMMANDS_TEXT = Text.translatable("instant-p2p.custom_room.allow_commands");
+    private static final Text MANAGE_COMMANDS_TEXT = Text.translatable("instant-p2p.custom_room.manage_commands");
     private static final Text START_TEXT         = Text.translatable("instant-p2p.custom_room.start");
     //?}
     private static final int INVALID_COLOR       = 0xFFFF5555;
@@ -52,6 +54,7 @@ public class CustomRoomScreen extends Screen {
     //?}
     private int maxPlayers       = 8;
     private boolean allowCheats  = false;
+    private boolean manageCommands = false;
 
     //? if >=26.1 {
     /*@Nullable private EditBox maxPlayersField;
@@ -72,6 +75,7 @@ public class CustomRoomScreen extends Screen {
         int cx = this.width / 2;
         int row1Y = 100;
         int row2Y = 130;
+        int row3Y = 160;
 
         // 게임 모드 선택
         this.addRenderableWidget(
@@ -93,6 +97,14 @@ public class CustomRoomScreen extends Screen {
                 CycleButton.onOffBuilder(this.allowCheats)
                         .create(cx - 155, row2Y, 310, 20, ALLOW_COMMANDS_TEXT,
                                 (btn, value) -> this.allowCheats = value)
+        );
+
+        // 관리 명령어(kick/ban/whitelist) 접속자 허용 토글 — Allow Commands와 독립.
+        // 방장은 이 토글과 무관하게 항상 사용 가능.
+        this.addRenderableWidget(
+                CycleButton.onOffBuilder(this.manageCommands)
+                        .create(cx - 155, row3Y, 310, 20, MANAGE_COMMANDS_TEXT,
+                                (btn, value) -> this.manageCommands = value)
         );
 
         // Start 버튼
@@ -117,6 +129,7 @@ public class CustomRoomScreen extends Screen {
         int cx = this.width / 2;
         int row1Y = 100;
         int row2Y = 130;
+        int row3Y = 160;
 
         // 게임 모드 선택
         this.addDrawableChild(
@@ -138,6 +151,14 @@ public class CustomRoomScreen extends Screen {
                 CyclingButtonWidget.onOffBuilder(this.allowCheats)
                         .build(cx - 155, row2Y, 310, 20, ALLOW_COMMANDS_TEXT,
                                 (btn, value) -> this.allowCheats = value)
+        );
+
+        // 관리 명령어(kick/ban/whitelist) 접속자 허용 토글 — Allow Commands와 독립.
+        // 방장은 이 토글과 무관하게 항상 사용 가능.
+        this.addDrawableChild(
+                CyclingButtonWidget.onOffBuilder(this.manageCommands)
+                        .build(cx - 155, row3Y, 310, 20, MANAGE_COMMANDS_TEXT,
+                                (btn, value) -> this.manageCommands = value)
         );
 
         // Start 버튼
@@ -162,6 +183,7 @@ public class CustomRoomScreen extends Screen {
         int cx = this.width / 2;
         int row1Y = 100;
         int row2Y = 130;
+        int row3Y = 160;
 
         // 게임 모드 선택
         this.addDrawableChild(
@@ -184,6 +206,14 @@ public class CustomRoomScreen extends Screen {
                 CyclingButtonWidget.onOffBuilder(this.allowCheats)
                         .build(cx - 155, row2Y, 310, 20, ALLOW_COMMANDS_TEXT,
                                 (btn, value) -> this.allowCheats = value)
+        );
+
+        // 관리 명령어(kick/ban/whitelist) 접속자 허용 토글 — Allow Commands와 독립.
+        // 방장은 이 토글과 무관하게 항상 사용 가능.
+        this.addDrawableChild(
+                CyclingButtonWidget.onOffBuilder(this.manageCommands)
+                        .build(cx - 155, row3Y, 310, 20, MANAGE_COMMANDS_TEXT,
+                                (btn, value) -> this.manageCommands = value)
         );
 
         // Start 버튼
@@ -241,10 +271,10 @@ public class CustomRoomScreen extends Screen {
     private void onStart() {
         //? if >=26.1 {
         /*assert this.minecraft != null;
-        KfcudpClient.startCustomRoom(this.minecraft, this.gameMode, this.maxPlayers, this.allowCheats);
+        KfcudpClient.startCustomRoom(this.minecraft, this.gameMode, this.maxPlayers, this.allowCheats, this.manageCommands);
         *///?} else {
         assert this.client != null;
-        KfcudpClient.startCustomRoom(this.client, this.gameMode, this.maxPlayers, this.allowCheats);
+        KfcudpClient.startCustomRoom(this.client, this.gameMode, this.maxPlayers, this.allowCheats, this.manageCommands);
         //?}
     }
 
