@@ -12,15 +12,19 @@ import net.fabricmc.fabric.api.client.screen.v1.Screens;
 import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
-import kfc.udp.client.gui.JoinRoomScreen;
+import kfc.udp.client.gui.RoomListScreen;
 //? if >=26.1 {
 /*import net.minecraft.ChatFormatting;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.screens.ConnectScreen;
 import net.minecraft.client.gui.screens.GenericMessageScreen;
 import net.minecraft.client.gui.screens.PauseScreen;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.multiplayer.JoinMultiplayerScreen;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Tooltip;
+import net.minecraft.client.multiplayer.ServerData;
+import net.minecraft.client.multiplayer.resolver.ServerAddress;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.network.chat.ClickEvent;
 import net.minecraft.network.chat.Component;
@@ -33,8 +37,12 @@ import net.minecraft.world.level.GameType;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.GameMenuScreen;
 import net.minecraft.client.gui.screen.MessageScreen;
+import net.minecraft.client.gui.screen.Screen;
+import net.minecraft.client.gui.screen.multiplayer.ConnectScreen;
 import net.minecraft.client.gui.screen.multiplayer.MultiplayerScreen;
 import net.minecraft.client.gui.widget.ButtonWidget;
+import net.minecraft.client.network.ServerAddress;
+import net.minecraft.client.network.ServerInfo;
 import net.minecraft.server.integrated.IntegratedServer;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.ClickEvent;
@@ -80,9 +88,11 @@ public class KfcudpClient implements ClientModInitializer {
     private static PendingRoom pendingRoom = null;
 
     //? if >=26.1 {
-    /*private record PendingRoom(GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {}
+    /*private record PendingRoom(GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands,
+                                boolean publicRoom, String title) {}
     *///?} else {
-    private record PendingRoom(GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {}
+    private record PendingRoom(GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands,
+                                boolean publicRoom, String title) {}
     //?}
 
     //? if >=26.2 {
@@ -151,7 +161,7 @@ public class KfcudpClient implements ClientModInitializer {
                 int btnY = 10;
                 Button joinBtn = Button.builder(
                                 Component.translatable("instant-p2p.join_room.title"),
-                                button -> client.setScreenAndShow(new JoinRoomScreen(screen))
+                                button -> client.setScreenAndShow(new RoomListScreen(screen))
                         ).bounds(btnX, btnY, btnW, btnH).build();
                 Screens.getWidgets(screen).add(joinBtn);
                 kfcudp$injectedWidgets.put(screen, java.util.List.of(joinBtn));
@@ -261,7 +271,7 @@ public class KfcudpClient implements ClientModInitializer {
             if (server == null || server.getPlayerCount() <= 1) {
                 PendingRoom p = pendingRoom;
                 pendingRoom = null;
-                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats(), p.manageCommands());
+                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats(), p.manageCommands(), p.publicRoom(), p.title());
             }
         });
 
@@ -366,7 +376,7 @@ public class KfcudpClient implements ClientModInitializer {
                 int btnY = 10;
                 ButtonWidget joinBtn = ButtonWidget.builder(
                                 Text.translatable("instant-p2p.join_room.title"),
-                                button -> client.setScreen(new JoinRoomScreen(screen))
+                                button -> client.setScreen(new RoomListScreen(screen))
                         ).dimensions(btnX, btnY, btnW, btnH).build();
                 Screens.getButtons(screen).add(joinBtn);
                 kfcudp$injectedWidgets.put(screen, java.util.List.of(joinBtn));
@@ -476,7 +486,7 @@ public class KfcudpClient implements ClientModInitializer {
             if (server == null || server.getCurrentPlayerCount() <= 1) {
                 PendingRoom p = pendingRoom;
                 pendingRoom = null;
-                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats(), p.manageCommands());
+                openRoomNow(client, p.gameMode(), p.maxPlayers(), p.allowCheats(), p.manageCommands(), p.publicRoom(), p.title());
             }
         });
 
@@ -565,7 +575,8 @@ public class KfcudpClient implements ClientModInitializer {
      */
     //? if >=26.1 {
     /*public static void startCustomRoom(Minecraft client,
-                                       GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
+                                       GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands,
+                                       boolean publicRoom, String title) {
         if (client.player == null) return;
 
         IntegratedServer server = client.getSingleplayerServer();
@@ -584,16 +595,17 @@ public class KfcudpClient implements ClientModInitializer {
         // 게스트가 아직 남아 있으면(퇴장 처리가 비동기라 바로 안 빠짐) "떠났습니다"
         // 메시지가 먼저 뜨도록 방장만 남을 때까지 기다렸다가 새 방을 연다.
         if (server.getPlayerCount() > 1) {
-            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats, manageCommands);
+            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats, manageCommands, publicRoom, title);
             client.setScreenAndShow(null);
             return;
         }
 
-        openRoomNow(client, gameMode, maxPlayers, allowCheats, manageCommands);
+        openRoomNow(client, gameMode, maxPlayers, allowCheats, manageCommands, publicRoom, title);
     }
     *///?} else {
     public static void startCustomRoom(MinecraftClient client,
-                                       GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
+                                       GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands,
+                                       boolean publicRoom, String title) {
         if (client.player == null) return;
 
         IntegratedServer server = client.getServer();
@@ -612,18 +624,19 @@ public class KfcudpClient implements ClientModInitializer {
         // 게스트가 아직 남아 있으면(퇴장 처리가 비동기라 바로 안 빠짐) "떠났습니다"
         // 메시지가 먼저 뜨도록 방장만 남을 때까지 기다렸다가 새 방을 연다.
         if (server.getCurrentPlayerCount() > 1) {
-            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats, manageCommands);
+            pendingRoom = new PendingRoom(gameMode, maxPlayers, allowCheats, manageCommands, publicRoom, title);
             client.setScreen(null);
             return;
         }
 
-        openRoomNow(client, gameMode, maxPlayers, allowCheats, manageCommands);
+        openRoomNow(client, gameMode, maxPlayers, allowCheats, manageCommands, publicRoom, title);
     }
     //?}
 
     //? if >=26.1 {
     /*private static void openRoomNow(Minecraft client,
-                                     GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
+                                     GameType gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands,
+                                     boolean publicRoom, String title) {
         if (client.player == null) return;
         IntegratedServer server = client.getSingleplayerServer();
         if (server == null) return;
@@ -677,6 +690,14 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendSystemMessage(Component.translatable("instant-p2p.msg.host_failed"));
             return;
         }
+        // 방 제목을 비워뒀으면 무작위 문자열 대신 초대 코드 그대로 쓴다 — 코드를 알면
+        // 어차피 방을 특정할 수 있으니 별도 무작위 식별자를 지어낼 이유가 없다.
+        if (publicRoom && title.isEmpty()) {
+            title = "Room - " + code;
+        }
+        if (publicRoom) {
+            WebRtcBridge.publishPublicRoom(code, title, client.player.getName().getString());
+        }
 
         activeInviteCode = code;
         inviteTicksRemaining = INVITE_TIMEOUT_TICKS;
@@ -695,13 +716,17 @@ public class KfcudpClient implements ClientModInitializer {
         client.player.sendSystemMessage(
                 Component.empty().append(prefix).append(codeText).append(suffix));
         client.player.sendSystemMessage(Component.translatable("instant-p2p.msg.invite_expiry_notice"));
+        if (publicRoom) {
+            client.player.sendSystemMessage(Component.translatable("instant-p2p.msg.public_room_notice", title));
+        }
 
         client.setScreenAndShow(null);
         client.mouseHandler.grabMouse();
     }
     *///?} else {
     private static void openRoomNow(MinecraftClient client,
-                                     GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands) {
+                                     GameMode gameMode, int maxPlayers, boolean allowCheats, boolean manageCommands,
+                                     boolean publicRoom, String title) {
         if (client.player == null) return;
         IntegratedServer server = client.getServer();
         if (server == null) return;
@@ -760,6 +785,14 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendMessage(Text.translatable("instant-p2p.msg.host_failed"), false);
             return;
         }
+        // 방 제목을 비워뒀으면 무작위 문자열 대신 초대 코드 그대로 쓴다 — 코드를 알면
+        // 어차피 방을 특정할 수 있으니 별도 무작위 식별자를 지어낼 이유가 없다.
+        if (publicRoom && title.isEmpty()) {
+            title = "Room - " + code;
+        }
+        if (publicRoom) {
+            WebRtcBridge.publishPublicRoom(code, title, client.player.getName().getString());
+        }
 
         activeInviteCode = code;
         inviteTicksRemaining = INVITE_TIMEOUT_TICKS;
@@ -778,6 +811,9 @@ public class KfcudpClient implements ClientModInitializer {
         client.player.sendMessage(
                 Text.empty().append(prefix).append(codeText).append(suffix), false);
         client.player.sendMessage(Text.translatable("instant-p2p.msg.invite_expiry_notice"), false);
+        if (publicRoom) {
+            client.player.sendMessage(Text.translatable("instant-p2p.msg.public_room_notice", title), false);
+        }
 
         client.setScreen(null);
         client.mouse.lockCursor();
@@ -942,4 +978,23 @@ public class KfcudpClient implements ClientModInitializer {
         }
         return sb.toString();
     }
+
+    /** RoomListScreen 하단 코드 입력과 방 목록 클릭 공용 — 코드로 접속. */
+    //? if >=26.1 {
+    /*public static void joinRoomByCode(Minecraft client, Screen parent, String code) {
+        String address = "webrtc." + code;
+        ServerAddress serverAddress = ServerAddress.parseString(address);
+        ServerData serverInfo = new ServerData(
+                Component.translatable("instant-p2p.join_room.server_name").getString(), address, ServerData.Type.OTHER);
+        ConnectScreen.startConnecting(parent, client, serverAddress, serverInfo, false, null);
+    }
+    *///?} else {
+    public static void joinRoomByCode(MinecraftClient client, Screen parent, String code) {
+        String address = "webrtc." + code;
+        ServerAddress serverAddress = ServerAddress.parse(address);
+        ServerInfo serverInfo = new ServerInfo(
+                Text.translatable("instant-p2p.join_room.server_name").getString(), address, ServerInfo.ServerType.OTHER);
+        ConnectScreen.connect(parent, client, serverAddress, serverInfo, false, null);
+    }
+    //?}
 }

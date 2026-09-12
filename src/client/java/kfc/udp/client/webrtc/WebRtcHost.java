@@ -311,7 +311,7 @@ public class WebRtcHost {
      */
     private RTCConfiguration buildConfig(boolean allowRelay) {
         RTCConfiguration config = new RTCConfiguration();
-        // ICE 서버 구성 (relay-only 여부는 P2PConfig.RELAY_ONLY)
+        // ICE 서버 구성 (relay-only 여부는 P2PConfig.isRelayOnly())
         IceConfig.apply(config, serverRelays, "host", allowRelay);
         // 디버그/특수 네트워크 환경용: any-address 포트 강제 (-Dkfcudp.ice.anyaddress=true)
         if (Boolean.getBoolean("kfcudp.ice.anyaddress")) {
@@ -339,8 +339,14 @@ public class WebRtcHost {
 
         void open() {
             if (!running.get()) return;
+            // peer 이름의 "h" 다음 글자에 이 방의 중계 강제 여부를 실어 보낸다 — 조인자가
+            // 호스트 등장을 감지하는 바로 그 control.peers 메시지에서 같이 읽어가므로
+            // 새 메시지 왕복 없이 공짜로 전달된다. 조인자는 이 값을 보고 자기 쪽이
+            // 중계 강제가 아니어도 1차(직결 전용) 시도를 건너뛸 수 있다 — 호스트가 이미
+            // 릴레이 전용이면 1차는 어차피 실패가 확정이므로(WebRtcClient.acceptAndBridge 참고).
+            String flag = P2PConfig.isRelayOnly() ? "r" : "d";
             WebSocketClient w = new WebSocketClient(
-                    P2PConfig.SIGNALING_URL + "/" + roomId + "-" + sid + "/h" + sid) {
+                    P2PConfig.SIGNALING_URL + "/" + roomId + "-" + sid + "/h" + flag + sid) {
                 @Override public void onConnected() {
                     send(VillasMsg.hello());
                     LOG.info("[host] pair session joined: sid={}", sid);

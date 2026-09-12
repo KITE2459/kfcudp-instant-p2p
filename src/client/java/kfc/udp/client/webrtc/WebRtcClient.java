@@ -102,6 +102,11 @@ public class WebRtcClient {
     /** 서버가 내려준 TURN/STUN relays (없으면 P2PConfig 기본값 사용) */
     private volatile List<String[]> serverRelays = List.of();
 
+    /** 호스트가 중계 통신을 강제 중인지 — 호스트의 페어 세션 peer 이름("h" 다음 글자)에
+     * 실려 온다(WebRtcHost.PairSignal.open() 참고). 내가 중계 강제가 아니어도
+     * 호스트가 강제면 1차(직결 전용) 시도는 무의미하므로 건너뛴다. */
+    private volatile boolean hostRelayOnly = false;
+
     public WebRtcClient(String roomId, int localPort) {
         this.roomId    = roomId;
         this.localPort = localPort;
@@ -156,8 +161,18 @@ public class WebRtcClient {
             // 포함해서 재시도한다 — TURN allocate가 홀펀칭보다 먼저 성사돼서
             // 직결이 가능한데도 릴레이로 확정돼버리는 경쟁을 피하기 위함.
             // IceConfig 클래스 주석 참고.
-            boolean connected = attemptConnection(false, DIRECT_ATTEMPT_TIMEOUT_MS);
-            if (!connected && running.get()) {
+            //
+            // 단, 나 자신(P2PConfig.isRelayOnly()) 또는 상대 호스트(hostRelayOnly, 페어
+            // 세션 peer 이름으로 미리 전달받음)가 중계를 강제 중이면 직결은 애초에
+            // 성사될 수 없다 — 내가 강제인 경우는 IceConfig.apply가 allowRelay 값과
+            // 무관하게 릴레이 전용으로 만들어버리고, 호스트가 강제인 경우는 호스트가
+            // RELAY 정책이라 host/srflx 후보 자체가 안 나온다. 어느 쪽이든 1차와 2차가
+            // 결국 같은 시도인데, 그런데도 1차를 짧은 DIRECT_ATTEMPT_TIMEOUT_MS(2초)로
+            // 실패시켜서 PeerConnection을 통째로 버리고 2차로 다시 만드는 건 순수 낭비다
+            // — 강제 상태를 알고 있으면 처음부터 릴레이 허용, 긴 타임아웃으로 1번만 시도한다.
+            boolean relayForced = kfc.udp.client.webrtc.P2PConfig.isRelayOnly() || hostRelayOnly;
+            boolean connected = attemptConnection(relayForced, relayForced ? RELAY_ATTEMPT_TIMEOUT_MS : DIRECT_ATTEMPT_TIMEOUT_MS);
+            if (!connected && running.get() && !relayForced) {
                 LOG.info("[webrtc] direct-only attempt did not complete within {}ms, retrying with relay allowed",
                         DIRECT_ATTEMPT_TIMEOUT_MS);
                 connected = attemptConnection(true, RELAY_ATTEMPT_TIMEOUT_MS);
@@ -305,10 +320,12 @@ public class WebRtcClient {
             }
         }
         if (VillasMsg.has(json, "control")) {
-            // 호스트(peer "h…")가 페어 세션에 연결되면 진행
+            // 호스트(peer "h…")가 페어 세션에 연결되면 진행 — "h" 다음 글자('r'/'d')로
+            // 호스트의 중계 강제 여부도 같이 읽는다(WebRtcHost.PairSignal.open() 참고).
             for (String[] p : VillasMsg.peers(json)) {
                 String name = p[0], remote = p[1];
                 if (name != null && remote != null && name.startsWith("h")) {
+                    if (name.length() > 1 && name.charAt(1) == 'r') hostRelayOnly = true;
                     hostArrivedLatch.countDown();
                 }
             }
@@ -453,7 +470,7 @@ public class WebRtcClient {
         }
 
         RTCConfiguration config = new RTCConfiguration();
-        // ICE 서버 구성 (relay-only 여부는 P2PConfig.RELAY_ONLY)
+        // ICE 서버 구성 (relay-only 여부는 P2PConfig.isRelayOnly())
         IceConfig.apply(config, serverRelays, "client", allowRelay);
 
         // 디버그/특수 네트워크 환경용: any-address 포트 강제 (-Dkfcudp.ice.anyaddress=true)

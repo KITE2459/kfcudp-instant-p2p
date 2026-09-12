@@ -7,10 +7,17 @@
   "instant-p2p.custom_room.start": "Start",
   "instant-p2p.custom_room.allow_commands": "Allow Commands",
   "instant-p2p.custom_room.manage_commands": "Allow Management Commands (kick/ban/whitelist)",
+  "instant-p2p.force_relay": "Force Relay",
+  "instant-p2p.custom_room.public_allow": "Allow Public",
+  "instant-p2p.custom_room.title_placeholder": "Room title (invite code if empty)",
+
+  "instant-p2p.room_list.title": "Room List",
+  "instant-p2p.room_list.empty": "No public rooms available",
+  "instant-p2p.room_list.enter_code": "Enter via Invite Code",
 
   "instant-p2p.pause.player_count": "Players %s / %s",
 
-  "instant-p2p.join_room.title": "Join Room",
+  "instant-p2p.join_room.title": "Join Custom Room",
   "instant-p2p.join_room.code_label": "Invite Code",
   "instant-p2p.join_room.join": "Join",
   "instant-p2p.join_room.code_placeholder": "Enter invite code...",
@@ -19,6 +26,7 @@
   "instant-p2p.msg.invite_prefix": "§b[Invite Code] §f",
   "instant-p2p.msg.invite_suffix": " §7(Click to copy)",
   "instant-p2p.msg.invite_expiry_notice": "§7Expires if no one joins within 2 minutes",
+  "instant-p2p.msg.public_room_notice": "§7This room is now listed publicly (%s)",
   "instant-p2p.msg.click_to_copy": "§7Click to copy",
   "instant-p2p.msg.invite_expired": "§cThe invite has expired",
   "instant-p2p.msg.invite_no_longer_expires": "§aA player has joined — the invite code no longer expires",

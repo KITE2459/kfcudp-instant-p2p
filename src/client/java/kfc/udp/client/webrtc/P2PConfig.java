@@ -1,5 +1,18 @@
 package kfc.udp.client.webrtc;
 
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.Reader;
+import java.io.Writer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+
 /**
  * P2P 인프라 접속 설정 (시그널링/STUN/TURN) — 호스트·조인 공용.
  * <p>
@@ -33,15 +46,100 @@ public final class P2PConfig {
     public static final String TURN_CREDENTIAL =
             System.getProperty("kfcudp.turn.pass", "minecraft");
 
+    private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-config");
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final Path CONFIG_DIR     = Path.of("config", "instant-p2p");
+    private static final Path SETTINGS_FILE  = CONFIG_DIR.resolve("settings.json");
+
     /**
      * <b>TURN 전용(relay-only) 스위치.</b>
      * <p>
-     * true 면 ICE 후보를 relay 만 수집한다(=직결/홀펀칭 없음, 100% TURN 경유).
-     * 기본값은 false(일반 P2P). TURN 전용으로 돌리려면
-     * {@code -Dkfcudp.ice.relayonly=true} 로 실행한다.
+     * true 면 ICE 후보를 relay 만 수집한다(=직결/홀펀칭 없음, 100% TURN 경유,
+     * 상대에게 내 실제 IP가 노출되지 않는다). 기본값 false, 설정 파일에 저장돼
+     * 세션을 넘어 유지된다. Custom Room(호스팅)과 Join Room/방 목록(접속) 화면의
+     * "중계 통신 강제" 체크박스가 전부 이 하나의 값을 그대로 읽고 쓴다 —
+     * 호스트는 강제인데 접속자는 아니게(또는 그 반대로) 어긋나는 걸 막기 위해
+     * 화면마다 따로 상태를 들고 있지 않는다.
      */
-    public static final boolean RELAY_ONLY =
-            Boolean.getBoolean("kfcudp.ice.relayonly");
+    private static volatile boolean relayOnly = loadRelayOnly();
+
+    public static boolean isRelayOnly() {
+        return relayOnly;
+    }
+
+    public static void setRelayOnly(boolean value) {
+        if (relayOnly == value) return;
+        relayOnly = value;
+        saveRelayOnly(value);
+    }
+
+    private static boolean loadRelayOnly() {
+        if (!Files.exists(SETTINGS_FILE)) return false;
+        try (Reader r = new FileReader(SETTINGS_FILE.toFile())) {
+            JsonObject o = GSON.fromJson(r, JsonObject.class);
+            return o != null && o.has("relayOnly") && o.get("relayOnly").getAsBoolean();
+        } catch (Exception e) {
+            LOG.warn("[instant-p2p] settings load failed: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    private static void saveRelayOnly(boolean value) {
+        try {
+            Files.createDirectories(CONFIG_DIR);
+            JsonObject o = new JsonObject();
+            o.addProperty("relayOnly", value);
+            try (Writer w = new FileWriter(SETTINGS_FILE.toFile())) {
+                GSON.toJson(o, w);
+            }
+        } catch (Exception e) {
+            LOG.warn("[instant-p2p] settings save failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * <b>공개 방 목록 카테고리(내부용, UI 없음 — 필요하면 settings.json을 직접 편집).</b>
+     * <p>
+     * 하나의 값이 호스팅/조회 양쪽에 다 쓰인다: 방을 공개로 열면 이 값이 그 방의
+     * 카테고리로 태그되고(PublicRoomAnnouncer), 방 목록을 볼 때도 이 값으로
+     * 필터링된다(PublicRoomBrowser) — 서로 다른 커뮤니티가 같은 공유 시그널링
+     * relay lobby를 나눠 써도 목록이 섞이지 않게 하기 위함.
+     * <ul>
+     *   <li>0 = 모든 방 보기 (카테고리 무관)</li>
+     *   <li>1 = 1(A그룹)로 호스팅된 방만 (기본값)</li>
+     *   <li>2 = 2(B그룹)로 호스팅된 방만</li>
+     * </ul>
+     */
+    private static final int roomCategory = loadRoomCategory();
+
+    public static int getRoomCategory() {
+        return roomCategory;
+    }
+
+    private static int loadRoomCategory() {
+        if (!Files.exists(SETTINGS_FILE)) return 1;
+        try (Reader r = new FileReader(SETTINGS_FILE.toFile())) {
+            JsonObject o = GSON.fromJson(r, JsonObject.class);
+            if (o == null || !o.has("roomCategory")) return 1;
+            int v = o.get("roomCategory").getAsInt();
+            return v == 0 || v == 1 || v == 2 ? v : 1;
+        } catch (Exception e) {
+            LOG.warn("[instant-p2p] settings load failed: {}", e.getMessage());
+            return 1;
+        }
+    }
+
+    /**
+     * 공개 방 목록용 고정 lobby 경로("roomId" 자리에 들어가는 특수값).
+     * 실제 초대 코드({@link kfc.udp.client.KfcudpClient} 참고, 대문자+숫자
+     * 10자)와 절대 겹치지 않도록 소문자+밑줄로 구성했다. 공개 방을 연 호스트는
+     * 전부 이 lobby에도 접속해서(자기 원래 방 lobby와는 별개) 자신을
+     * peer로 announce하고, 방 목록 화면은 이 lobby에 접속해서 현재 peer
+     * 목록만 읽어 공개 방들을 나열한다 — 새 서버 인프라 없이 기존
+     * VILLASframework signaling relay의 peer 목록 브로드캐스트를 그대로
+     * 재사용하는 방식(PublicRoomAnnouncer/RoomListScreen 참고).
+     */
+    public static final String PUBLIC_ROOMS_LOBBY_ID = "__instant_p2p_public_rooms__";
 
     // ── 파이프 버퍼 한도 (지연 ↔ 처리량 트레이드오프) ─────────────────────────
 

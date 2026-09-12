@@ -7,6 +7,13 @@
   "instant-p2p.custom_room.start": "시작",
   "instant-p2p.custom_room.allow_commands": "명령어 허용",
   "instant-p2p.custom_room.manage_commands": "관리 명령어 허용 (kick/ban/whitelist)",
+  "instant-p2p.force_relay": "중계 통신 강제",
+  "instant-p2p.custom_room.public_allow": "공개 허용",
+  "instant-p2p.custom_room.title_placeholder": "방 제목 (비워두면 초대 코드)",
+
+  "instant-p2p.room_list.title": "방 목록",
+  "instant-p2p.room_list.empty": "표시할 공개 방이 없습니다",
+  "instant-p2p.room_list.enter_code": "초대코드로 입장",
 
   "instant-p2p.pause.player_count": "인원 %s / %s",
 
@@ -19,6 +26,7 @@
   "instant-p2p.msg.invite_prefix": "§b[초대코드] §f",
   "instant-p2p.msg.invite_suffix": " §7(클릭하여 복사)",
   "instant-p2p.msg.invite_expiry_notice": "§72분 이상 아무도 접속하지 않으면 만료됩니다",
+  "instant-p2p.msg.public_room_notice": "§7서버가 방 목록에 공개됩니다 (%s)",
   "instant-p2p.msg.click_to_copy": "§7클릭해서 복사",
   "instant-p2p.msg.invite_expired": "§c초대장이 만료되었습니다",
   "instant-p2p.msg.invite_no_longer_expires": "§a플레이어가 접속해서 이제부터 초대 코드가 만료되지 않습니다",

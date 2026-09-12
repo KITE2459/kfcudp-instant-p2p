@@ -25,6 +25,10 @@ public class WebRtcBridge {
     // 네이티브 호스트
     private static volatile WebRtcHost webRtcHost;
 
+    // 공개 방 목록 announcer — 방 열 때 "공개 허용" 체크돼 있으면 같이 시작,
+    // 방 닫힐 때 같이 멈춘다(publishPublicRoom/unpublishPublicRoom).
+    private static final PublicRoomAnnouncer publicRoomAnnouncer = new PublicRoomAnnouncer();
+
     // 핑 후 접속 시 roomId 전달용
     private static volatile int activeLocalPort = LOCAL_PORT;
 
@@ -100,6 +104,16 @@ public class WebRtcBridge {
             host.close();
             webRtcHost = null;
         }
+        unpublishPublicRoom();
+    }
+
+    /** 방을 공개 목록에 올린다 — PublicRoomAnnouncer 클래스 주석 참고. */
+    public static void publishPublicRoom(String roomCode, String title, String hostNickname) {
+        publicRoomAnnouncer.start(roomCode, title, hostNickname);
+    }
+
+    public static void unpublishPublicRoom() {
+        publicRoomAnnouncer.stop();
     }
 
     /** 지금 활성화된 호스트 인스턴스를 식별하는 토큰(단순 참조). */

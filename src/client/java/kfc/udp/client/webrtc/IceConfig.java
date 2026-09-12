@@ -15,7 +15,7 @@ import java.util.Set;
  * 호스트/조인 공용 ICE 구성 빌더.
  *
  * <p><b>TURN 전용 모드</b> ({@code -Dkfcudp.ice.relayonly=true}):
- * {@link P2PConfig#RELAY_ONLY} 가 true 면
+ * {@link P2PConfig#isRelayOnly()} 가 true 면
  * <ul>
  *   <li>{@code iceTransportPolicy = RELAY} — host/srflx 후보를 아예 수집하지 않는다.
  *       즉 직결(Direct)·홀펀칭 경로가 생성되지 않고 모든 트래픽이 TURN 릴레이를 통과한다.</li>
@@ -37,6 +37,12 @@ import java.util.Set;
  * 시간 안에 안 되면(2차) {@code allowRelay=true}로 재시도한다. 이때도 양쪽이
  * 같은 단계로 맞춰서 재시도해야 한다 — 조인자가 보내는 OFFER 재협상 횟수로
  * 호스트가 단계를 유추한다({@link WebRtcHost.PairSignal} 참고).
+ * <p>
+ * 예외: 나 또는 상대가 이미 중계 강제({@link P2PConfig#isRelayOnly()})라면 1차는
+ * 어차피 실패가 확정이므로 아예 건너뛴다. 호스트는 페어 세션 peer 이름에 자기
+ * 강제 여부를 실어 보내고, 조인자는 그 값을 호스트 등장 감지와 동시에 읽어서
+ * {@code WebRtcClient.acceptAndBridge}에서 1차 없이 바로 릴레이 허용으로 1번만
+ * 시도한다 — 짧은 타임아웃(2초)짜리 승산 없는 시도를 반복 생성/폐기하는 낭비를 없앤다.
  */
 final class IceConfig {
 
@@ -50,11 +56,11 @@ final class IceConfig {
      * @param tag        로그 태그 ("host" / "client")
      * @param allowRelay false면 TURN 후보를 아예 만들지 않는다 — "직결 우선 시도" 1단계용.
      *                    host/srflx 후보만 만들어지므로 릴레이 pair가 애초에 존재할 수 없다.
-     *                    {@link P2PConfig#RELAY_ONLY}가 true면 이 값과 무관하게 강제로 릴레이 전용이 된다
+     *                    {@link P2PConfig#isRelayOnly()}가 true면 이 값과 무관하게 강제로 릴레이 전용이 된다
      *                    (사용자가 명시적으로 지정한 디버그 모드라 우선한다).
      */
     static void apply(RTCConfiguration config, List<String[]> relays, String tag, boolean allowRelay) {
-        final boolean relayOnly = P2PConfig.RELAY_ONLY;
+        final boolean relayOnly = P2PConfig.isRelayOnly();
         if (relayOnly) allowRelay = true;
 
         List<RTCIceServer> chosen = new ArrayList<>();
