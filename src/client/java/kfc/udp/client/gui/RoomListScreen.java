@@ -25,7 +25,9 @@ import net.minecraft.text.Text;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.Random;
 
 /**
  * 공개 방 목록 — 카트라이더 공방 목록처럼, 내부적으로는 초대 코드를 주고받지만
@@ -43,10 +45,14 @@ import java.util.Objects;
  */
 public class RoomListScreen extends Screen {
 
-    private static final int LIST_Y       = 40;
+    /** 검색창 — 리스트 위, 화면 상단 고정. */
+    private static final int SEARCH_Y     = 36;
+    private static final int LIST_Y       = 60;
     private static final int ROW_H        = 26;
     private static final int VISIBLE_ROWS = 4;
     private static final int ROW_W        = 300;
+    /** 빠른 시작 버튼 — 리스트 바로 아래(리스트 길이에 종속, 화면 상단 쪽 레이아웃). */
+    private static final int QUICK_START_Y = LIST_Y + VISIBLE_ROWS * ROW_H + 8;
 
     /** 초대코드 섹션(체크박스/제목/입력란/접속/취소)은 리스트 길이와 무관하게 화면 하단에 고정
      * — {@link #init()}에서 {@code this.height} 기준으로 계산해 인스턴스 필드에 채운다. */
@@ -66,6 +72,8 @@ public class RoomListScreen extends Screen {
     private static final Component CODE_LABEL_TEXT = Component.translatable("instant-p2p.join_room.code_label");
     private static final Component JOIN_TEXT       = Component.translatable("instant-p2p.join_room.join");
     private static final Component FORCE_RELAY_TEXT = Component.translatable("instant-p2p.force_relay");
+    private static final Component SEARCH_LABEL_TEXT = Component.translatable("instant-p2p.room_list.search_label");
+    private static final Component QUICK_START_TEXT = Component.translatable("instant-p2p.room_list.quick_start");
     *///?} else {
     private static final Text TITLE_TEXT      = Text.translatable("instant-p2p.room_list.title");
     private static final Text EMPTY_TEXT      = Text.translatable("instant-p2p.room_list.empty");
@@ -73,24 +81,35 @@ public class RoomListScreen extends Screen {
     private static final Text CODE_LABEL_TEXT = Text.translatable("instant-p2p.join_room.code_label");
     private static final Text JOIN_TEXT       = Text.translatable("instant-p2p.join_room.join");
     private static final Text FORCE_RELAY_TEXT = Text.translatable("instant-p2p.force_relay");
+    private static final Text SEARCH_LABEL_TEXT = Text.translatable("instant-p2p.room_list.search_label");
+    private static final Text QUICK_START_TEXT = Text.translatable("instant-p2p.room_list.quick_start");
     //?}
 
     private final Screen parent;
     private final PublicRoomBrowser browser = new PublicRoomBrowser();
     private int scrollIndex = 0;
+    private String searchQuery = "";
+    /** 검색어까지 반영된 현재 목록 — 화면에 보이는 {@link #VISIBLE_ROWS}줄뿐 아니라
+     * 빠른 시작이 무작위로 고를 전체 후보 풀로도 쓴다. */
+    private List<PublicRoomBrowser.RoomEntry> filteredRooms = List.of();
+    private static final Random RANDOM = new Random();
 
     //? if >=26.1 {
     /*private final java.util.List<Button> rowButtons = new java.util.ArrayList<>();
     private final PublicRoomBrowser.RoomEntry[] rowRoom = new PublicRoomBrowser.RoomEntry[VISIBLE_ROWS];
     @Nullable private StringWidget emptyLabel;
+    @Nullable private EditBox searchField;
     @Nullable private EditBox codeField;
     @Nullable private Button joinButton;
+    @Nullable private Button quickStartButton;
     *///?} else {
     private final java.util.List<ButtonWidget> rowButtons = new java.util.ArrayList<>();
     private final PublicRoomBrowser.RoomEntry[] rowRoom = new PublicRoomBrowser.RoomEntry[VISIBLE_ROWS];
     @Nullable private TextWidget emptyLabel;
+    @Nullable private TextFieldWidget searchField;
     @Nullable private TextFieldWidget codeField;
     @Nullable private ButtonWidget joinButton;
+    @Nullable private ButtonWidget quickStartButton;
     //?}
 
     public RoomListScreen(Screen parent) {
@@ -108,6 +127,15 @@ public class RoomListScreen extends Screen {
         this.sectionTitleY = this.codeRowY - 14;
         this.forceRelayY = this.sectionTitleY - 24;
 
+        this.searchField = new EditBox(this.font, listX, SEARCH_Y, ROW_W, 20, SEARCH_LABEL_TEXT);
+        this.searchField.setMaxLength(32);
+        this.searchField.setHint(Component.translatable("instant-p2p.room_list.search_placeholder").withStyle(ChatFormatting.DARK_GRAY));
+        this.searchField.setResponder(text -> {
+            this.searchQuery = text;
+            this.refreshRooms();
+        });
+        this.addRenderableWidget(this.searchField);
+
         this.rowButtons.clear();
         for (int i = 0; i < VISIBLE_ROWS; i++) {
             int row = i;
@@ -124,6 +152,12 @@ public class RoomListScreen extends Screen {
         this.emptyLabel.setX(cx - this.emptyLabel.getWidth() / 2);
         this.emptyLabel.setY(LIST_Y);
         this.addRenderableWidget(this.emptyLabel);
+
+        this.quickStartButton = Button.builder(QUICK_START_TEXT, b -> this.onQuickStart())
+                .bounds(listX, QUICK_START_Y, ROW_W, 20)
+                .build();
+        this.quickStartButton.active = false;
+        this.addRenderableWidget(this.quickStartButton);
 
         this.addRenderableWidget(
                 Checkbox.builder(FORCE_RELAY_TEXT, this.font)
@@ -165,6 +199,15 @@ public class RoomListScreen extends Screen {
         this.sectionTitleY = this.codeRowY - 14;
         this.forceRelayY = this.sectionTitleY - 24;
 
+        this.searchField = new TextFieldWidget(this.textRenderer, listX, SEARCH_Y, ROW_W, 20, SEARCH_LABEL_TEXT);
+        this.searchField.setMaxLength(32);
+        this.searchField.setPlaceholder(Text.translatable("instant-p2p.room_list.search_placeholder").formatted(net.minecraft.util.Formatting.DARK_GRAY));
+        this.searchField.setChangedListener(text -> {
+            this.searchQuery = text;
+            this.refreshRooms();
+        });
+        this.addDrawableChild(this.searchField);
+
         this.rowButtons.clear();
         for (int i = 0; i < VISIBLE_ROWS; i++) {
             int row = i;
@@ -181,6 +224,12 @@ public class RoomListScreen extends Screen {
         this.emptyLabel.setX(cx - this.emptyLabel.getWidth() / 2);
         this.emptyLabel.setY(LIST_Y);
         this.addDrawableChild(this.emptyLabel);
+
+        this.quickStartButton = ButtonWidget.builder(QUICK_START_TEXT, b -> this.onQuickStart())
+                .dimensions(listX, QUICK_START_Y, ROW_W, 20)
+                .build();
+        this.quickStartButton.active = false;
+        this.addDrawableChild(this.quickStartButton);
 
         this.addDrawableChild(
                 CheckboxWidget.builder(FORCE_RELAY_TEXT, this.textRenderer)
@@ -220,9 +269,17 @@ public class RoomListScreen extends Screen {
         this.refreshRooms();
     }
 
-    /** {@link PublicRoomBrowser}가 들고 있는 현재 방 목록으로 행들을 다시 채운다. */
+    /** {@link PublicRoomBrowser}가 들고 있는 현재 방 목록에 검색어를 적용해 행들을 다시 채운다. */
     private void refreshRooms() {
-        List<PublicRoomBrowser.RoomEntry> rooms = this.browser.getCurrentRooms();
+        List<PublicRoomBrowser.RoomEntry> all = this.browser.getCurrentRooms();
+        String q = this.searchQuery.trim().toLowerCase(Locale.ROOT);
+        List<PublicRoomBrowser.RoomEntry> rooms = q.isEmpty() ? all
+                : all.stream()
+                        .filter(r -> r.title().toLowerCase(Locale.ROOT).contains(q)
+                                || r.hostNickname().toLowerCase(Locale.ROOT).contains(q))
+                        .toList();
+        this.filteredRooms = rooms;
+
         int maxIndex = Math.max(0, rooms.size() - VISIBLE_ROWS);
         if (this.scrollIndex > maxIndex) this.scrollIndex = maxIndex;
 
@@ -239,11 +296,26 @@ public class RoomListScreen extends Screen {
         }
 
         if (this.emptyLabel != null) this.emptyLabel.visible = rooms.isEmpty();
+        if (this.quickStartButton != null) this.quickStartButton.active = !rooms.isEmpty();
     }
 
     private void onRowClicked(int row) {
         PublicRoomBrowser.RoomEntry r = this.rowRoom[row];
         if (r == null) return;
+        //? if >=26.1 {
+        /*assert this.minecraft != null;
+        KfcudpClient.joinRoomByCode(this.minecraft, this.parent, r.code());
+        *///?} else {
+        assert this.client != null;
+        KfcudpClient.joinRoomByCode(this.client, this.parent, r.code());
+        //?}
+    }
+
+    /** 검색 결과(비어 있으면 전체) 중 무작위 방 하나에 바로 접속한다. */
+    private void onQuickStart() {
+        List<PublicRoomBrowser.RoomEntry> rooms = this.filteredRooms;
+        if (rooms.isEmpty()) return;
+        PublicRoomBrowser.RoomEntry r = rooms.get(RANDOM.nextInt(rooms.size()));
         //? if >=26.1 {
         /*assert this.minecraft != null;
         KfcudpClient.joinRoomByCode(this.minecraft, this.parent, r.code());
@@ -302,7 +374,7 @@ public class RoomListScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
-        int maxIndex = Math.max(0, this.browser.getCurrentRooms().size() - VISIBLE_ROWS);
+        int maxIndex = Math.max(0, this.filteredRooms.size() - VISIBLE_ROWS);
         if (maxIndex <= 0) return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
         int newIndex = this.scrollIndex - (int) Math.signum(verticalAmount);
         newIndex = Math.max(0, Math.min(maxIndex, newIndex));
@@ -323,7 +395,7 @@ public class RoomListScreen extends Screen {
     /*@Override
     public void extractRenderState(GuiGraphicsExtractor context, int mouseX, int mouseY, float deltaTicks) {
         super.extractRenderState(context, mouseX, mouseY, deltaTicks);
-        context.centeredText(this.font, this.title, this.width / 2, LIST_Y - 20, 0xFFFFFFFF);
+        context.centeredText(this.font, this.title, this.width / 2, SEARCH_Y - 14, 0xFFFFFFFF);
         context.text(this.font, SECTION_TEXT, this.width / 2 - CODE_FIELD_W / 2, this.sectionTitleY, 0xFFFFFFFF);
         this.renderRows(context, mouseX, mouseY);
     }
@@ -348,7 +420,7 @@ public class RoomListScreen extends Screen {
     /*@Override
     public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
         super.render(context, mouseX, mouseY, deltaTicks);
-        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, LIST_Y - 20, 0xFFFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, SEARCH_Y - 14, 0xFFFFFFFF);
         context.drawTextWithShadow(this.textRenderer, SECTION_TEXT, this.width / 2 - CODE_FIELD_W / 2, this.sectionTitleY, 0xFFFFFFFF);
         this.renderRows(context, mouseX, mouseY);
     }
@@ -374,7 +446,7 @@ public class RoomListScreen extends Screen {
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
         super.render(context, mouseX, mouseY, deltaTicks);
-        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, LIST_Y - 20, 0xFFFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, SEARCH_Y - 14, 0xFFFFFFFF);
         context.drawTextWithShadow(this.textRenderer, SECTION_TEXT, this.width / 2 - CODE_FIELD_W / 2, this.sectionTitleY, 0xFFFFFFFF);
         this.renderRows(context, mouseX, mouseY);
     }

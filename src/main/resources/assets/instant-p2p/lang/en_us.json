@@ -14,6 +14,9 @@
   "instant-p2p.room_list.title": "Room List",
   "instant-p2p.room_list.empty": "No public rooms available",
   "instant-p2p.room_list.enter_code": "Enter via Invite Code",
+  "instant-p2p.room_list.search_label": "Search Rooms",
+  "instant-p2p.room_list.search_placeholder": "Search by title or nickname...",
+  "instant-p2p.room_list.quick_start": "Quick Start",
 
   "instant-p2p.pause.player_count": "Players %s / %s",
 

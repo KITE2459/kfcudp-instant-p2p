@@ -14,6 +14,9 @@
   "instant-p2p.room_list.title": "방 목록",
   "instant-p2p.room_list.empty": "표시할 공개 방이 없습니다",
   "instant-p2p.room_list.enter_code": "초대코드로 입장",
+  "instant-p2p.room_list.search_label": "방 검색",
+  "instant-p2p.room_list.search_placeholder": "제목/닉네임 검색...",
+  "instant-p2p.room_list.quick_start": "빠른 시작",
 
   "instant-p2p.pause.player_count": "인원 %s / %s",
 
