@@ -28,7 +28,9 @@ import java.net.SocketAddress;
 import java.nio.file.*;
 import java.time.Instant;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -42,6 +44,32 @@ import static net.minecraft.server.command.CommandManager.argument;
 import static net.minecraft.server.command.CommandManager.literal;
 //?}
 
+/**
+ * 서버(호스팅 중인 방)의 밴/킥 명령어 + 로그인 단계 거부(checkCanJoin)를 담당하는
+ * 동시에, 방 목록 화면(RoomListScreen)의 "개인 차단" 아이콘도 여기 하나로 합쳐서
+ * 처리한다 — 예전엔 별도 클래스(P2PBlockManager)가 자기만의 파일(blocked-players.json)을
+ * 따로 관리했는데, 인게임에서 밴한 사람은 방 목록에서도 안 보여야 하고 방 목록에서
+ * 차단한 사람은 내 방에 못 들어와야 한다는 요구를 "동기화"로 풀면 두 파일이 어긋날
+ * 여지가 늘 남는다 — 그래서 애초에 같은 맵/같은 파일({@link #bannedPlayers},
+ * banned-players.json) 하나만 두고 양쪽이 그걸 그대로 참조하게 했다.
+ * <p>
+ * <b>양방향 차단이 되는 원리</b> — 필터링은 전부 조회하는 쪽(클라이언트) 로컬에서만
+ * 일어난다(서버가 대상을 가려서 안 보내주는 게 아니다):
+ * <ul>
+ *   <li>"내가 밴/차단한 사람 방이 안 보임" — 내 화면이 방 목록을 받은 뒤, 방장의
+ *       hostUuid가 {@link #isPlayerBanned}면 그 방을 그냥 숨긴다.</li>
+ *   <li>"밴/차단한 사람한테 내 방이 안 보임" — 내가 방을 공개할 때 내 밴 목록
+ *       전체를 방 공지 payload에 같이 실어 보낸다({@link #encodeBannedPlayerUuids},
+ *       PublicRoomAnnouncer 참고). 그 목록을 받아보는 모든 클라이언트가 "내 UUID가
+ *       이 방의 밴 목록에 있나"를 {@link #isListedIn}으로 확인해서, 있으면 자기
+ *       화면에서 그 방을 숨긴다.</li>
+ * </ul>
+ * 후자는 서버가 강제하는 게 아니라 각 클라이언트가 스스로 지키는 방식이라 완벽한
+ * 보안 경계는 아니지만(악의적으로 이 모드를 고쳐 쓰면 무시할 수 있음), "서로 안
+ * 보고 싶다"는 사회적 기능 목적에는 충분하다. IP 밴({@link #bannedIps})은 이
+ * 통합 대상이 아니다 — 방 목록 차단은 어디까지나 UUID(플레이어) 단위 취향이고,
+ * IP 밴은 더 강한 별도의 수동 조치로 남겨둔다.
+ */
 public class P2PBanManager {
 
     private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-ban");
@@ -152,6 +180,28 @@ public class P2PBanManager {
     }
     //?}
 
+    /**
+     * OP 부여는 방장만 쓸 수 있다 — kick/ban과 달리 {@link #guestManagementEnabled}로도
+     * 접속자에게 열어주지 않는다. OP는 명령어 권한 레벨 4 전체(치트 포함)를 주는
+     * 바닐라 권한이라, kick/ban보다 훨씨 강력하다 — 접속자가 스스로에게 OP를 줄 수
+     * 있게 되면 "관리 명령어" 옵션 하나로 방 전체 권한이 뚫리는 셈이라 항상 방장 전용.
+     */
+    //? if >=26.1 {
+    /*static Predicate<CommandSourceStack> requireHost() {
+        return src -> {
+            MinecraftServer server = src.getServer();
+            return server != null && src.getEntity() instanceof ServerPlayer sp && isHost(server, sp);
+        };
+    }
+    *///?} else {
+    static Predicate<ServerCommandSource> requireHost() {
+        return src -> {
+            MinecraftServer server = src.getServer();
+            return server != null && src.getEntity() instanceof ServerPlayerEntity sp && isHost(server, sp);
+        };
+    }
+    //?}
+
     /** {@link #lookupProfile}의 결과 — 버전 무관하게 uuid+name만 필요할 때 쓰는 최소 표현. */
     public record ProfileLookup(UUID id, String name) {}
 
@@ -182,6 +232,31 @@ public class P2PBanManager {
         //?}
     }
 
+    /** {@code addToOperators(GameProfile)} → {@code addToOperators(PlayerConfigEntry)} (1.21.9+) → {@code PlayerList.op(NameAndId)} (26.1+) */
+    private static void grantOp(MinecraftServer server, ProfileLookup lookup) {
+        //? if >=26.1 {
+        /*server.getPlayerList().op(new NameAndId(lookup.id(), lookup.name()));
+        *///?}
+        //? if >=1.21.9 <26.1 {
+        /*server.getPlayerManager().addToOperators(new PlayerConfigEntry(lookup.id(), lookup.name()));
+        *///?}
+        //? if <1.21.9 {
+        server.getPlayerManager().addToOperators(new GameProfile(lookup.id(), lookup.name()));
+        //?}
+    }
+
+    private static void revokeOp(MinecraftServer server, ProfileLookup lookup) {
+        //? if >=26.1 {
+        /*server.getPlayerList().deop(new NameAndId(lookup.id(), lookup.name()));
+        *///?}
+        //? if >=1.21.9 <26.1 {
+        /*server.getPlayerManager().removeFromOperators(new PlayerConfigEntry(lookup.id(), lookup.name()));
+        *///?}
+        //? if <1.21.9 {
+        server.getPlayerManager().removeFromOperators(new GameProfile(lookup.id(), lookup.name()));
+        //?}
+    }
+
     // -------------------------------------------------------------------------
     // 자동완성 제공자
     // -------------------------------------------------------------------------
@@ -198,16 +273,29 @@ public class P2PBanManager {
 
     private static final SuggestionProvider<CommandSourceStack> BANNED_PLAYER_NAMES =
             (ctx, builder) -> {
-                for (JsonObject o : bannedPlayers.values()) {
-                    if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                synchronized (P2PBanManager.class) {
+                    for (JsonObject o : bannedPlayers.values()) {
+                        if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                    }
                 }
                 return builder.buildFuture();
             };
 
     private static final SuggestionProvider<CommandSourceStack> BANNED_IPS_LIST =
             (ctx, builder) -> {
-                for (String ip : bannedIps.keySet()) {
-                    builder.suggest(ip);
+                synchronized (P2PBanManager.class) {
+                    for (String ip : bannedIps.keySet()) {
+                        builder.suggest(ip);
+                    }
+                }
+                return builder.buildFuture();
+            };
+
+    // 현재 OP인 플레이어 이름 자동완성 (deop 용)
+    private static final SuggestionProvider<CommandSourceStack> OP_NAMES =
+            (ctx, builder) -> {
+                for (String name : ctx.getSource().getServer().getPlayerList().getOpNames()) {
+                    builder.suggest(name);
                 }
                 return builder.buildFuture();
             };
@@ -224,8 +312,10 @@ public class P2PBanManager {
     /** 밴된 플레이어 이름 자동완성 */
     private static final SuggestionProvider<ServerCommandSource> BANNED_PLAYER_NAMES =
             (ctx, builder) -> {
-                for (JsonObject o : bannedPlayers.values()) {
-                    if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                synchronized (P2PBanManager.class) {
+                    for (JsonObject o : bannedPlayers.values()) {
+                        if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                    }
                 }
                 return builder.buildFuture();
             };
@@ -233,8 +323,19 @@ public class P2PBanManager {
     /** 밴된 IP 자동완성 */
     private static final SuggestionProvider<ServerCommandSource> BANNED_IPS_LIST =
             (ctx, builder) -> {
-                for (String ip : bannedIps.keySet()) {
-                    builder.suggest(ip);
+                synchronized (P2PBanManager.class) {
+                    for (String ip : bannedIps.keySet()) {
+                        builder.suggest(ip);
+                    }
+                }
+                return builder.buildFuture();
+            };
+
+    // 현재 OP인 플레이어 이름 자동완성 (deop 용)
+    private static final SuggestionProvider<ServerCommandSource> OP_NAMES =
+            (ctx, builder) -> {
+                for (String name : ctx.getSource().getServer().getPlayerManager().getOpNames()) {
+                    builder.suggest(name);
                 }
                 return builder.buildFuture();
             };
@@ -244,11 +345,22 @@ public class P2PBanManager {
     // 데이터 로드 / 저장
     // -------------------------------------------------------------------------
 
-    public static void load() {
+    // 두 밴 맵은 서버 스레드(명령어·로그인 거부), 렌더 스레드(방 목록 필터·차단 아이콘),
+    // 공개 방 공지 스레드가 동시에 읽고 쓴다 — 전부 P2PBanManager.class 락 아래서만
+    // 만진다(락 없는 LinkedHashMap은 순회 중 수정되면 예외가 나거나 조용히 깨진다).
+    public static synchronized void load() {
         bannedPlayers.clear();
         bannedIps.clear();
         loadMap(BANNED_PLAYERS, bannedPlayers, "uuid");
         loadMap(BANNED_IPS,     bannedIps,     "ip");
+        banListVersion++;
+    }
+
+    /** 밴 목록이 바뀔 때마다 오른다 — RoomListScreen이 바뀌었을 때만 방 목록을 다시 거르는 데 쓴다. */
+    private static volatile int banListVersion = 0;
+
+    public static int banListVersion() {
+        return banListVersion;
     }
 
     private static void loadMap(Path path, Map<String, JsonObject> map, String key) {
@@ -290,8 +402,14 @@ public class P2PBanManager {
         o.addProperty("source", "instant-p2p");
         o.addProperty("expires", "forever");
         o.addProperty("reason", reason != null ? reason : "Banned by operator.");
-        bannedPlayers.put(uuid, o);
-        save(BANNED_PLAYERS, bannedPlayers);
+        synchronized (P2PBanManager.class) {
+            bannedPlayers.put(uuid, o);
+            banListVersion++;
+            save(BANNED_PLAYERS, bannedPlayers);
+        }
+        // 내가 지금 공개 방을 열고 있으면 새 밴 목록을 즉시 재공지 — 그래야 밴한
+        // 상대에게 내 방이 곧장 안 보인다(재접속/코드 재생성을 기다리지 않고).
+        WebRtcBridge.republishPublicRoomIfActive();
     }
 
     public static void banIp(String ip, String reason) {
@@ -301,37 +419,98 @@ public class P2PBanManager {
         o.addProperty("source", "instant-p2p");
         o.addProperty("expires", "forever");
         o.addProperty("reason", reason != null ? reason : "Banned by operator.");
-        bannedIps.put(ip, o);
-        save(BANNED_IPS, bannedIps);
+        synchronized (P2PBanManager.class) {
+            bannedIps.put(ip, o);
+            save(BANNED_IPS, bannedIps);
+        }
     }
 
     public static void pardonPlayer(String name) {
-        bannedPlayers.entrySet().removeIf(e ->
-                e.getValue().get("name").getAsString().equalsIgnoreCase(name));
-        save(BANNED_PLAYERS, bannedPlayers);
+        boolean removed;
+        synchronized (P2PBanManager.class) {
+            // 파일을 손으로 고쳐 name이 빠진 항목이 있어도 명령어가 NPE로 죽지 않게.
+            removed = bannedPlayers.entrySet().removeIf(e -> {
+                JsonElement n = e.getValue().get("name");
+                return n != null && n.getAsString().equalsIgnoreCase(name);
+            });
+            if (removed) {
+                banListVersion++;
+                save(BANNED_PLAYERS, bannedPlayers);
+            }
+        }
+        if (removed) WebRtcBridge.republishPublicRoomIfActive();
     }
 
-    public static void pardonIp(String ip) {
+    /** {@link #pardonPlayer}는 이름으로 찾지만(사람이 명령어로 칠 때 편함), 방
+     * 목록 화면(RoomListScreen)의 차단 해제 클릭은 이미 UUID를 들고 있으므로
+     * 이름 매칭 없이 정확히 그 항목만 지운다. */
+    public static void pardonPlayerByUuid(String uuid) {
+        boolean removed;
+        synchronized (P2PBanManager.class) {
+            removed = bannedPlayers.remove(uuid) != null;
+            if (removed) {
+                banListVersion++;
+                save(BANNED_PLAYERS, bannedPlayers);
+            }
+        }
+        if (removed) WebRtcBridge.republishPublicRoomIfActive();
+    }
+
+    public static synchronized void pardonIp(String ip) {
         bannedIps.remove(ip);
         save(BANNED_IPS, bannedIps);
     }
 
-    public static boolean isPlayerBanned(String uuid) {
+    public static synchronized boolean isPlayerBanned(String uuid) {
         return bannedPlayers.containsKey(uuid);
     }
 
-    public static boolean isIpBanned(String ip) {
+    /** 방 목록의 "차단 목록" 관리 화면(BlockedPlayersScreen)에서 쓴다 — 방
+     * 목록 필터에 걸려 안 보이게 된 방장들을 이름으로라도 다시 볼 수 있게, 지금
+     * 밴 목록에 있는 전체 UUID+이름. 순서는 삽입 순서 그대로(딱히 의미 없음). */
+    public record BannedEntry(String uuid, String name) {}
+
+    public static synchronized List<BannedEntry> listBannedPlayers() {
+        List<BannedEntry> list = new ArrayList<>();
+        for (JsonObject o : bannedPlayers.values()) {
+            list.add(new BannedEntry(o.get("uuid").getAsString(), o.has("name") ? o.get("name").getAsString() : ""));
+        }
+        return list;
+    }
+
+    /** 방 공지 payload에 실어 보낼, 내가 밴한 플레이어 UUID 전체(쉼표로 이어붙임).
+     * 방장 본인이 이 방을 여는 시점의 값을 그대로 담아 보낸다 — 클래스 주석의
+     * "개인 차단" 문단 참고. */
+    public static synchronized String encodeBannedPlayerUuids() {
+        return String.join(",", bannedPlayers.keySet());
+    }
+
+    /** 쉼표로 이어붙인 UUID 목록(다른 방장의 payload에서 온 것) 안에 이 UUID가
+     * 있는지 — "그 방장이 나를 밴했는지" 확인용. */
+    public static boolean isListedIn(String commaSeparatedUuids, String myUuid) {
+        if (commaSeparatedUuids == null || commaSeparatedUuids.isEmpty() || myUuid == null) return false;
+        for (String s : commaSeparatedUuids.split(",")) {
+            if (s.equals(myUuid)) return true;
+        }
+        return false;
+    }
+
+    public static synchronized boolean isIpBanned(String ip) {
         return bannedIps.containsKey(ip);
     }
 
-    public static String getBanReason(String uuid) {
-        JsonObject o = bannedPlayers.get(uuid);
-        return o != null ? o.get("reason").getAsString() : null;
+    // reason이 빠진 항목(손으로 고친 파일)이어도 로그인 거부 경로가 NPE로 죽지 않게 기본 사유를 쓴다.
+    public static synchronized String getBanReason(String uuid) {
+        return reasonOf(bannedPlayers.get(uuid));
     }
 
-    public static String getIpBanReason(String ip) {
-        JsonObject o = bannedIps.get(ip);
-        return o != null ? o.get("reason").getAsString() : null;
+    public static synchronized String getIpBanReason(String ip) {
+        return reasonOf(bannedIps.get(ip));
+    }
+
+    private static String reasonOf(JsonObject o) {
+        if (o == null) return null;
+        return o.has("reason") ? o.get("reason").getAsString() : "Banned by operator.";
     }
 
     // -------------------------------------------------------------------------
@@ -361,6 +540,11 @@ public class P2PBanManager {
 
     public static void registerConnectionType(String realIp, boolean usesRelay) {
         if (realIp != null) connectionTypeByIp.put(realIp, usesRelay);
+    }
+
+    /** IP로 직접 조회 — WebRtcHost의 재확인(recheck) 로그에서 이전 값과 비교할 때 사용. */
+    public static Boolean connectionTypeOfIp(String realIp) {
+        return realIp != null ? connectionTypeByIp.get(realIp) : null;
     }
 
     /** 참여 메시지에 (직결 통신)/(중계 통신) 접미사를 붙일 때 사용. null이면 webrtc 터널이 아니거나 아직 모름. */
@@ -530,8 +714,24 @@ public class P2PBanManager {
                                         StringArgumentType.getString(ctx, "player"),
                                         StringArgumentType.getString(ctx, "reason"))))));
 
-        // "ban"/"ban-ip"/"pardon"/"pardon-ip"/"kick"은 바닐라도 등록하는 이름이라,
-        // 위 .requires()가 addChild() 병합 과정에서 조용히 버려지고 바닐라 쪽
+        // op <player> — 방장 전용(requireHost, guestManagementEnabled와 무관)
+        dispatcher.register(literal("op")
+                .requires(requireHost())
+                .then(argument("player", StringArgumentType.word())
+                        .suggests(ONLINE_PLAYERS)
+                        .executes(ctx -> executeOp(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "player")))));
+
+        // deop <player> — 방장 전용
+        dispatcher.register(literal("deop")
+                .requires(requireHost())
+                .then(argument("player", StringArgumentType.word())
+                        .suggests(OP_NAMES)
+                        .executes(ctx -> executeDeop(ctx.getSource(),
+                                StringArgumentType.getString(ctx, "player")))));
+
+        // "ban"/"ban-ip"/"pardon"/"pardon-ip"/"kick"/"op"/"deop"은 바닐라도 등록하는
+        // 이름이라, 위 .requires()가 addChild() 병합 과정에서 조용히 버려지고 바닐라 쪽
         // requirement가 그대로 남아있을 수 있다 — 실제로 트리에 남은 노드를 찾아
         // 강제로 덮어쓴다. CommandNodeAccessor 클래스 주석 참고.
         forceRequirement(dispatcher, "ban");
@@ -539,6 +739,8 @@ public class P2PBanManager {
         forceRequirement(dispatcher, "pardon");
         forceRequirement(dispatcher, "pardon-ip");
         forceRequirement(dispatcher, "kick");
+        forceRequirement(dispatcher, "op");
+        forceRequirement(dispatcher, "deop");
     }
 
     //? if >=26.1 {
@@ -675,6 +877,39 @@ public class P2PBanManager {
         src.sendSuccess(() -> Component.literal("§aKicked " + profileName(target.getGameProfile())), false);
         return 1;
     }
+
+    private static int executeOp(CommandSourceStack src, String name) {
+        MinecraftServer server = src.getServer();
+
+        if (!server.isPublished()) {
+            src.sendSuccess(() -> Component.literal("§cCannot op players while not hosting a room."), false);
+            return 0;
+        }
+
+        ProfileLookup lookup = lookupProfile(server, name);
+        if (lookup == null) {
+            src.sendSuccess(() -> Component.literal("§cCould not find a player named " + name), false);
+            return 0;
+        }
+
+        grantOp(server, lookup);
+        src.sendSuccess(() -> Component.literal("§aMade " + lookup.name() + " a server operator"), false);
+        return 1;
+    }
+
+    private static int executeDeop(CommandSourceStack src, String name) {
+        MinecraftServer server = src.getServer();
+
+        ProfileLookup lookup = lookupProfile(server, name);
+        if (lookup == null) {
+            src.sendSuccess(() -> Component.literal("§cCould not find a player named " + name), false);
+            return 0;
+        }
+
+        revokeOp(server, lookup);
+        src.sendSuccess(() -> Component.literal("§aMade " + lookup.name() + " no longer a server operator"), false);
+        return 1;
+    }
     *///?} else {
     private static int executeBan(ServerCommandSource src, String name, String reason) {
         MinecraftServer server = src.getServer();
@@ -781,6 +1016,39 @@ public class P2PBanManager {
         String r = reason != null ? reason : "Kicked by an operator.";
         target.networkHandler.disconnect(Text.literal("§c" + r));
         src.sendFeedback(() -> Text.literal("§aKicked " + profileName(target.getGameProfile())), false);
+        return 1;
+    }
+
+    private static int executeOp(ServerCommandSource src, String name) {
+        MinecraftServer server = src.getServer();
+
+        if (!server.isRemote()) {
+            src.sendFeedback(() -> Text.literal("§cCannot op players while not hosting a room."), false);
+            return 0;
+        }
+
+        ProfileLookup lookup = lookupProfile(server, name);
+        if (lookup == null) {
+            src.sendFeedback(() -> Text.literal("§cCould not find a player named " + name), false);
+            return 0;
+        }
+
+        grantOp(server, lookup);
+        src.sendFeedback(() -> Text.literal("§aMade " + lookup.name() + " a server operator"), false);
+        return 1;
+    }
+
+    private static int executeDeop(ServerCommandSource src, String name) {
+        MinecraftServer server = src.getServer();
+
+        ProfileLookup lookup = lookupProfile(server, name);
+        if (lookup == null) {
+            src.sendFeedback(() -> Text.literal("§cCould not find a player named " + name), false);
+            return 0;
+        }
+
+        revokeOp(server, lookup);
+        src.sendFeedback(() -> Text.literal("§aMade " + lookup.name() + " no longer a server operator"), false);
         return 1;
     }
     //?}

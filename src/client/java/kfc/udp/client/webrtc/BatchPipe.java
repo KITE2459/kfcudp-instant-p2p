@@ -66,6 +66,8 @@ final class BatchPipe {
         private final Consumer<Exception> onError;
         private final Thread thread;
         private volatile boolean closed;
+        /** writer 스레드가 쓰기 실패로 끝났으면 true — 큐가 다시는 안 빠진다. */
+        private volatile boolean dead;
 
         Writer(GatheringByteChannel out, String name, Consumer<Exception> onError) {
             this.out = out;
@@ -79,6 +81,7 @@ final class BatchPipe {
         /** DataChannel 수신 버퍼를 청크로 분할해 큐잉 (콜백 스레드에서 호출) */
         void feed(ByteBuffer buffer) throws InterruptedException {
             while (buffer.hasRemaining()) {
+                if (closed || dead) return;
                 Chunk c = getChunk();
                 int n = Math.min(buffer.remaining(), CHUNK);
 
@@ -89,7 +92,16 @@ final class BatchPipe {
                 buffer.limit(srcLimit);
                 c.data.flip();
 
-                q.put(c); // 가득 차면 블로킹 = 배압
+                // 가득 차면 기다린다 = 배압. 다만 writer가 죽거나 닫혀 큐가 영영 안 빠지는
+                // 경우 put()은 영원히 멈춘다 — 이 스레드는 WebRTC 콜백 스레드라 멈추면 그
+                // 연결의 이후 콜백(닫힘 통지 포함)이 전부 막히므로 주기적으로 확인하고 빠진다.
+                // 빈자리가 있으면 offer는 곧장 반환하므로 평상시 처리량은 put과 같다.
+                while (!q.offer(c, 100, TimeUnit.MILLISECONDS)) {
+                    if (closed || dead) {
+                        putChunk(c);
+                        return;
+                    }
+                }
             }
         }
 
@@ -128,6 +140,7 @@ final class BatchPipe {
                     if (poisoned) return;
                 }
             } catch (Exception e) {
+                dead = true;
                 if (!closed) onError.accept(e);
             }
         }
@@ -166,7 +179,9 @@ final class BatchPipe {
                 return;
             }
             try {
-                thread.join(2000);
+                // onError(쓰기 실패) 경로에선 writer 스레드 자신이 close()를 부른다 — 자기
+                // 자신을 join하면 매번 2초를 헛되이 기다린다.
+                if (Thread.currentThread() != thread) thread.join(2000);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }

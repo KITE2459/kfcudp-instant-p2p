@@ -28,6 +28,20 @@ import java.nio.file.Path;
  */
 public final class P2PConfig {
 
+    /**
+     * 지금 실행 중인 마인크래프트 버전 문자열(예: "1.21.5", "26.2") — 공개 방 목록을
+     * 서로 접속 자체가 안 되는 버전끼리 자동으로 분리하는 데 쓴다(PublicRoomAnnouncer/
+     * PublicRoomBrowser 참고). Fabric Loader API로 구하므로 Yarn/Mojang 매핑 어느
+     * 쪽으로 빌드해도 동일하게 동작 — 버전별 분기가 필요 없다. 채널(사용자가 직접
+     * 고르는 값)과는 완전히 별개 축이라, 채널이 같아도 버전이 다르면 목록에 안
+     * 뜬다(반대도 마찬가지) — 애초에 접속이 안 되는 상대를 목록에 보여줄 이유가
+     * 없어서 사용자 입력 없이 항상 강제 적용한다.
+     */
+    public static final String MC_VERSION = net.fabricmc.loader.api.FabricLoader.getInstance()
+            .getModContainer("minecraft")
+            .map(c -> c.getMetadata().getVersion().getFriendlyString())
+            .orElse("unknown");
+
     /** villas-signaling WebSocket 주소 */
     public static final String SIGNALING_URL =
             System.getProperty("kfcudp.signaling", "ws://kite-private-cloud.kro.kr:8088");
@@ -70,25 +84,29 @@ public final class P2PConfig {
     public static void setRelayOnly(boolean value) {
         if (relayOnly == value) return;
         relayOnly = value;
-        saveRelayOnly(value);
+        updateSettingsFile(o -> o.addProperty("relayOnly", value));
     }
 
     private static boolean loadRelayOnly() {
-        if (!Files.exists(SETTINGS_FILE)) return false;
-        try (Reader r = new FileReader(SETTINGS_FILE.toFile())) {
-            JsonObject o = GSON.fromJson(r, JsonObject.class);
-            return o != null && o.has("relayOnly") && o.get("relayOnly").getAsBoolean();
-        } catch (Exception e) {
-            LOG.warn("[instant-p2p] settings load failed: {}", e.getMessage());
-            return false;
-        }
+        JsonObject o = readSettingsFile();
+        return o != null && o.has("relayOnly") && o.get("relayOnly").getAsBoolean();
     }
 
-    private static void saveRelayOnly(boolean value) {
+    /**
+     * settings.json의 다른 키(예: channel)를 안 지우고 이 키만 갈아끼운다 — 예전엔
+     * 각 설정이 자기 값 하나만 담은 JsonObject를 통째로 새로 만들어 파일 전체를
+     * 덮어썼다. relayOnly/roomCategory처럼 서로 다른 설정이 같은 파일을 같이
+     * 쓰는 상황에서, 하나를 바꾸면 다른 하나가 (다음 로드 때) 조용히 기본값으로
+     * 되돌아가는 버그가 있었다 — UI 없이 파일을 직접 편집하던 옛 카테고리
+     * 설정은 거의 안 드러났지만, 이제 채널처럼 화면에서 바로 바꾸는 설정이
+     * 늘면서 실제로 부딫힐 수 있어 여기서 고쳤다.
+     */
+    private static void updateSettingsFile(java.util.function.Consumer<JsonObject> mutate) {
         try {
             Files.createDirectories(CONFIG_DIR);
-            JsonObject o = new JsonObject();
-            o.addProperty("relayOnly", value);
+            JsonObject o = readSettingsFile();
+            if (o == null) o = new JsonObject();
+            mutate.accept(o);
             try (Writer w = new FileWriter(SETTINGS_FILE.toFile())) {
                 GSON.toJson(o, w);
             }
@@ -97,49 +115,91 @@ public final class P2PConfig {
         }
     }
 
-    /**
-     * <b>공개 방 목록 카테고리(내부용, UI 없음 — 필요하면 settings.json을 직접 편집).</b>
-     * <p>
-     * 하나의 값이 호스팅/조회 양쪽에 다 쓰인다: 방을 공개로 열면 이 값이 그 방의
-     * 카테고리로 태그되고(PublicRoomAnnouncer), 방 목록을 볼 때도 이 값으로
-     * 필터링된다(PublicRoomBrowser) — 서로 다른 커뮤니티가 같은 공유 시그널링
-     * relay lobby를 나눠 써도 목록이 섞이지 않게 하기 위함.
-     * <ul>
-     *   <li>0 = 모든 방 보기 (카테고리 무관)</li>
-     *   <li>1 = 1(A그룹)로 호스팅된 방만 (기본값)</li>
-     *   <li>2 = 2(B그룹)로 호스팅된 방만</li>
-     * </ul>
-     */
-    private static final int roomCategory = loadRoomCategory();
-
-    public static int getRoomCategory() {
-        return roomCategory;
-    }
-
-    private static int loadRoomCategory() {
-        if (!Files.exists(SETTINGS_FILE)) return 1;
+    private static JsonObject readSettingsFile() {
+        if (!Files.exists(SETTINGS_FILE)) return null;
         try (Reader r = new FileReader(SETTINGS_FILE.toFile())) {
-            JsonObject o = GSON.fromJson(r, JsonObject.class);
-            if (o == null || !o.has("roomCategory")) return 1;
-            int v = o.get("roomCategory").getAsInt();
-            return v == 0 || v == 1 || v == 2 ? v : 1;
+            return GSON.fromJson(r, JsonObject.class);
         } catch (Exception e) {
             LOG.warn("[instant-p2p] settings load failed: {}", e.getMessage());
-            return 1;
+            return null;
         }
     }
 
     /**
-     * 공개 방 목록용 고정 lobby 경로("roomId" 자리에 들어가는 특수값).
+     * <b>공개 방 채널.</b>
+     * <p>
+     * 하나의 값이 호스팅/조회 양쪽에 다 쓰인다: 방을 공개로 열면 이 값이 그 방의
+     * 채널로 태그되고(PublicRoomAnnouncer), 방 목록을 볼 때도 이 값으로 필터링된다
+     * (RoomListScreen이 매 tick 다시 읽어 적용 — PublicRoomBrowser 자체는 필터링
+     * 없이 모든 채널의 방을 다 들고 있다가, 화면이 그중 지금 채널과 일치하는
+     * 것만 추려서 보여준다. 필터를 여기로 뺀 이유는, 그렇게 안 하면 채널을
+     * 입력란에서 바로 바꿔도 다음 서버 브로드캐스트가 올 때까지 목록이 안
+     * 바뀌어 보였기 때문) — 서로 다른 커뮤니티가 같은 공유 시그널링 relay
+     * lobby를 나눠 써도 목록이 섞이지 않게 하기 위함. 기본값 "normal", 대소문자는
+     * 구분하지 않는다(오타로 채널이 갈리는 걸 막기 위한 선택 — 필요하면 나중에
+     * 구분하게 바꿀 수 있다). 빈 문자열은 저장 시 기본값으로 되돌린다.
+     */
+    private static volatile String channel = loadChannel();
+
+    public static String getChannel() {
+        return channel;
+    }
+
+    public static void setChannel(String value) {
+        String normalized = value == null || value.isBlank() ? DEFAULT_CHANNEL : value.trim();
+        if (channel.equals(normalized)) return;
+        channel = normalized;
+        updateSettingsFile(o -> o.addProperty("channel", normalized));
+    }
+
+    /** 두 채널 이름이 같은 채널을 가리키는지 — 대소문자 구분 없이 비교. */
+    public static boolean channelMatches(String a, String b) {
+        return a != null && b != null && a.equalsIgnoreCase(b);
+    }
+
+    private static final String DEFAULT_CHANNEL = "normal";
+
+    private static String loadChannel() {
+        JsonObject o = readSettingsFile();
+        if (o == null || !o.has("channel")) return DEFAULT_CHANNEL;
+        String v = o.get("channel").getAsString();
+        return v == null || v.isBlank() ? DEFAULT_CHANNEL : v.trim();
+    }
+
+    /**
+     * 공개 방 목록용 고정 lobby 경로 접두사("roomId" 자리에 들어가는 특수값).
      * 실제 초대 코드({@link kfc.udp.client.KfcudpClient} 참고, 대문자+숫자
      * 10자)와 절대 겹치지 않도록 소문자+밑줄로 구성했다. 공개 방을 연 호스트는
-     * 전부 이 lobby에도 접속해서(자기 원래 방 lobby와는 별개) 자신을
-     * peer로 announce하고, 방 목록 화면은 이 lobby에 접속해서 현재 peer
-     * 목록만 읽어 공개 방들을 나열한다 — 새 서버 인프라 없이 기존
+     * 전부 이 lobby들 중 하나에도 접속해서(자기 원래 방 lobby와는 별개) 자신을
+     * peer로 announce하고, 방 목록 화면은 모든 샤드 lobby에 동시 접속해서 현재
+     * peer 목록만 읽어 합친 걸 공개 방들로 나열한다 — 새 서버 인프라 없이 기존
      * VILLASframework signaling relay의 peer 목록 브로드캐스트를 그대로
-     * 재사용하는 방식(PublicRoomAnnouncer/RoomListScreen 참고).
+     * 재사용하는 방식(PublicRoomAnnouncer/PublicRoomBrowser 참고).
+     * <p>
+     * <b>왜 하나가 아니라 여러 개로 샤딩하는가</b> — signaling 서버(session.go)는
+     * 세션 하나에 모인 peer가 접속/해제될 때마다 그 세션에 모인 "모든" peer에게
+     * 전체 목록을 다시 뿌린다({@code SendControlMessageToAllConnectedPeers}) —
+     * 세션 하나에 몰리는 peer(호스트+관전자)가 많아질수록 이벤트 하나당 비용이
+     * 같이 커지고, 그 세션은 자기 전용 goroutine 하나가 순차 처리하므로 코어를
+     * 하나만 쓴다. lobby를 {@link #PUBLIC_ROOM_SHARD_COUNT}개로 쪼개면 각 lobby가
+     * 별도 goroutine으로 독립적으로 돌아 여러 코어에 자연히 분산되고, lobby 하나당
+     * peer 수도 대략 1/N로 줄어든다 — 서버 코드를 안 건드리고 클라이언트가 접속
+     * 경로만 나눠 쓰는 것만으로 되는 개선이라 서버 재배포가 필요 없다.
      */
-    public static final String PUBLIC_ROOMS_LOBBY_ID = "__instant_p2p_public_rooms__";
+    private static final String PUBLIC_ROOMS_LOBBY_PREFIX = "__instant_p2p_public_rooms__";
+
+    /** 공개 방 목록 lobby 샤드 개수 — 클래스 주석 참고. 서버 재배포 없이 이 상수만 바꾸면 된다. */
+    public static final int PUBLIC_ROOM_SHARD_COUNT = 4;
+
+    /** 방 코드를 이 개수의 샤드 중 하나로 결정적으로 배정한다(같은 코드는 항상 같은 샤드). */
+    public static int publicRoomShardFor(String roomCode) {
+        return Math.floorMod(roomCode.hashCode(), PUBLIC_ROOM_SHARD_COUNT);
+    }
+
+    /** shard(0..{@link #PUBLIC_ROOM_SHARD_COUNT}-1)번 공개 방 목록 lobby의 실제 경로. */
+    public static String publicRoomsLobbyId(int shard) {
+        return PUBLIC_ROOMS_LOBBY_PREFIX + "_" + shard;
+    }
 
     // ── 파이프 버퍼 한도 (지연 ↔ 처리량 트레이드오프) ─────────────────────────
 

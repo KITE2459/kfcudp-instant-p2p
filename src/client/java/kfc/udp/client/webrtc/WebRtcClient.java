@@ -162,17 +162,17 @@ public class WebRtcClient {
             // 직결이 가능한데도 릴레이로 확정돼버리는 경쟁을 피하기 위함.
             // IceConfig 클래스 주석 참고.
             //
-            // 단, 나 자신(P2PConfig.isRelayOnly()) 또는 상대 호스트(hostRelayOnly, 페어
-            // 세션 peer 이름으로 미리 전달받음)가 중계를 강제 중이면 직결은 애초에
-            // 성사될 수 없다 — 내가 강제인 경우는 IceConfig.apply가 allowRelay 값과
-            // 무관하게 릴레이 전용으로 만들어버리고, 호스트가 강제인 경우는 호스트가
-            // RELAY 정책이라 host/srflx 후보 자체가 안 나온다. 어느 쪽이든 1차와 2차가
-            // 결국 같은 시도인데, 그런데도 1차를 짧은 DIRECT_ATTEMPT_TIMEOUT_MS(2초)로
-            // 실패시켜서 PeerConnection을 통째로 버리고 2차로 다시 만드는 건 순수 낭비다
-            // — 강제 상태를 알고 있으면 처음부터 릴레이 허용, 긴 타임아웃으로 1번만 시도한다.
-            boolean relayForced = kfc.udp.client.webrtc.P2PConfig.isRelayOnly() || hostRelayOnly;
-            boolean connected = attemptConnection(relayForced, relayForced ? RELAY_ATTEMPT_TIMEOUT_MS : DIRECT_ATTEMPT_TIMEOUT_MS);
-            if (!connected && running.get() && !relayForced) {
+            // 나 또는 호스트 둘 중 하나라도 중계 강제면 1차(직결 전용)를 건너뛴다.
+            // 예전엔 "호스트가 강제일 때"만 건너뛰었는데("나만" 강제인 경우 호스트가
+            // 최초 OFFER를 여전히 1차/직결 전용으로 응답해버려서 나는 relay 후보만,
+            // 호스트는 host/srflx 후보만 갖게 돼 서로 못 붙는 문제가 있었다) — 이제는
+            // 조인 알림 peer 이름("j" 다음 글자, WebRtcHost.handleLobby 참고)에 내
+            // 강제 여부도 같이 실어 보내서, 호스트가 최초 OFFER부터 이미 릴레이
+            // 허용으로 응답하도록(PairSignal.handlePair) 만들어 뒀다 — 그래서 어느
+            // 쪽이 강제든 대칭으로 맞아떨어져 1차를 건너뛰어도 안전하다.
+            boolean skipToRelayOnly = hostRelayOnly || P2PConfig.isRelayOnly();
+            boolean connected = attemptConnection(skipToRelayOnly, skipToRelayOnly ? RELAY_ATTEMPT_TIMEOUT_MS : DIRECT_ATTEMPT_TIMEOUT_MS);
+            if (!connected && running.get() && !skipToRelayOnly) {
                 LOG.info("[webrtc] direct-only attempt did not complete within {}ms, retrying with relay allowed",
                         DIRECT_ATTEMPT_TIMEOUT_MS);
                 connected = attemptConnection(true, RELAY_ATTEMPT_TIMEOUT_MS);
@@ -218,10 +218,37 @@ public class WebRtcClient {
         return usesRelay;
     }
 
+    /**
+     * DataChannel이 열리는 시점은 ICE가 "connected" 상태만 되면 도달하고, 그 뒤로도
+     * 더 나은 candidate pair로 nominated가 바뀔 수 있다(특히 relay-only일 때 TURN
+     * allocate가 조금 느리면 그 사이 순간적으로 succeeded 상태였던 pair를 잘못 잡을
+     * 여지가 있음 — WebRtcStats 클래스 주석 참고). 그래서 여기서 한 번 읽고, 조금
+     * 있다가 한 번 더 읽어서 값이 바뀌면 그걸로 덮어쓴다. 실제로 이 값을 쓰는
+     * 참여 메시지(instant-p2p.msg.my_connection_*)는 MC 로그인 절차가 끝난 뒤에야
+     * 뜨므로, 이 지연 정도는 그 전에 여유 있게 끝난다.
+     */
     private void resolveConnectionType() {
         RTCPeerConnection pc = peerConnection;
         if (pc == null) return;
-        pc.getStats(report -> usesRelay = WebRtcStats.usesRelay(report));
+        pc.getStats(report -> {
+            usesRelay = WebRtcStats.usesRelay(report);
+            LOG.info("[webrtc] connection type (initial): usesRelay={} (relayOnly={})", usesRelay, P2PConfig.isRelayOnly());
+        });
+        // 2초 자고 끝나는 스레드를 새로 만들지 않고 기존 시그널링 타이머에 예약한다.
+        try {
+            signalScheduler.schedule(() -> {
+                RTCPeerConnection pc2 = peerConnection;
+                if (pc2 == null) return;
+                pc2.getStats(report -> {
+                    Boolean recheck = WebRtcStats.usesRelay(report);
+                    if (recheck != null && !recheck.equals(usesRelay)) {
+                        LOG.warn("[webrtc] connection type changed on recheck: {} -> {} (relayOnly={})",
+                                usesRelay, recheck, P2PConfig.isRelayOnly());
+                        usesRelay = recheck;
+                    }
+                });
+            }, 2, TimeUnit.SECONDS);
+        } catch (java.util.concurrent.RejectedExecutionException ignored) {}
     }
 
     /** 연결 실패를 실제 화면으로 보여준다 — 안 그러면 조인자는 원인도 모르고 로컬 소켓만 뚝 끊긴다. */
@@ -279,36 +306,103 @@ public class WebRtcClient {
 
     // ── 시그널링 (VILLAS) ─────────────────────────────────────────────────────
 
-    private void connectPairSignaling() throws Exception {
-        pairWs = new WebSocketClient(
+    /**
+     * 시그널링 순단 재접속 지연 — WebRtcHost.scheduleReconnect와 같은 지수 백오프.
+     * 예전엔 이 두 웹소켓(페어/조인 알림) 중 하나라도 연결 수립 전에 한 번만
+     * 끊기면(순간적인 네트워크 순단, 시그널링 서버 재시작 등) 곧장 접속 시도
+     * 전체를 실패로 치고 close()했다 — 호스트 쪽 로비 접속은 이미 재시도가
+     * 있는데 접속자 쪽만 없어서, 접속자만 "갑자기 이유 없이 연결이 안 되는"
+     * 일이 훨씬 잦았다.
+     */
+    private static final long INITIAL_SIGNAL_BACKOFF_MS = 1_000;
+    private static final long MAX_SIGNAL_BACKOFF_MS     = 15_000;
+
+    private final ScheduledExecutorService signalScheduler =
+            new ScheduledThreadPoolExecutor(1, r -> {
+                Thread t = new Thread(r, "webrtc-client-signal-retry");
+                t.setDaemon(true);
+                return t;
+            });
+
+    private volatile long pairBackoffMs     = INITIAL_SIGNAL_BACKOFF_MS;
+    private volatile long announceBackoffMs = INITIAL_SIGNAL_BACKOFF_MS;
+
+    private void connectPairSignaling() {
+        if (!running.get() || readyLatch.getCount() == 0) return;
+        WebSocketClient client = new WebSocketClient(
                 P2PConfig.SIGNALING_URL + "/" + roomId + "-" + sessionId + "/p" + sessionId) {
             @Override public void onConnected() {
+                pairBackoffMs = INITIAL_SIGNAL_BACKOFF_MS;
                 send(VillasMsg.hello()); // 서버가 최초 1회 signals 메시지를 요구함
             }
             @Override public void onMessage(String type, String json) {
                 handlePairMessage(json);
             }
             @Override public void onDisconnected() {
-                // 연결 수립 전에 시그널링이 끊기면 실패 처리 (수립 후에는 P2P 독립)
-                if (readyLatch.getCount() > 0) {
-                    LOG.warn("[webrtc] pair signaling lost");
-                    close();
+                // pairWs가 이미 다른(더 최신) 연결로 넘어갔으면 중복 재시도 필요 없음.
+                if (pairWs == this && readyLatch.getCount() > 0) {
+                    LOG.warn("[webrtc] pair signaling lost, retrying");
+                    schedulePairReconnect();
                 }
             }
         };
-        pairWs.connect();
+        pairWs = client;
+        try {
+            client.connect();
+        } catch (Exception e) {
+            LOG.warn("[webrtc] pair signaling connect failed: {}", e.toString());
+            if (pairWs == client) schedulePairReconnect();
+        }
     }
 
-    private void announceJoin() throws Exception {
-        announceWs = new WebSocketClient(
-                P2PConfig.SIGNALING_URL + "/" + roomId + "/j" + sessionId) {
+    private void schedulePairReconnect() {
+        if (!running.get() || readyLatch.getCount() == 0) return;
+        long delay = pairBackoffMs;
+        pairBackoffMs = Math.min(pairBackoffMs * 2, MAX_SIGNAL_BACKOFF_MS);
+        try {
+            signalScheduler.schedule(this::connectPairSignaling, delay, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException ignored) {}
+    }
+
+    private void announceJoin() {
+        if (!running.get() || hostArrivedLatch.getCount() == 0) return;
+        // 조인 알림 peer 이름의 "j" 다음 글자에 내 중계 강제 여부를 실어 보낸다 — 호스트가
+        // 이 join 감지 메시지에서 그대로 읽어가므로 새 왕복 없이 공짜로 전달된다. 내가
+        // 이미 중계 강제 중이면 호스트도 최초 OFFER부터 릴레이 허용으로 응답할 수 있어
+        // 1차(직결 전용) 실패 → 2차 재협상을 거칠 필요가 없다(WebRtcHost.handleLobby,
+        // PairSignal.handlePair 참고).
+        String flag = P2PConfig.isRelayOnly() ? "r" : "d";
+        WebSocketClient client = new WebSocketClient(
+                P2PConfig.SIGNALING_URL + "/" + roomId + "/j" + flag + sessionId) {
             @Override public void onConnected() {
+                announceBackoffMs = INITIAL_SIGNAL_BACKOFF_MS;
                 send(VillasMsg.hello());
                 LOG.info("[webrtc] join announced: room={} sid={}", roomId, sessionId);
             }
             @Override public void onMessage(String type, String json) { /* 로비 메시지 무시 */ }
+            @Override public void onDisconnected() {
+                if (announceWs == this && hostArrivedLatch.getCount() > 0) {
+                    LOG.warn("[webrtc] join announce lost, retrying");
+                    scheduleAnnounceReconnect();
+                }
+            }
         };
-        announceWs.connect();
+        announceWs = client;
+        try {
+            client.connect();
+        } catch (Exception e) {
+            LOG.warn("[webrtc] join announce connect failed: {}", e.toString());
+            if (announceWs == client) scheduleAnnounceReconnect();
+        }
+    }
+
+    private void scheduleAnnounceReconnect() {
+        if (!running.get() || hostArrivedLatch.getCount() == 0) return;
+        long delay = announceBackoffMs;
+        announceBackoffMs = Math.min(announceBackoffMs * 2, MAX_SIGNAL_BACKOFF_MS);
+        try {
+            signalScheduler.schedule(this::announceJoin, delay, TimeUnit.MILLISECONDS);
+        } catch (RejectedExecutionException ignored) {}
     }
 
     private void handlePairMessage(String json) {
@@ -568,6 +662,12 @@ public class WebRtcClient {
     public void close() {
         if (!running.compareAndSet(true, false)) return;
         LOG.info("[webrtc] Closing");
+        // 이 세션이 여전히 WebRtcBridge가 들고 있는 "현재" 클라이언트라면 참조를 지운다
+        // (WebRtcBridge.clearClientIfCurrent 클래스 주석 참고) — 안 그러면 이 방을 나간
+        // 뒤에 여는 관계없는 싱글플레이 월드에서도 이 (이미 닫힌) 세션의 직결/중계 값이
+        // 남아 있다가 잘못 표시된다.
+        WebRtcBridge.clearClientIfCurrent(this);
+        signalScheduler.shutdownNow();
         hostArrivedLatch.countDown();
         readyLatch.countDown();
         synchronized (bpLock) { bpLock.notifyAll(); } // 백프레셔 대기 해제

@@ -26,6 +26,9 @@ public abstract class WebSocketClient {
     private static final String WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     private static final int CONNECT_TIMEOUT_MS   = 10_000; // TCP 연결 + 핸드셰이크 응답 한도
     private static final int MAX_FRAME_BYTES      = 16 * 1024 * 1024;
+    /** 서버는 연결마다 9초 간격으로 ping을 보낸다 — 이보다 훨씬 오래(3회분 이상) 아무
+     * 프레임도 안 오면 TCP만 살아 있고 실제로는 끊긴(NAT 매핑 만료·회선 전환 등) 연결이다. */
+    static final int LIVENESS_TIMEOUT_MS = 30_000;
 
     private final String url;
 
@@ -111,7 +114,7 @@ public abstract class WebSocketClient {
                 throw new IOException("handshake failed: bad Sec-WebSocket-Accept");
             }
 
-            s.setSoTimeout(0); // 이후는 무한 대기
+            s.setSoTimeout(readIdleTimeoutMs()); // 0이면 무한 대기
             socket = s;
             out = o;
             ok = true;
@@ -298,6 +301,15 @@ public abstract class WebSocketClient {
         int end = json.indexOf('"', start + 1);
         if (end < 0) return null;
         return json.substring(start + 1, end);
+    }
+
+    /**
+     * 수신 대기 한도(ms), 0이면 무한. 끊기면 재접속하는 오래 붙어 있는 연결(방 공지·방 목록·
+     * 호스트 로비)만 {@link #LIVENESS_TIMEOUT_MS}로 켠다 — 반쯤 끊긴 연결을 조용히 붙들고
+     * 있으면 방이 목록에서 사라지거나 아무도 입장 못 하는데 재접속도 안 일어난다.
+     */
+    protected int readIdleTimeoutMs() {
+        return 0;
     }
 
     public abstract void onConnected();

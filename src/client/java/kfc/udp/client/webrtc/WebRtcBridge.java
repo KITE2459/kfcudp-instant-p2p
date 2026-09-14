@@ -80,6 +80,21 @@ public class WebRtcBridge {
         }
     }
 
+    /**
+     * WebRtcClient 자신이 (서버 disconnect 등으로) 스스로 닫힐 때 호출 — token이 여전히
+     * 현재 활성 클라이언트일 때만 참조를 지운다({@link #stopHostIfCurrent} 참고).
+     * <p>
+     * 이게 없으면(예전 상태) webrtc 방에 접속했다가 나간 뒤 이 필드가 그대로 남아있어서,
+     * 그 뒤에 여는 관계없는 싱글플레이 월드에서도 {@link #getActiveConnectionUsesRelay()}가
+     * 옛 연결의 직결/중계 값을 그대로 돌려줘 "싱글인데 직결/중계 연결 메시지가 뜬다"는
+     * 버그가 있었다 — 예전엔 JVM 종료 시점에만 stop()이 불렸다.
+     */
+    public static void clearClientIfCurrent(WebRtcClient token) {
+        if (token != null && token == webRtcClient) {
+            webRtcClient = null;
+        }
+    }
+
     /** 현재 진행 중인 webrtc 조인 세션의 연결 방식. null = webrtc 세션이 없거나 아직 안 정해짐. */
     public static Boolean getActiveConnectionUsesRelay() {
         WebRtcClient client = webRtcClient;
@@ -107,13 +122,26 @@ public class WebRtcBridge {
         unpublishPublicRoom();
     }
 
-    /** 방을 공개 목록에 올린다 — PublicRoomAnnouncer 클래스 주석 참고. */
-    public static void publishPublicRoom(String roomCode, String title, String hostNickname) {
-        publicRoomAnnouncer.start(roomCode, title, hostNickname);
+    /** 방을 공개 목록에 올린다 — PublicRoomAnnouncer 클래스 주석 참고. hostUuid는
+     * 개인 차단(=밴) 기능용(P2PBanManager 클래스 주석 참고). */
+    public static void publishPublicRoom(String roomCode, String title, String hostNickname, String hostUuid,
+                                          int currentPlayers, int maxPlayers) {
+        publicRoomAnnouncer.start(roomCode, title, hostNickname, hostUuid, currentPlayers, maxPlayers);
     }
 
     public static void unpublishPublicRoom() {
         publicRoomAnnouncer.stop();
+    }
+
+    /** 밴(=차단) 목록이 바뀌었을 때 P2PBanManager가 호출 — 지금 공개된 방이 있으면
+     * 즉시 새 밴 목록을 실어 재공지한다(PublicRoomAnnouncer.republishNow 참고). */
+    public static void republishPublicRoomIfActive() {
+        publicRoomAnnouncer.republishNow();
+    }
+
+    /** 공개 방 인원(현재/최대)이 바뀔 때마다 호출 — 재발행 자체는 디바운스된다(PublicRoomAnnouncer 참고). */
+    public static void updatePublicRoomPlayerCount(int currentPlayers, int maxPlayers) {
+        publicRoomAnnouncer.updatePlayerCount(currentPlayers, maxPlayers);
     }
 
     /** 지금 활성화된 호스트 인스턴스를 식별하는 토큰(단순 참조). */
@@ -134,10 +162,6 @@ public class WebRtcBridge {
     }
 
     // ── 유틸 ──────────────────────────────────────────────────────────────────
-
-    // startProtocol / stopProtocol — KCP는 이제 Java 네이티브이므로 불필요
-    // ConnectScreenMixin이 KcpAddressRegistry를 통해 직접 처리
-    public static void stopProtocol() {}
 
     private static int findFreePort() {
         try (ServerSocket ignored = new ServerSocket(LOCAL_PORT)) { return LOCAL_PORT; }

@@ -95,6 +95,9 @@ public class WebRtcHost {
 
     private volatile long backoffMs = INITIAL_BACKOFF_MS;
     private volatile boolean signalingDown = false;
+    /** 연속 실패 횟수 — 클래스 아래 scheduleReconnect 주석 참고: 한 번 순단으로는
+     * 방장에게 경고를 띄우지 않는다. */
+    private volatile int consecutiveFailures = 0;
 
     public WebRtcHost(String roomId, String target) {
         this.roomId = roomId;
@@ -150,6 +153,7 @@ public class WebRtcHost {
                 P2PConfig.SIGNALING_URL + "/" + roomId + "/" + peerName) {
             @Override public void onConnected() {
                 backoffMs = INITIAL_BACKOFF_MS;
+                consecutiveFailures = 0;
                 send(VillasMsg.hello()); // 서버가 최초 1회 signals 메시지를 요구함
                 LOG.info("[host] lobby joined: room={}", roomId);
                 if (signalingDown) {
@@ -159,6 +163,9 @@ public class WebRtcHost {
             }
             @Override public void onMessage(String type, String json) {
                 handleLobby(json);
+            }
+            @Override protected int readIdleTimeoutMs() {
+                return LIVENESS_TIMEOUT_MS;
             }
             @Override public void onDisconnected() {
                 scheduleReconnect();
@@ -170,14 +177,23 @@ public class WebRtcHost {
         } catch (Exception e) {
             LOG.warn("[host] Signaling connect failed: {}", e.toString());
             scheduleReconnect();
+            return;
         }
+        // 접속하는 사이 방이 닫혔으면 방금 붙은 로비 연결도 닫는다 — 안 닫으면 닫힌 방의
+        // 호스트가 로비에 남아 조인자들이 응답 없는 호스트에 붙으려 한다.
+        if (!running.get()) ws.close();
     }
 
     private void scheduleReconnect() {
         if (!running.get()) return;
         // 초대코드를 발급했는데 실제로는 시그널링에 못 붙는 상태로 계속 재시도만
         // 하고 있으면 방장은 그걸 알 방법이 없다 — 한 번만 알려준다(재시도마다 스팸 X).
-        if (!signalingDown) {
+        // 다만 순간적인 순단 한 번으로는 안 띄운다 — 연속 2번 실패해야(=최소
+        // INITIAL_BACKOFF_MS만큼은 계속 안 됐다는 뜻) 진짜 문제로 보고 알린다.
+        // 예전엔 첫 끊김부터 곧장 경고를 띄워서, 금방 스스로 재접속되는 순단조차
+        // "이유 없이 시그널링 연결 실패"로 보였다.
+        consecutiveFailures++;
+        if (!signalingDown && consecutiveFailures >= 2) {
             signalingDown = true;
             notifyHost("instant-p2p.msg.signaling_unreachable");
         }
@@ -220,16 +236,20 @@ public class WebRtcHost {
 
         for (String[] p : VillasMsg.peers(json)) {
             String name = p[0], remote = p[1];
-            // 조인 알림: peer 이름 "j" + 16 hex, 현재 연결 중(remote 존재)
+            // 조인 알림: peer 이름 "j" + 강제 여부 글자('r'/'d') + 16 hex, 현재 연결 중(remote 존재).
+            // 강제 글자는 WebRtcClient.announceJoin()이 실어 보낸다 — 조인자가 이미 중계
+            // 강제 중이면 호스트가 굳이 1차(직결 전용)부터 시도해서 실패시킬 필요 없이
+            // 처음부터 릴레이 허용으로 응답할 수 있다(PairSignal.handlePair 참고).
             if (name == null || remote == null) continue;
-            if (name.length() != 17 || !name.startsWith("j")) continue;
+            if (name.length() != 18 || !name.startsWith("j")) continue;
             if (handledJoins.putIfAbsent(name, now) != null) continue;
 
-            String sid = name.substring(1);
+            boolean clientRelayForced = name.charAt(1) == 'r';
+            String sid = name.substring(2);
             String clientIp = remote.contains(":") ? remote.substring(0, remote.lastIndexOf(':')) : remote;
             // IP는 로그에 남기지 않는다 — 방장이 버그 리포트로 로그를 그대로
             // 공유하면 조인자의 실제 IP가 텍스트로 박제된다. sid로 세션 추적 충분.
-            LOG.info("[host] join detected: sid={}", sid);
+            LOG.info("[host] join detected: sid={} clientRelayForced={}", sid, clientRelayForced);
 
             worker.execute(() -> {
                 // target 프로브 후 진행 (실패 시 조인자는 타임아웃)
@@ -237,7 +257,7 @@ public class WebRtcHost {
                     LOG.warn("[host] target unreachable; ignoring join sid={}", sid);
                     return;
                 }
-                PairSignal pair = new PairSignal(sid, clientIp);
+                PairSignal pair = new PairSignal(sid, clientIp, clientRelayForced);
                 PairSignal prev = pairs.put(sid, pair);
                 if (prev != null) prev.close();
                 pair.open();
@@ -326,15 +346,18 @@ public class WebRtcHost {
     private class PairSignal {
         final String sid;
         final String clientIp;
+        /** 이 조인자가 이미 중계 강제 중이었는지(handleLobby가 "j" peer 이름에서 읽어옴). */
+        final boolean clientRelayForced;
         volatile WebSocketClient ws;
         volatile HostSession session;
         volatile boolean closed;
         /** 직전에 처리한 OFFER SDP — 재전달(중복) 판별용. */
         volatile String lastOfferSdp;
 
-        PairSignal(String sid, String clientIp) {
+        PairSignal(String sid, String clientIp, boolean clientRelayForced) {
             this.sid = sid;
             this.clientIp = clientIp;
+            this.clientRelayForced = clientRelayForced;
         }
 
         void open() {
@@ -404,6 +427,13 @@ public class WebRtcHost {
                     LOG.info("[host] renegotiation OFFER received sid={}", sid);
                     old.close(); // 페어 시그널링(this)은 유지, WebRTC 세션만 정리
                     allowRelay = true; // 재협상 = 조인자의 1차 시도 실패 = 2차(릴레이 허용)
+                } else if (clientRelayForced) {
+                    // 조인자가 이미 중계 강제 중이라고 알려온 경우 — 최초 OFFER부터
+                    // 1차(직결 전용)를 건너뛰고 바로 릴레이 허용으로 응답한다. 조인자도
+                    // 이 사실을 알고 1차를 안 거치고 온 OFFER이므로(WebRtcClient
+                    // acceptAndBridge의 skipToRelayOnly 참고) 여기서도 굳이 "최초 OFFER =
+                    // 1차 직결 전용"으로 응답했다가 실패시키고 재협상을 기다릴 필요가 없다.
+                    allowRelay = true;
                 } else {
                     allowRelay = false; // 최초 OFFER = 1차(직결 전용) 시도
                 }
@@ -582,14 +612,39 @@ public class WebRtcHost {
          * 직결(Direct)/중계(TURN) 여부를 기록해 둔다 — 이 시점엔 아직 로그인 전이라 UUID를
          * 모르므로 IP로 등록해 두고, PlayerJoinMessageMixin이 참여 메시지에 접미사로 붙인다.
          * 조인자 본인 화면에는 KfcudpClient가 월드 진입 시점에 따로 띄운다.
+         * <p>
+         * DataChannel open은 ICE가 "connected"만 되면 도달하고 그 뒤로도 nominated pair가
+         * 바뀔 수 있어(WebRtcClient.resolveConnectionType 클래스 주석 참고) 여기서 한 번
+         * 읽고 조금 있다가 한 번 더 읽어서 값이 바뀌면 덮어쓴다 — 접속자가 실제로 로그인을
+         * 마치고 참여 메시지가 뜨기까지는 이보다 더 걸리므로 이 지연은 그 전에 끝난다.
          */
         private void notifyConnectionType() {
             RTCPeerConnection pc = peerConnection;
             if (pc == null) return;
             pc.getStats(report -> {
                 Boolean relay = WebRtcStats.usesRelay(report);
-                if (relay != null) P2PBanManager.registerConnectionType(clientIp, relay);
+                if (relay != null) {
+                    P2PBanManager.registerConnectionType(clientIp, relay);
+                    LOG.info("[host] connection type (initial) sid={}: relay={}", sid, relay);
+                }
             });
+            // 접속마다 2초 자고 끝나는 스레드를 새로 만들지 않고 기존 타이머에 예약한다.
+            try {
+                scheduler.schedule(() -> {
+                    RTCPeerConnection pc2 = peerConnection;
+                    if (pc2 == null) return;
+                    pc2.getStats(report -> {
+                        Boolean recheck = WebRtcStats.usesRelay(report);
+                        if (recheck != null) {
+                            Boolean prev = P2PBanManager.connectionTypeOfIp(clientIp);
+                            if (!recheck.equals(prev)) {
+                                LOG.warn("[host] connection type changed on recheck sid={}: {} -> {}", sid, prev, recheck);
+                            }
+                            P2PBanManager.registerConnectionType(clientIp, recheck);
+                        }
+                    });
+                }, 2, TimeUnit.SECONDS);
+            } catch (RejectedExecutionException ignored) {}
         }
 
         private void createAnswer() {

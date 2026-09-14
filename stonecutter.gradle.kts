@@ -26,6 +26,9 @@ val collectAllVersionJars by tasks.registering {
         val taskName = if (v.project.startsWith("26.")) "jar" else "remapJar"
         project(":${v.project}").tasks.named(taskName)
     }
+    // 모으고 나면 각 버전 build/libs는 같은 jar 사본(+sources jar, 옛 버전 jar)일 뿐이라 지운다.
+    // 다음 빌드 때 jar/remapJar가 다시 돌긴 하지만 컴파일 결과는 캐시돼 있어 금방 끝난다.
+    val libsDirs = stonecutter.versions.map { v -> project(":${v.project}").layout.buildDirectory.dir("libs") }
     stonecutter.versions.forEach { v -> dependsOn("${v.project}:build") }
 
     doLast {
@@ -35,6 +38,7 @@ val collectAllVersionJars by tasks.registering {
             val archiveFile = (taskProvider.get() as AbstractArchiveTask).archiveFile.get().asFile
             if (archiveFile.exists()) archiveFile.copyTo(out.resolve(archiveFile.name), overwrite = true)
         }
+        libsDirs.forEach { it.get().asFile.deleteRecursively() }
         println("모은 jar: ${out.absolutePath}")
     }
 }
