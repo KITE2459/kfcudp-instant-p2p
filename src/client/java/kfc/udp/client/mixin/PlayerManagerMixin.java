@@ -78,4 +78,10 @@ public abstract class PlayerManagerMixin {
         }
     }
     //?}
+
+    /** 방이 열려 있으면 정원은 checkCanJoin(위)이 제작자·서포터를 빼고 센 인원으로 이미 판정했다 — 바닐라의 단순 인원 비교는 건너뛴다. */
+    @Inject(method = "canBypassPlayerLimit", at = @At("HEAD"), cancellable = true)
+    private void kfcudp$roomGateDecides(CallbackInfoReturnable<Boolean> cir) {
+        if (P2PBanManager.getRoomMaxPlayers() > 0) cir.setReturnValue(true);
+    }
 }

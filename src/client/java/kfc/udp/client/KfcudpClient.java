@@ -115,6 +115,17 @@ public class KfcudpClient implements ClientModInitializer {
     private static final String CAPACITY_MARKER = "kfcudp:capacity:";
     /** 접속자 쪽에서 파싱해 캐시해 둔 방 정원. 0이면 아직 못 받음(host이거나, 마커 도착 전). */
     private static volatile int guestRoomMaxPlayers = 0;
+    /** 마커로 같이 받은 방장 UUID — 접속자 화면 인원 표시에서 방장은 특혜자여도 세기 위해. */
+    private static volatile java.util.UUID guestHostUuid = null;
+
+    /** 정원 마커 본문: "정원:방장UUID". */
+    private static String capacityMarker(int max) {
+        //? if >=26.1 {
+        /*return CAPACITY_MARKER + max + ":" + Minecraft.getInstance().getUser().getProfileId();
+        *///?} else {
+        return CAPACITY_MARKER + max + ":" + MinecraftClient.getInstance().getSession().getUuidOrNull();
+        //?}
+    }
 
     /**
      * ESC 일시정지 화면에 넣은 인원 표시(N/M)를 몇 tick마다 다시 그릴지 —
@@ -324,7 +335,7 @@ public class KfcudpClient implements ClientModInitializer {
             // 접속자 클라이언트마다 각자 캐시하는 값이라, 예전에 "방 생애주기당 첫
             // 접속자에게만" 보내던 건 버그였다 — 두 번째 이후 접속자는 이 마커를
             // 영원히 못 받아 일시정지 화면 인원 표시가 안 떴다. 접속자마다 매번 보낸다.
-            handler.player.sendSystemMessage(Component.literal(CAPACITY_MARKER + activeMaxPlayers), false);
+            handler.player.sendSystemMessage(Component.literal(capacityMarker(activeMaxPlayers)), false);
         });
 
         // 공개 방 목록의 인원(현재/최대) 표기 갱신용 — 위 마커 전송과 달리 매번(첫
@@ -334,14 +345,14 @@ public class KfcudpClient implements ClientModInitializer {
         // 직접 증감시키는 이유는 그 필드 선언부 주석 참고 — 인원 변경 시 목록이 간헐적으로
         // 잘못 갱신되던 문제의 원인이었다.
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUUID())) return;
             activeGuestCount++;
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUUID())) return;
             activeGuestCount = Math.max(0, activeGuestCount - 1);
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
@@ -394,8 +405,10 @@ public class KfcudpClient implements ClientModInitializer {
             String s = message.getString();
             if (!s.startsWith(CAPACITY_MARKER)) return true;
             try {
-                guestRoomMaxPlayers = Integer.parseInt(s.substring(CAPACITY_MARKER.length()));
-            } catch (NumberFormatException ignored) {}
+                String[] v = s.substring(CAPACITY_MARKER.length()).split(":");
+                guestRoomMaxPlayers = Integer.parseInt(v[0]);
+                guestHostUuid = java.util.UUID.fromString(v[1]);
+            } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ignored) {}
             return false;
         });
 
@@ -410,6 +423,7 @@ public class KfcudpClient implements ClientModInitializer {
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             guestRoomMaxPlayers = 0;
+            guestHostUuid = null;
             warnedBlockedPlayers.clear();
             // 커스텀 방 접속자 세션이었으면, 다음에 뜰 바닐라 멀티플레이 화면을
             // RoomListScreen으로 바꿔치기하도록 표시해 둔다(AFTER_INIT에서 소비).
@@ -529,7 +543,7 @@ public class KfcudpClient implements ClientModInitializer {
             // 접속자 클라이언트마다 각자 캐시하는 값이라, 예전에 "방 생애주기당 첫
             // 접속자에게만" 보내던 건 버그였다 — 두 번째 이후 접속자는 이 마커를
             // 영원히 못 받아 일시정지 화면 인원 표시가 안 떴다. 접속자마다 매번 보낸다.
-            handler.player.sendMessage(Text.literal(CAPACITY_MARKER + activeMaxPlayers), false);
+            handler.player.sendMessage(Text.literal(capacityMarker(activeMaxPlayers)), false);
         });
 
         // 공개 방 목록의 인원(현재/최대) 표기 갱신용 — 위 마커 전송과 달리 매번(첫
@@ -539,14 +553,14 @@ public class KfcudpClient implements ClientModInitializer {
         // 않고 activeGuestCount를 직접 증감시키는 이유는 그 필드 선언부 주석 참고 —
         // 인원 변경 시 목록이 간헐적으로 잘못 갱신되던 문제의 원인이었다.
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUuid())) return;
             activeGuestCount++;
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUuid())) return;
             activeGuestCount = Math.max(0, activeGuestCount - 1);
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
@@ -599,8 +613,10 @@ public class KfcudpClient implements ClientModInitializer {
             String s = message.getString();
             if (!s.startsWith(CAPACITY_MARKER)) return true;
             try {
-                guestRoomMaxPlayers = Integer.parseInt(s.substring(CAPACITY_MARKER.length()));
-            } catch (NumberFormatException ignored) {}
+                String[] v = s.substring(CAPACITY_MARKER.length()).split(":");
+                guestRoomMaxPlayers = Integer.parseInt(v[0]);
+                guestHostUuid = java.util.UUID.fromString(v[1]);
+            } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ignored) {}
             return false;
         });
 
@@ -615,6 +631,7 @@ public class KfcudpClient implements ClientModInitializer {
 
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             guestRoomMaxPlayers = 0;
+            guestHostUuid = null;
             warnedBlockedPlayers.clear();
             // 커스텀 방 접속자 세션이었으면, 다음에 뜰 바닐라 멀티플레이 화면을
             // RoomListScreen으로 바꿔치기하도록 표시해 둔다(AFTER_INIT에서 소비).
@@ -897,12 +914,12 @@ public class KfcudpClient implements ClientModInitializer {
      * 제목 변경 둘 다 이 순서 하나로 처리된다.
      */
     //? if >=26.1 {
-    /*public static void applyRoomSettings(Minecraft client,
+    /*public static boolean applyRoomSettings(Minecraft client,
                                        GameType gameMode, int maxPlayers, boolean allowCheats,
                                        boolean publicRoom, String title) {
-        if (activeInviteCode == null || client.player == null) return;
+        if (activeInviteCode == null || client.player == null) return false;
         IntegratedServer server = client.getSingleplayerServer();
-        if (server == null) return;
+        if (server == null) return false;
 
         int oldMaxPlayers = activeMaxPlayers;
         activeMaxPlayers = maxPlayers;
@@ -927,7 +944,7 @@ public class KfcudpClient implements ClientModInitializer {
                     // 게스트는 방장이 정원을 바꿔도 그 사실을 알 방법이 없어서, ESC
                     // 화면 인원 표시가 재접속해야만 바뀌었다. 바뀌었을 때만 다시 보낸다.
                     if (maxPlayers != oldMaxPlayers) {
-                        sp.sendSystemMessage(Component.literal(CAPACITY_MARKER + maxPlayers), false);
+                        sp.sendSystemMessage(Component.literal(capacityMarker(maxPlayers)), false);
                     }
                 }
             }
@@ -958,10 +975,43 @@ public class KfcudpClient implements ClientModInitializer {
                 // 서버 스레드가 만지는 플레이어 목록을 직접 스냅샷하는 건 안전하지 않다.
                 WebRtcBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
                         client.player.getUUID().toString(), activeGuestCount + 1, maxPlayers);
-                // 공개를 새로 켰거나 제목이 바뀐 경우에도 알린다 — 예전엔 초대 코드 발급 때만 떠서
-                // 제목을 바꿔도 목록에 뭐로 보이는지 채팅으로 확인할 수 없었다.
-                if (!activePublicRoom || !title.equals(activeTitle)) kfcudp$sendPublicRoomNotice(client, title);
+                // 공개를 새로 켰을 때 방장에게 목록에 뭐로 보이는지 알린다 — 제목 변경은 아래에서 방 전원에게 알린다.
+                if (!activePublicRoom) kfcudp$sendPublicRoomNotice(client, title);
             }
+        }
+
+        // 바뀐 방 설정을 방 전원(방장 포함)에게 채팅으로 알린다. 채널·중계 강제는 방장 개인 설정이라 빼고(채널은
+        // 가리기 기능이 있을 만큼 드러나면 안 되는 값), 제목은 따로 한 줄. 보내는 건 서버 스레드에서.
+        java.util.List<Component> changes = new java.util.ArrayList<>();
+        if (gameMode != activeGameMode) {
+            changes.add(Component.translatable("instant-p2p.msg.setting.game_mode", gameMode.getShortDisplayName()));
+        }
+        if (maxPlayers != oldMaxPlayers) {
+            changes.add(Component.translatable("instant-p2p.msg.setting.max_players", maxPlayers));
+        }
+        if (allowCheats != activeAllowCheats) {
+            changes.add(Component.translatable("instant-p2p.msg.setting.allow_commands",
+                    Component.translatable(allowCheats ? "options.on" : "options.off")));
+        }
+        if (publicRoom != activePublicRoom) {
+            changes.add(Component.translatable("instant-p2p.msg.setting.public",
+                    Component.translatable(publicRoom ? "options.on" : "options.off")));
+        }
+        // 제목은 방을 새로 공개할 때도 알린다 — 공개하는 순간이 곧 목록에 그 제목이 처음 걸리는 때라서.
+        boolean titleChanged = publicRoom && (!activePublicRoom || !title.equals(activeTitle));
+        MutableComponent joined = Component.empty();
+        for (int i = 0; i < changes.size(); i++) {
+            if (i > 0) joined.append(", ");
+            joined.append(changes.get(i));
+        }
+        Component settingsMsg = changes.isEmpty() ? null : Component.translatable("instant-p2p.msg.room_settings_changed", joined);
+        Component titleMsg = titleChanged ? Component.translatable("instant-p2p.msg.room_title_changed",
+                Component.literal(title).withStyle(ChatFormatting.RESET)) : null;
+        if (settingsMsg != null || titleMsg != null) {
+            server.execute(() -> {
+                if (settingsMsg != null) server.getPlayerList().broadcastSystemMessage(settingsMsg, false);
+                if (titleMsg != null) server.getPlayerList().broadcastSystemMessage(titleMsg, false);
+            });
         }
 
         activeGameMode = gameMode;
@@ -969,15 +1019,16 @@ public class KfcudpClient implements ClientModInitializer {
         activePublicRoom = publicRoom;
         activeTitle = title;
         activeChannel = channel;
+        return settingsMsg != null || titleMsg != null;
     }
 
     *///?} else {
-    public static void applyRoomSettings(MinecraftClient client,
+    public static boolean applyRoomSettings(MinecraftClient client,
                                        GameMode gameMode, int maxPlayers, boolean allowCheats,
                                        boolean publicRoom, String title) {
-        if (activeInviteCode == null || client.player == null) return;
+        if (activeInviteCode == null || client.player == null) return false;
         IntegratedServer server = client.getServer();
-        if (server == null) return;
+        if (server == null) return false;
 
         int oldMaxPlayers = activeMaxPlayers;
         activeMaxPlayers = maxPlayers;
@@ -1005,7 +1056,7 @@ public class KfcudpClient implements ClientModInitializer {
                     // 게스트는 방장이 정원을 바꿔도 그 사실을 알 방법이 없어서, ESC
                     // 화면 인원 표시가 재접속해야만 바뀌었다. 바뀌었을 때만 다시 보낸다.
                     if (maxPlayers != oldMaxPlayers) {
-                        sp.sendMessage(Text.literal(CAPACITY_MARKER + maxPlayers), false);
+                        sp.sendMessage(Text.literal(capacityMarker(maxPlayers)), false);
                     }
                 }
             }
@@ -1036,10 +1087,43 @@ public class KfcudpClient implements ClientModInitializer {
                 // 서버 스레드가 만지는 플레이어 목록을 직접 스냅샷하는 건 안전하지 않다.
                 WebRtcBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
                         client.player.getUuid().toString(), activeGuestCount + 1, maxPlayers);
-                // 공개를 새로 켰거나 제목이 바뀐 경우에도 알린다 — 예전엔 초대 코드 발급 때만 떠서
-                // 제목을 바꿔도 목록에 뭐로 보이는지 채팅으로 확인할 수 없었다.
-                if (!activePublicRoom || !title.equals(activeTitle)) kfcudp$sendPublicRoomNotice(client, title);
+                // 공개를 새로 켰을 때 방장에게 목록에 뭐로 보이는지 알린다 — 제목 변경은 아래에서 방 전원에게 알린다.
+                if (!activePublicRoom) kfcudp$sendPublicRoomNotice(client, title);
             }
+        }
+
+        // 바뀐 방 설정을 방 전원(방장 포함)에게 채팅으로 알린다. 채널·중계 강제는 방장 개인 설정이라 빼고(채널은
+        // 가리기 기능이 있을 만큼 드러나면 안 되는 값), 제목은 따로 한 줄. 보내는 건 서버 스레드에서.
+        java.util.List<Text> changes = new java.util.ArrayList<>();
+        if (gameMode != activeGameMode) {
+            changes.add(Text.translatable("instant-p2p.msg.setting.game_mode", gameMode.getSimpleTranslatableName()));
+        }
+        if (maxPlayers != oldMaxPlayers) {
+            changes.add(Text.translatable("instant-p2p.msg.setting.max_players", maxPlayers));
+        }
+        if (allowCheats != activeAllowCheats) {
+            changes.add(Text.translatable("instant-p2p.msg.setting.allow_commands",
+                    Text.translatable(allowCheats ? "options.on" : "options.off")));
+        }
+        if (publicRoom != activePublicRoom) {
+            changes.add(Text.translatable("instant-p2p.msg.setting.public",
+                    Text.translatable(publicRoom ? "options.on" : "options.off")));
+        }
+        // 제목은 방을 새로 공개할 때도 알린다 — 공개하는 순간이 곧 목록에 그 제목이 처음 걸리는 때라서.
+        boolean titleChanged = publicRoom && (!activePublicRoom || !title.equals(activeTitle));
+        MutableText joined = Text.empty();
+        for (int i = 0; i < changes.size(); i++) {
+            if (i > 0) joined.append(", ");
+            joined.append(changes.get(i));
+        }
+        Text settingsMsg = changes.isEmpty() ? null : Text.translatable("instant-p2p.msg.room_settings_changed", joined);
+        Text titleMsg = titleChanged ? Text.translatable("instant-p2p.msg.room_title_changed",
+                Text.literal(title).formatted(Formatting.RESET)) : null;
+        if (settingsMsg != null || titleMsg != null) {
+            server.execute(() -> {
+                if (settingsMsg != null) server.getPlayerManager().broadcast(settingsMsg, false);
+                if (titleMsg != null) server.getPlayerManager().broadcast(titleMsg, false);
+            });
         }
 
         activeGameMode = gameMode;
@@ -1047,6 +1131,7 @@ public class KfcudpClient implements ClientModInitializer {
         activePublicRoom = publicRoom;
         activeTitle = title;
         activeChannel = channel;
+        return settingsMsg != null || titleMsg != null;
     }
 
     //?}
@@ -1138,11 +1223,11 @@ public class KfcudpClient implements ClientModInitializer {
         if (isHost && activeInviteCode != null) {
             IntegratedServer server = client.getSingleplayerServer();
             if (server != null) {
-                current = server.getPlayerList().getPlayers().size();
+                current = P2PBanManager.countedPlayers(server);
                 max = activeMaxPlayers;
             }
         } else if (isGuestSession && guestRoomMaxPlayers > 0 && client.getConnection() != null) {
-            current = client.getConnection().getOnlinePlayers().size();
+            current = (int) client.getConnection().getOnlinePlayers().stream().filter(p -> { java.util.UUID id = P2PBanManager.profileId(p.getProfile()); return id.equals(guestHostUuid) || !DevBadge.hasPerk(id); }).count();
             max = guestRoomMaxPlayers;
         }
         if (current != null) {
@@ -1221,11 +1306,11 @@ public class KfcudpClient implements ClientModInitializer {
         if (isHost && activeInviteCode != null) {
             IntegratedServer server = client.getServer();
             if (server != null) {
-                current = server.getPlayerManager().getPlayerList().size();
+                current = P2PBanManager.countedPlayers(server);
                 max = activeMaxPlayers;
             }
         } else if (isGuestSession && guestRoomMaxPlayers > 0 && client.getNetworkHandler() != null) {
-            current = client.getNetworkHandler().getPlayerList().size();
+            current = (int) client.getNetworkHandler().getPlayerList().stream().filter(p -> { java.util.UUID id = P2PBanManager.profileId(p.getProfile()); return id.equals(guestHostUuid) || !DevBadge.hasPerk(id); }).count();
             max = guestRoomMaxPlayers;
         }
         if (current != null) {

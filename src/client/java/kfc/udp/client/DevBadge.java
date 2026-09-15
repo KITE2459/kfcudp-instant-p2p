@@ -8,10 +8,11 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 //?}
 
+import java.util.Set;
 import java.util.UUID;
 
 /**
- * 모드 제작자 표시 — 제작자 UUID의 이름 뒤에 하늘색 " 🛠"을 붙인다. 붙이는 방식은 이 클래스 하나로 통일한다.
+ * 모드 제작자·서포터 표시 — 제작자는 하늘색 " 🛠", 서포터는 금색 " 💬"을 이름 뒤에 붙인다. 붙이는 방식은 이 클래스 하나로 통일한다.
  * <p>
  * 스코어보드 팀 suffix 대신 플레이어 표시 이름(getDisplayName) 자체에 붙인다(mixin.DevNameMixin) — 채팅, 입장·퇴장,
  * 사망 메시지, /say, 머리 위 이름표가 전부 이 이름을 쓴다. 탭 목록은 따로 받는 이름이라 같은 표시 이름을 그대로
@@ -23,21 +24,36 @@ import java.util.UUID;
  */
 public final class DevBadge {
 
+    /** 특혜(방 정원 무시 + 인원 수에서 빠짐) 스위치 — false면 표시만 남고 특혜는 전부 꺼진다. */
+    public static final boolean PERKS_ENABLED = true;
+
     private static final UUID DEV_UUID = UUID.fromString("163ca181-ebe6-4e4a-85d9-2c651a52d059");
+    private static final Set<UUID> SUPPORTER_UUIDS = Set.of(
+            UUID.fromString("773e9c04-fe2d-4193-8911-6887a28d1757"),
+            UUID.fromString("eb614533-1e04-47df-88d1-ad68e8859022"));
 
     private DevBadge() {}
 
-    public static boolean isDev(UUID id) {
-        return DEV_UUID.equals(id);
+    public static boolean hasBadge(UUID id) {
+        return DEV_UUID.equals(id) || SUPPORTER_UUIDS.contains(id);
+    }
+
+    /** 방 정원을 무시하고 들어오며 인원 수에도 세지 않는다. */
+    public static boolean hasPerk(UUID id) {
+        return PERKS_ENABLED && hasBadge(id);
     }
 
     //? if >=26.1 {
-    /*public static Component decorate(Component name) {
-        return name.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
+    /*public static Component decorate(UUID id, Component name) {
+        if (DEV_UUID.equals(id)) return name.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
+        if (SUPPORTER_UUIDS.contains(id)) return name.copy().append(Component.literal(" 💬").withStyle(ChatFormatting.GOLD));
+        return name;
     }
     *///?} else {
-    public static Text decorate(Text name) {
-        return name.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
+    public static Text decorate(UUID id, Text name) {
+        if (DEV_UUID.equals(id)) return name.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
+        if (SUPPORTER_UUIDS.contains(id)) return name.copy().append(Text.literal(" 💬").formatted(Formatting.GOLD));
+        return name;
     }
     //?}
 }

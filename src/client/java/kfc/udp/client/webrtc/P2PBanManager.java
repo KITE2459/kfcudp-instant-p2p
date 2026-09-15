@@ -616,6 +616,19 @@ public class P2PBanManager {
         return roomMaxPlayers;
     }
 
+    /** 정원에 세는 인원 — 접속자로 들어온 제작자·서포터는 빼고 센다(DevBadge.hasPerk). 방장은 항상 센다. */
+    //? if >=26.1 {
+    /*public static int countedPlayers(MinecraftServer server) {
+        return (int) server.getPlayerList().getPlayers().stream()
+                .filter(p -> isHost(server, p) || !kfc.udp.client.DevBadge.hasPerk(p.getUUID())).count();
+    }
+    *///?} else {
+    public static int countedPlayers(MinecraftServer server) {
+        return (int) server.getPlayerManager().getPlayerList().stream()
+                .filter(p -> isHost(server, p) || !kfc.udp.client.DevBadge.hasPerk(p.getUuid())).count();
+    }
+    //?}
+
     // -------------------------------------------------------------------------
     // 로그인(LOGIN) 단계 밴 체크 — PlayerManagerMixin 에서 호출
     // -------------------------------------------------------------------------
@@ -649,9 +662,9 @@ public class P2PBanManager {
             LOG.info("[instant-p2p] login refused (ip banned): {}", profileName(profile));
             return Component.literal("§cYour IP is banned: " + getIpBanReason(realIp));
         }
-        // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다
+        // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다 — 제작자·서포터는 정원을 무시한다
         int max = roomMaxPlayers;
-        if (max > 0 && server.getPlayerCount() >= max) {
+        if (max > 0 && !kfc.udp.client.DevBadge.hasPerk(profileId(profile)) && countedPlayers(server) >= max) {
             return Component.translatable("instant-p2p.msg.room_full", max);
         }
         return null;
@@ -680,9 +693,9 @@ public class P2PBanManager {
             LOG.info("[instant-p2p] login refused (ip banned): {}", profileName(profile));
             return Text.literal("§cYour IP is banned: " + getIpBanReason(realIp));
         }
-        // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다
+        // 정원 초과도 같은 지점에서 막아야 join/left 로그가 안 남는다 — 제작자·서포터는 정원을 무시한다
         int max = roomMaxPlayers;
-        if (max > 0 && server.getCurrentPlayerCount() >= max) {
+        if (max > 0 && !kfc.udp.client.DevBadge.hasPerk(profileId(profile)) && countedPlayers(server) >= max) {
             return Text.translatable("instant-p2p.msg.room_full", max);
         }
         return null;

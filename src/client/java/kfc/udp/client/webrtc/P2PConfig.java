@@ -167,6 +167,25 @@ public final class P2PConfig {
         return composeChannel(channel, channel2);
     }
 
+    /** "채널 가리기" — 켜면 채널 입력란 대신 "채널 보안 활성됨" 상자를 보여준다(방송 화면 등에 채널 이름이 드러나지
+     * 않게). 화면에서만 가리고 채널 값 자체는 그대로 쓰인다. */
+    private static volatile boolean hideChannel = loadHideChannel();
+
+    public static boolean isHideChannel() {
+        return hideChannel;
+    }
+
+    public static void setHideChannel(boolean value) {
+        if (hideChannel == value) return;
+        hideChannel = value;
+        updateSettingsFile(o -> o.addProperty("hideChannel", value));
+    }
+
+    private static boolean loadHideChannel() {
+        JsonObject o = readSettingsFile();
+        return o != null && o.has("hideChannel") && o.get("hideChannel").getAsBoolean();
+    }
+
     /** 입력란용 — part 0 = 채널 1, 1 = 채널 2. */
     public static String getChannelPart(int part) {
         return part == 0 ? channel : channel2;

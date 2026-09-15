@@ -245,6 +245,8 @@ public class CustomRoomScreen extends Screen {
                     RoomListScreen.CHANNEL_PART_H, CHANNEL_TEXT);
             field.setMaxLength(RoomListScreen.CHANNEL_MAX_CHARS);
             field.setValue(part == 0 ? this.channel1 : this.channel2);
+            // 채널 가리기(방 목록 화면의 체크박스)가 켜져 있으면 입력란을 숨기고 그 자리에 "채널 보안 활성됨" 상자를 그린다.
+            field.visible = !kfc.udp.client.webrtc.P2PConfig.isHideChannel();
             field.setTooltip(Tooltip.create(CHANNEL_TEXT));
             field.setResponder(text -> {
                 if (this.font.width(text) > RoomListScreen.CHANNEL_MAX_W) { // 폭 한도 — 잘라 다시 넣으면 이 응답이 한 번 더 불린다
@@ -417,6 +419,8 @@ public class CustomRoomScreen extends Screen {
                     RoomListScreen.CHANNEL_PART_H, CHANNEL_TEXT);
             field.setMaxLength(RoomListScreen.CHANNEL_MAX_CHARS);
             field.setText(part == 0 ? this.channel1 : this.channel2);
+            // 채널 가리기(방 목록 화면의 체크박스)가 켜져 있으면 입력란을 숨기고 그 자리에 "채널 보안 활성됨" 상자를 그린다.
+            field.visible = !kfc.udp.client.webrtc.P2PConfig.isHideChannel();
             field.setTooltip(Tooltip.of(CHANNEL_TEXT));
             field.setChangedListener(text -> {
                 if (this.textRenderer.getWidth(text) > RoomListScreen.CHANNEL_MAX_W) { // 폭 한도 — 잘라 다시 넣으면 이 응답이 한 번 더 불린다
@@ -590,6 +594,8 @@ public class CustomRoomScreen extends Screen {
                     RoomListScreen.CHANNEL_PART_H, CHANNEL_TEXT);
             field.setMaxLength(RoomListScreen.CHANNEL_MAX_CHARS);
             field.setText(part == 0 ? this.channel1 : this.channel2);
+            // 채널 가리기(방 목록 화면의 체크박스)가 켜져 있으면 입력란을 숨기고 그 자리에 "채널 보안 활성됨" 상자를 그린다.
+            field.visible = !kfc.udp.client.webrtc.P2PConfig.isHideChannel();
             field.setTooltip(Tooltip.of(CHANNEL_TEXT));
             field.setChangedListener(text -> {
                 if (this.textRenderer.getWidth(text) > RoomListScreen.CHANNEL_MAX_W) { // 폭 한도 — 잘라 다시 넣으면 이 응답이 한 번 더 불린다
@@ -796,7 +802,7 @@ public class CustomRoomScreen extends Screen {
         kfc.udp.client.webrtc.P2PConfig.setChannelPart(0, this.channel1);
         kfc.udp.client.webrtc.P2PConfig.setChannelPart(1, this.channel2);
         String title = this.publicRoom ? this.titleField.getValue().trim() : null;
-        KfcudpClient.applyRoomSettings(this.minecraft, this.gameMode, this.maxPlayers,
+        boolean announced = KfcudpClient.applyRoomSettings(this.minecraft, this.gameMode, this.maxPlayers,
                 this.allowCheats, this.publicRoom, title);
         // 제목을 비워둔 채 공개하면 applyRoomSettings가 "Room - 코드"를 대신 지어
         // 붙인다 — 화면 입력란은 여전히 빈 채로 남으므로, 그대로 두면 입력란(빈 값)과
@@ -815,7 +821,7 @@ public class CustomRoomScreen extends Screen {
         kfc.udp.client.webrtc.P2PConfig.setChannelPart(0, this.channel1);
         kfc.udp.client.webrtc.P2PConfig.setChannelPart(1, this.channel2);
         String title = this.publicRoom ? this.titleField.getText().trim() : null;
-        KfcudpClient.applyRoomSettings(this.client, this.gameMode, this.maxPlayers,
+        boolean announced = KfcudpClient.applyRoomSettings(this.client, this.gameMode, this.maxPlayers,
                 this.allowCheats, this.publicRoom, title);
         // 제목을 비워둔 채 공개하면 applyRoomSettings가 "Room - 코드"를 대신 지어
         // 붙인다 — 화면 입력란은 여전히 빈 채로 남으므로, 그대로 두면 입력란(빈 값)과
@@ -828,14 +834,15 @@ public class CustomRoomScreen extends Screen {
         kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
         //?}
         // 적용 결과는 채팅으로 알리고, 초대코드 재생성처럼 곧장 게임 화면으로 돌아간다.
+        // 방 전원에게 바뀐 설정을 알렸으면(applyRoomSettings) 방장에게 "적용 완료"를 또 띄우지 않는다.
         //? if >=26.1 {
-        /*if (this.minecraft.player != null) {
+        /*if (!announced && this.minecraft.player != null) {
             this.minecraft.player.sendSystemMessage(Component.translatable("instant-p2p.msg.settings_applied"));
         }
         this.minecraft.setScreenAndShow(null);
         this.minecraft.mouseHandler.grabMouse();
         *///?} else {
-        if (this.client.player != null) {
+        if (!announced && this.client.player != null) {
             this.client.player.sendMessage(Text.translatable("instant-p2p.msg.settings_applied"), false);
         }
         this.client.setScreen(null);
@@ -873,6 +880,7 @@ public class CustomRoomScreen extends Screen {
         int cx = this.width / 2;
 
         context.centeredText(this.font, this.title, cx, TITLE_Y, 0xFFFFFFFF);
+        RoomListScreen.renderChannelHiddenBox(context, cx, mouseX, mouseY);
 
         context.centeredText(this.font, GAME_MODE_TEXT,  cx - 80, ROW1_Y - 12, 0xFFA0A0A0);
         context.centeredText(this.font, MAX_PLAYERS_TEXT, cx + 80, ROW1_Y - 12, 0xFFA0A0A0);
@@ -888,6 +896,7 @@ public class CustomRoomScreen extends Screen {
         int cx = this.width / 2;
 
         context.drawCenteredTextWithShadow(this.textRenderer, this.title, cx, TITLE_Y, 0xFFFFFFFF);
+        RoomListScreen.renderChannelHiddenBox(context, cx, mouseX, mouseY);
 
         context.drawCenteredTextWithShadow(this.textRenderer, GAME_MODE_TEXT,  cx - 80, ROW1_Y - 12, 0xFFA0A0A0);
         context.drawCenteredTextWithShadow(this.textRenderer, MAX_PLAYERS_TEXT, cx + 80, ROW1_Y - 12, 0xFFA0A0A0);
