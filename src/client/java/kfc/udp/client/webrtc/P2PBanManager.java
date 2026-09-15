@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -58,10 +59,10 @@ import static net.minecraft.server.command.CommandManager.literal;
  * <ul>
  *   <li>"내가 밴/차단한 사람 방이 안 보임" — 내 화면이 방 목록을 받은 뒤, 방장의
  *       hostUuid가 {@link #isPlayerBanned}면 그 방을 그냥 숨긴다.</li>
- *   <li>"밴/차단한 사람한테 내 방이 안 보임" — 내가 방을 공개할 때 내 밴 목록
- *       전체를 방 공지 payload에 같이 실어 보낸다({@link #encodeBannedPlayerUuids},
+ *   <li>"밴/차단한 사람한테 내 방이 안 보임" — 내가 방을 공개할 때 내 밴 목록을
+ *       해시로 바꿔 방 공지 payload에 같이 실어 보낸다({@link #encodeBannedPlayerHashes},
  *       PublicRoomAnnouncer 참고). 그 목록을 받아보는 모든 클라이언트가 "내 UUID가
- *       이 방의 밴 목록에 있나"를 {@link #isListedIn}으로 확인해서, 있으면 자기
+ *       이 방의 밴 목록에 있나"를 {@link #isBannedIn}으로 확인해서, 있으면 자기
  *       화면에서 그 방을 숨긴다.</li>
  * </ul>
  * 후자는 서버가 강제하는 게 아니라 각 클라이언트가 스스로 지키는 방식이라 완벽한
@@ -96,20 +97,12 @@ public class P2PBanManager {
     /** 방 정원 게이트. KfcudpClient 가 방을 열 때 세팅, 닫을 때 0. */
     private static volatile int roomMaxPlayers = 0;
 
-    /**
-     * "관리 명령어(kick/ban/whitelist)" 를 접속자에게도 열어줄지. 방장은 이 값과
-     * 무관하게 항상 쓸 수 있다({@link #requireAdminOrHost}). Allow Commands(치트)와는
-     * 완전히 독립된 별도 옵션 — KfcudpClient 가 방 열 때 Custom Room 화면에서 고른
-     * 값으로 세팅하고, 방 닫을 때 false로 되돌린다.
-     */
-    private static volatile boolean guestManagementEnabled = false;
-
     // -------------------------------------------------------------------------
     // 버전 호환 헬퍼 — 1.21.9에서 GameProfile/isHost/권한 체크 API가 바뀜
     // -------------------------------------------------------------------------
 
     /** {@code GameProfile#getId()} → {@code id()} (1.21.9+, record화) */
-    static UUID profileId(GameProfile profile) {
+    public static UUID profileId(GameProfile profile) {
         //? if >=1.21.9 {
         /*return profile.id();
         *///?} else {
@@ -118,7 +111,7 @@ public class P2PBanManager {
     }
 
     /** {@code GameProfile#getName()} → {@code name()} (1.21.9+, record화) */
-    static String profileName(GameProfile profile) {
+    public static String profileName(GameProfile profile) {
         //? if >=1.21.9 {
         /*return profile.name();
         *///?} else {
@@ -140,6 +133,21 @@ public class P2PBanManager {
         //?}
     }
 
+    /** OP 목록에 올라 있는지(방장이 /op로 준 것) — "명령어 허용"(치트) 설정과 무관하다.
+     * OP 목록 조회 API가 1.21.9(PlayerConfigEntry)·26.1(getOps/NameAndId)에서 바뀌었다. */
+    private static boolean isOp(MinecraftServer server, GameProfile profile) {
+        if (profile == null) return false;
+        //? if >=26.1 {
+        /*return server.getPlayerList().getOps().get(new NameAndId(profile)) != null;
+        *///?}
+        //? if >=1.21.9 <26.1 {
+        /*return server.getPlayerManager().getOpList().get(new PlayerConfigEntry(profile)) != null;
+        *///?}
+        //? if <1.21.9 {
+        return server.getPlayerManager().getOpList().get(profile) != null;
+        //?}
+    }
+
     /** 다른 패키지(예: KfcudpClient)에서 "이 플레이어가 방장인가"를 물을 때 쓰는 공개 버전. */
     //? if >=26.1 {
     /*public static boolean isHost(MinecraftServer server, ServerPlayer player) {
@@ -150,41 +158,33 @@ public class P2PBanManager {
     }
 
     /**
-     * 방장은 "관리 명령어" 옵션이나 "Allow Commands" 설정과 무관하게 유저 제어
-     * 명령을 쓸 수 있어야 한다 — 안 그러면 두 옵션을 다 꺼둔 방장 본인도 ban/whitelist를
-     * 못 쓰게 되고, 방을 통째로 닫는 것 말곤 할 수 있는 게 없어진다.
+     * kick/ban/pardon/whitelist — 방장이거나, 방장이 /op로 OP를 준 사람만 쓸 수 있다("명령어 허용" 설정과 무관).
      * <p>
-     * 방장이 아닌 접속자는 순전히 {@link #guestManagementEnabled}("관리 명령어" 옵션)
-     * 로만 결정된다. 바닐라의 {@code hasPermissionLevel}/{@code Commands.hasPermission}
-     * 경로는 절대 타지 않는다 — {@code PlayerManager.isOperator()}가
-     * {@code ops.contains(entry) || (isHost && areCommandsAllowed) || cheatsAllowed}로
-     * 구현돼 있어서, "Allow Commands"(치트)가 켜지면 방장이 아닌 접속자까지 전부 op
-     * 취급되어 버린다. 즉 여기서 바닐라 권한 체크를 조금이라도 섞으면 치트 on일 때
-     * 관리 명령어 옵션이 꺼져 있어도 무시되고, 치트와 관리가 서로 독립일 수 없게 된다.
+     * 바닐라의 {@code hasPermissionLevel}/{@code isOperator} 경로는 쓰지 않고 OP 목록 자체를 본다({@link #isOp}) —
+     * {@code PlayerManager.isOperator()}가 {@code ops.contains(entry) || (isHost && areCommandsAllowed) || cheatsAllowed}로
+     * 구현돼 있어서, "명령어 허용"(치트)이 켜지면 OP를 안 받은 접속자까지 전부 op 취급되어 누구나 ban을 쓰게 된다.
      */
     //? if >=26.1 {
     /*static Predicate<CommandSourceStack> requireAdminOrHost() {
         return src -> {
             MinecraftServer server = src.getServer();
-            if (server != null && src.getEntity() instanceof ServerPlayer sp && isHost(server, sp)) return true;
-            return guestManagementEnabled;
+            return server != null && src.getEntity() instanceof ServerPlayer sp
+                    && (isHost(server, sp) || isOp(server, sp.getGameProfile()));
         };
     }
     *///?} else {
     static Predicate<ServerCommandSource> requireAdminOrHost() {
         return src -> {
             MinecraftServer server = src.getServer();
-            if (server != null && src.getEntity() instanceof ServerPlayerEntity sp && isHost(server, sp)) return true;
-            return guestManagementEnabled;
+            return server != null && src.getEntity() instanceof ServerPlayerEntity sp
+                    && (isHost(server, sp) || isOp(server, sp.getGameProfile()));
         };
     }
     //?}
 
     /**
-     * OP 부여는 방장만 쓸 수 있다 — kick/ban과 달리 {@link #guestManagementEnabled}로도
-     * 접속자에게 열어주지 않는다. OP는 명령어 권한 레벨 4 전체(치트 포함)를 주는
-     * 바닐라 권한이라, kick/ban보다 훨씨 강력하다 — 접속자가 스스로에게 OP를 줄 수
-     * 있게 되면 "관리 명령어" 옵션 하나로 방 전체 권한이 뚫리는 셈이라 항상 방장 전용.
+     * OP 부여·회수는 방장만 쓸 수 있다 — OP를 받은 사람도 못 쓴다. OP는 명령어 권한 레벨 4 전체(치트 포함)에
+     * kick/ban까지 주는 권한이라, OP끼리 서로 줄 수 있으면 방장이 모르는 사이 방 전체 권한이 퍼진다.
      */
     //? if >=26.1 {
     /*static Predicate<CommandSourceStack> requireHost() {
@@ -410,6 +410,7 @@ public class P2PBanManager {
         // 내가 지금 공개 방을 열고 있으면 새 밴 목록을 즉시 재공지 — 그래야 밴한
         // 상대에게 내 방이 곧장 안 보인다(재접속/코드 재생성을 기다리지 않고).
         WebRtcBridge.republishPublicRoomIfActive();
+        kfc.udp.client.ChatHideSync.apply(uuid, true); // 바닐라 "채팅에서 숨기기"도 같이
     }
 
     public static void banIp(String ip, String reason) {
@@ -426,19 +427,23 @@ public class P2PBanManager {
     }
 
     public static void pardonPlayer(String name) {
-        boolean removed;
+        List<String> removedUuids = new ArrayList<>();
         synchronized (P2PBanManager.class) {
             // 파일을 손으로 고쳐 name이 빠진 항목이 있어도 명령어가 NPE로 죽지 않게.
-            removed = bannedPlayers.entrySet().removeIf(e -> {
+            bannedPlayers.entrySet().removeIf(e -> {
                 JsonElement n = e.getValue().get("name");
-                return n != null && n.getAsString().equalsIgnoreCase(name);
+                boolean match = n != null && n.getAsString().equalsIgnoreCase(name);
+                if (match) removedUuids.add(e.getKey());
+                return match;
             });
-            if (removed) {
+            if (!removedUuids.isEmpty()) {
                 banListVersion++;
                 save(BANNED_PLAYERS, bannedPlayers);
             }
         }
-        if (removed) WebRtcBridge.republishPublicRoomIfActive();
+        if (removedUuids.isEmpty()) return;
+        WebRtcBridge.republishPublicRoomIfActive();
+        removedUuids.forEach(uuid -> kfc.udp.client.ChatHideSync.apply(uuid, false)); // 바닐라 숨기기도 같이 해제
     }
 
     /** {@link #pardonPlayer}는 이름으로 찾지만(사람이 명령어로 칠 때 편함), 방
@@ -453,7 +458,9 @@ public class P2PBanManager {
                 save(BANNED_PLAYERS, bannedPlayers);
             }
         }
-        if (removed) WebRtcBridge.republishPublicRoomIfActive();
+        if (!removed) return;
+        WebRtcBridge.republishPublicRoomIfActive();
+        kfc.udp.client.ChatHideSync.apply(uuid, false); // 바닐라 숨기기도 같이 해제
     }
 
     public static synchronized void pardonIp(String ip) {
@@ -465,6 +472,9 @@ public class P2PBanManager {
         return bannedPlayers.containsKey(uuid);
     }
 
+    public static synchronized boolean hasBannedPlayers() {
+        return !bannedPlayers.isEmpty();
+    }
     /** 방 목록의 "차단 목록" 관리 화면(BlockedPlayersScreen)에서 쓴다 — 방
      * 목록 필터에 걸려 안 보이게 된 방장들을 이름으로라도 다시 볼 수 있게, 지금
      * 밴 목록에 있는 전체 UUID+이름. 순서는 삽입 순서 그대로(딱히 의미 없음). */
@@ -478,21 +488,65 @@ public class P2PBanManager {
         return list;
     }
 
-    /** 방 공지 payload에 실어 보낼, 내가 밴한 플레이어 UUID 전체(쉼표로 이어붙임).
-     * 방장 본인이 이 방을 여는 시점의 값을 그대로 담아 보낸다 — 클래스 주석의
-     * "개인 차단" 문단 참고. */
-    public static synchronized String encodeBannedPlayerUuids() {
-        return String.join(",", bannedPlayers.keySet());
+    /** 방 공지 payload에 실어 보낼 밴 목록 — UUID 원문 대신 방 코드로 솔팅한 해시(쉼표로 이어붙임).
+     * 원문을 실으면 로비에 붙은 누구나(패킷 캡처만으로도) 방장이 누구를 차단했는지 읽을 수 있었다.
+     * 방마다 솔트가 달라 다른 방 목록과 대조해 같은 사람을 추적할 수도 없다. 단, 특정 UUID를 이미
+     * 알면 "이 방장이 그 사람을 차단했나"는 확인된다 — 받는 쪽이 스스로 확인하는 구조상 불가피하다. */
+    public static synchronized String encodeBannedPlayerHashes(String roomCode) {
+        return String.join(",", bannedPlayers.keySet().stream().map(uuid -> banHash(roomCode, uuid)).toList());
     }
 
-    /** 쉼표로 이어붙인 UUID 목록(다른 방장의 payload에서 온 것) 안에 이 UUID가
-     * 있는지 — "그 방장이 나를 밴했는지" 확인용. */
-    public static boolean isListedIn(String commaSeparatedUuids, String myUuid) {
-        if (commaSeparatedUuids == null || commaSeparatedUuids.isEmpty() || myUuid == null) return false;
-        for (String s : commaSeparatedUuids.split(",")) {
-            if (s.equals(myUuid)) return true;
+    /** 다른 방장의 payload에서 온 해시 목록에 내가 있는지 — "그 방장이 나를 밴했는지" 확인용. */
+    public static boolean isBannedIn(String commaSeparatedHashes, String roomCode, String myUuid) {
+        if (commaSeparatedHashes == null || commaSeparatedHashes.isEmpty() || myUuid == null) return false;
+        String mine = banHash(roomCode, myUuid);
+        for (String s : commaSeparatedHashes.split(",")) {
+            if (s.equals(mine)) return true;
         }
         return false;
+    }
+
+    /** 지금 이 방(호스트 서버)에 접속해 있는 플레이어 — 방장 포함. 입장하려는 사람이 자기가 차단한 유저가
+     * 방에 있는지 접속을 시작하기 전에 확인할 수 있게 해시로 보내 준다(RoomMembersProbe, WebRtcHost.sendMembers). */
+    private static final Set<UUID> onlinePlayers = ConcurrentHashMap.newKeySet();
+
+    public static void playerJoined(UUID id) {
+        onlinePlayers.add(id);
+    }
+
+    public static void playerLeft(UUID id) {
+        onlinePlayers.remove(id);
+    }
+
+    /** 접속 중인 플레이어를 밴 목록과 같은 방식(방 코드로 솔팅한 해시)으로 이어붙인 것. */
+    public static String encodeOnlinePlayerHashes(String roomCode) {
+        return String.join(",", onlinePlayers.stream().map(id -> banHash(roomCode, id.toString())).toList());
+    }
+
+    /** 방장이 보낸 접속자 해시 중 내가 차단한 플레이어들의 이름(차단할 때 기록한 이름, 차단한 순서) — 없으면 빈 목록.
+     * 해시는 방장 쪽에서 이름을 알 수 없으니 이름은 내 차단 목록에서 가져온다. */
+    public static synchronized List<String> blockedPlayerNamesIn(String commaSeparatedHashes, String roomCode) {
+        List<String> names = new ArrayList<>();
+        if (commaSeparatedHashes == null || commaSeparatedHashes.isEmpty()) return names;
+        List<String> present = List.of(commaSeparatedHashes.split(","));
+        for (Map.Entry<String, JsonObject> e : bannedPlayers.entrySet()) {
+            if (!present.contains(banHash(roomCode, e.getKey()))) continue;
+            JsonObject o = e.getValue();
+            names.add(o.has("name") && !o.get("name").getAsString().isEmpty()
+                    ? o.get("name").getAsString() : e.getKey().substring(0, Math.min(8, e.getKey().length())));
+        }
+        return names;
+    }
+
+    // SHA-256 앞 8바이트면 충돌은 사실상 없고, UUID 원문(36자)보다 짧아 공지 URL도 줄어든다.
+    private static String banHash(String roomCode, String uuid) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest((roomCode + ":" + uuid).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            return java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(java.util.Arrays.copyOf(d, 8));
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e); // SHA-256은 모든 JVM에 필수로 들어 있다
+        }
     }
 
     public static synchronized boolean isIpBanned(String ip) {
@@ -560,15 +614,6 @@ public class P2PBanManager {
     /** 0이면 방이 닫혀 있거나 정원 게이트가 없다는 뜻. */
     public static int getRoomMaxPlayers() {
         return roomMaxPlayers;
-    }
-
-    /** Custom Room "관리 명령어" 옵션 — 켜지면 접속자도 kick/ban/whitelist를 쓸 수 있다. */
-    public static void setGuestManagementEnabled(boolean enabled) {
-        guestManagementEnabled = enabled;
-    }
-
-    public static boolean isGuestManagementEnabled() {
-        return guestManagementEnabled;
     }
 
     // -------------------------------------------------------------------------
@@ -714,7 +759,7 @@ public class P2PBanManager {
                                         StringArgumentType.getString(ctx, "player"),
                                         StringArgumentType.getString(ctx, "reason"))))));
 
-        // op <player> — 방장 전용(requireHost, guestManagementEnabled와 무관)
+        // op <player> — 방장 전용(requireHost)
         dispatcher.register(literal("op")
                 .requires(requireHost())
                 .then(argument("player", StringArgumentType.word())
@@ -734,27 +779,30 @@ public class P2PBanManager {
         // 이름이라, 위 .requires()가 addChild() 병합 과정에서 조용히 버려지고 바닐라 쪽
         // requirement가 그대로 남아있을 수 있다 — 실제로 트리에 남은 노드를 찾아
         // 강제로 덮어쓴다. CommandNodeAccessor 클래스 주석 참고.
-        forceRequirement(dispatcher, "ban");
-        forceRequirement(dispatcher, "ban-ip");
-        forceRequirement(dispatcher, "pardon");
-        forceRequirement(dispatcher, "pardon-ip");
-        forceRequirement(dispatcher, "kick");
-        forceRequirement(dispatcher, "op");
-        forceRequirement(dispatcher, "deop");
+        forceRequirement(dispatcher, "ban", requireAdminOrHost());
+        forceRequirement(dispatcher, "ban-ip", requireAdminOrHost());
+        forceRequirement(dispatcher, "pardon", requireAdminOrHost());
+        forceRequirement(dispatcher, "pardon-ip", requireAdminOrHost());
+        forceRequirement(dispatcher, "kick", requireAdminOrHost());
+        // 예전엔 op/deop도 위와 같은 조건으로 덮어써서, 방장 전용이라는 .requires(requireHost())가 무시됐다.
+        forceRequirement(dispatcher, "op", requireHost());
+        forceRequirement(dispatcher, "deop", requireHost());
     }
 
     //? if >=26.1 {
-    /*private static void forceRequirement(CommandDispatcher<CommandSourceStack> dispatcher, String name) {
+    /*private static void forceRequirement(CommandDispatcher<CommandSourceStack> dispatcher, String name,
+                                         Predicate<CommandSourceStack> requirement) {
         var node = dispatcher.getRoot().getChild(name);
         if (node instanceof kfc.udp.client.mixin.CommandNodeAccessor accessor) {
-            accessor.kfcudp$setRequirement(requireAdminOrHost());
+            accessor.kfcudp$setRequirement(requirement);
         }
     }
     *///?} else {
-    private static void forceRequirement(CommandDispatcher<ServerCommandSource> dispatcher, String name) {
+    private static void forceRequirement(CommandDispatcher<ServerCommandSource> dispatcher, String name,
+                                         Predicate<ServerCommandSource> requirement) {
         var node = dispatcher.getRoot().getChild(name);
         if (node instanceof kfc.udp.client.mixin.CommandNodeAccessor accessor) {
-            accessor.kfcudp$setRequirement(requireAdminOrHost());
+            accessor.kfcudp$setRequirement(requirement);
         }
     }
     //?}

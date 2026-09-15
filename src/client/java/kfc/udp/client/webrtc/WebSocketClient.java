@@ -7,6 +7,7 @@ import java.io.*;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -66,15 +67,26 @@ public abstract class WebSocketClient {
                     socksHost, httpProxyHost);
         }
         Socket s = new Socket(java.net.Proxy.NO_PROXY);
-        s.connect(new InetSocketAddress(host, port), CONNECT_TIMEOUT_MS);
+        InetSocketAddress addr = new InetSocketAddress(host, port); // DNS 조회는 RTT 측정에서 뺀다
+        long connectStart = System.nanoTime();
+        s.connect(addr, CONNECT_TIMEOUT_MS);
+        SignalingRtt.record((System.nanoTime() - connectStart) / 1_000_000); // TCP 연결 = 왕복 1회
+        path = requestPath(path);
         s.setTcpNoDelay(true);
-        if (tls) {
-            s = ((javax.net.ssl.SSLSocketFactory) javax.net.ssl.SSLSocketFactory.getDefault())
-                    .createSocket(s, host, port, true);
-        }
+        s.setSoTimeout(CONNECT_TIMEOUT_MS); // TLS·업그레이드 핸드셰이크 응답 한도
 
         boolean ok = false;
         try {
+            if (tls) {
+                javax.net.ssl.SSLSocket ssl = (javax.net.ssl.SSLSocket) ((javax.net.ssl.SSLSocketFactory)
+                        javax.net.ssl.SSLSocketFactory.getDefault()).createSocket(s, host, port, true);
+                // 기본 SSLSocket은 인증서 도메인을 확인하지 않는다 — 안 켜면 아무 도메인 인증서로 중간자 가능.
+                javax.net.ssl.SSLParameters params = ssl.getSSLParameters();
+                params.setEndpointIdentificationAlgorithm("HTTPS");
+                ssl.setSSLParameters(params);
+                ssl.startHandshake();
+                s = ssl;
+            }
             OutputStream o = new BufferedOutputStream(s.getOutputStream());
             InputStream  in = new BufferedInputStream(s.getInputStream());
 
@@ -93,8 +105,6 @@ public abstract class WebSocketClient {
             o.write(req.getBytes(StandardCharsets.ISO_8859_1));
             o.flush();
 
-            // 핸드셰이크 응답 대기 (한도 내)
-            s.setSoTimeout(CONNECT_TIMEOUT_MS);
             String statusLine = readHeaderLine(in);
             if (statusLine == null || !statusLine.startsWith("HTTP/1.1 101")) {
                 throw new IOException("handshake failed: " + statusLine);
@@ -118,6 +128,7 @@ public abstract class WebSocketClient {
             socket = s;
             out = o;
             ok = true;
+            if (readIdleTimeoutMs() > 0) SignalingRtt.track(this);
             LOG.info("[ws] connected to {}", url);
 
             final InputStream fin = in;
@@ -167,8 +178,10 @@ public abstract class WebSocketClient {
                     break;
                 } else if (opcode == 0x9) {     // PING → PONG
                     sendFrame(0xA, payload);
-                } else if (opcode == 0xA) {     // PONG
-                    // 무시
+                } else if (opcode == 0xA) {     // PONG — 우리가 보낸 ping(sendPing)의 응답이면 RTT 표본
+                    if (payload.length == Long.BYTES) {
+                        SignalingRtt.record((System.nanoTime() - ByteBuffer.wrap(payload).getLong()) / 1_000_000);
+                    }
                 } else if (opcode == 0x1 || opcode == 0x2 || opcode == 0x0) {
                     fragment.write(payload);
                     if (fin) {
@@ -234,6 +247,13 @@ public abstract class WebSocketClient {
         }
     }
 
+    /** 보낸 시각을 실은 ping — 서버가 같은 내용으로 pong을 돌려준다(SignalingRtt 참고). */
+    void sendPing() {
+        try {
+            sendFrame(0x9, ByteBuffer.allocate(Long.BYTES).putLong(System.nanoTime()).array());
+        } catch (IOException ignored) {}
+    }
+
     /** 클라이언트 프레임은 반드시 마스킹 (RFC 6455 §5.3) */
     private void sendFrame(int opcode, byte[] payload) throws IOException {
         OutputStream o = out;
@@ -274,6 +294,7 @@ public abstract class WebSocketClient {
     }
 
     private void closeSocket() {
+        SignalingRtt.untrack(this);
         Socket s = socket;
         socket = null;
         out = null;
@@ -310,6 +331,12 @@ public abstract class WebSocketClient {
      */
     protected int readIdleTimeoutMs() {
         return 0;
+    }
+
+    /** 업그레이드 요청 경로 — TCP 연결(=RTT 표본 기록) 직후에 정해진다. 경로에 RTT를 실어야 하는
+     * 방 공지(PublicRoomAnnouncer)가 이 연결의 표본까지 반영하려고 덮어쓴다. */
+    protected String requestPath(String path) {
+        return path;
     }
 
     public abstract void onConnected();

@@ -81,7 +81,7 @@ public class WebRtcClient {
 
     private AudioDeviceModule       audioModule;
     private PeerConnectionFactory   factory;
-    private RTCPeerConnection       peerConnection;
+    private volatile RTCPeerConnection peerConnection;
     private volatile RTCDataChannel dataChannel;
     private ServerSocketChannel     serverChannel;
     private volatile SocketChannel  mcChannel;
@@ -94,7 +94,12 @@ public class WebRtcClient {
     private final CountDownLatch readyLatch       = new CountDownLatch(1);
 
     private volatile String             pendingAnswer = null;
+    /** answer(원격 설명)가 적용되기 전에 온 호스트 ICE 후보 — libwebrtc는 원격 설명 없이
+     * addIceCandidate하면 후보를 버린다(호스트의 HostSession.queuedIce와 같은 이유). 예전엔
+     * 바로 넣어서 그 후보가 사라지면 직결(홀펀칭)이 실패하고 중계로 붙을 수 있었다. */
     private final List<RTCIceCandidate> pendingIce    = new ArrayList<>();
+    /** pendingIce 락으로 보호. */
+    private boolean                     remoteAnswerSet = false;
 
     private WebSocketClient pairWs;      // SDP/ICE 교환용 (roomId-sid)
     private WebSocketClient announceWs;  // 조인 알림용 (roomId 로비)
@@ -438,8 +443,15 @@ public class WebRtcClient {
             String mid = VillasMsg.field(cand, "mid");
             if (spd == null) return;
             RTCIceCandidate ic = new RTCIceCandidate(mid != null ? mid : "0", 0, spd);
-            if (peerConnection != null) peerConnection.addIceCandidate(ic);
-            else synchronized (pendingIce) { pendingIce.add(ic); }
+            RTCPeerConnection pc;
+            synchronized (pendingIce) {
+                pc = peerConnection;
+                if (pc == null || !remoteAnswerSet) {
+                    pendingIce.add(ic);
+                    return;
+                }
+            }
+            pc.addIceCandidate(ic);
         }
     }
 
@@ -543,7 +555,10 @@ public class WebRtcClient {
     private boolean attemptConnection(boolean allowRelay, long timeoutMs) throws InterruptedException {
         // 이전 시도에서 남은 버퍼링된 answer/candidate는 이번 시도의 SDP와 안 맞으므로 버린다.
         pendingAnswer = null;
-        synchronized (pendingIce) { pendingIce.clear(); }
+        synchronized (pendingIce) {
+            pendingIce.clear();
+            remoteAnswerSet = false;
+        }
 
         CountDownLatch settled = new CountDownLatch(1);
         AtomicBoolean succeeded = new AtomicBoolean(false);
@@ -599,11 +614,6 @@ public class WebRtcClient {
         dcInit.ordered = true;
         dataChannel = peerConnection.createDataChannel("minecraft", dcInit);
         setupDataChannel(dataChannel, settled, succeeded);
-
-        synchronized (pendingIce) {
-            for (RTCIceCandidate ic : pendingIce) peerConnection.addIceCandidate(ic);
-            pendingIce.clear();
-        }
     }
 
     /** 실패/타임아웃한 시도의 PeerConnection/DataChannel만 정리한다 — 시그널링은 그대로 둔다. */
@@ -625,10 +635,14 @@ public class WebRtcClient {
     }
 
     private void createOffer() {
-        peerConnection.createOffer(new RTCOfferOptions(), new CreateSessionDescriptionObserver() {
+        // 콜백은 네이티브 스레드에서 늦게 온다 — 그새 teardownPeerConnection()이 필드를 비워도
+        // NPE 없이, 이번 시도의 pc로만 진행한다.
+        RTCPeerConnection pc = peerConnection;
+        pc.createOffer(new RTCOfferOptions(), new CreateSessionDescriptionObserver() {
             @Override
             public void onSuccess(RTCSessionDescription desc) {
-                peerConnection.setLocalDescription(desc, new SetSessionDescriptionObserver() {
+                if (pc != peerConnection) return; // 이미 버려진 시도
+                pc.setLocalDescription(desc, new SetSessionDescriptionObserver() {
                     @Override
                     public void onSuccess() {
                         sendPair(VillasMsg.description("offer", desc.sdp));
@@ -647,10 +661,22 @@ public class WebRtcClient {
     }
 
     private void applyAnswer(String sdp) {
-        peerConnection.setRemoteDescription(
+        RTCPeerConnection pc = peerConnection;
+        if (pc == null) return;
+        pc.setRemoteDescription(
                 new RTCSessionDescription(RTCSdpType.ANSWER, sdp),
                 new SetSessionDescriptionObserver() {
-                    @Override public void onSuccess() {}
+                    @Override public void onSuccess() {
+                        // 원격 설명이 생긴 뒤에야 후보를 넣을 수 있다 — 모아 둔 걸 이제 흘려보낸다.
+                        List<RTCIceCandidate> toApply;
+                        synchronized (pendingIce) {
+                            if (pc != peerConnection) return;
+                            remoteAnswerSet = true;
+                            toApply = new ArrayList<>(pendingIce);
+                            pendingIce.clear();
+                        }
+                        for (RTCIceCandidate c : toApply) pc.addIceCandidate(c);
+                    }
                     @Override public void onFailure(String e) {
                         LOG.warn("[webrtc] setRemoteDescription failed: {}", e);
                     }

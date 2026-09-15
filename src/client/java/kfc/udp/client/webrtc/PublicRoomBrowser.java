@@ -43,10 +43,16 @@ public final class PublicRoomBrowser {
 
     /** 공개 방 하나의 표시 정보. channel/version/차단 필터링은 여기서 하지 않는다 —
      * 클래스 주석 참고, RoomListScreen이 매 tick 다시 걸러서 즉시 반응하게 한다.
-     * hostUuid/blockedUuids는 개인 차단(=밴) 기능용(P2PBanManager 클래스 주석 참고). */
+     * hostUuid/bannedHashes는 개인 차단(=밴) 기능용(P2PBanManager 클래스 주석 참고). */
     public record RoomEntry(String code, String title, String hostNickname, String channel,
                              int currentPlayers, int maxPlayers, String version, String hostUuid,
-                             String blockedUuids) {}
+                             String bannedHashes, long hostRttMs, long openedAtMs) {
+        /** 내 RTT + 방장 RTT(둘 다 시그널링 서버까지), 아직 모르면 -1 — SignalingRtt 클래스 주석 참고. */
+        public long estimatedPingMs() {
+            long mine = SignalingRtt.currentMs();
+            return mine < 0 || hostRttMs < 0 ? -1 : mine + hostRttMs;
+        }
+    }
 
     private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-public");
 
@@ -74,15 +80,12 @@ public final class PublicRoomBrowser {
     /**
      * 접속 시작 — 모든 샤드 lobby에 백그라운드로 동시 접속하며 즉시 반환.
      * <p>
-     * 이미 시작된 상태에서 다시 불려도 안전하다(먼저 {@link #stop()}) — RoomListScreen의
-     * {@code init()}은 창 크기 변경 등으로 화면이 안 닫힌 채 다시 불릴 수 있는데,
-     * 예전엔 그때마다 이전 소켓들을 안 끊고 새로 4개씩 더 열어서 연결이 계속
-     * 쌓였다(=가끔 시그널링 서버가 죽는 원인 중 하나, 목록도 여러 연결이 서로 다른
-     * 타이밍에 갱신하며 뒤섞임).
+     * 이미 돌고 있으면 아무것도 안 한다 — RoomListScreen의 {@code init()}은 창 크기 변경으로
+     * 화면이 안 닫힌 채 다시 불린다. 아주 예전엔 그때마다 소켓을 4개씩 더 열어 쌓였고, 그다음엔
+     * 매번 끊고 다시 붙어서 목록이 잠깐 비고 서버에도 퇴장·입장 브로드캐스트가 몰렸다.
      */
     public void start() {
-        stop();
-        running.set(true);
+        if (!running.compareAndSet(false, true)) return;
         for (int i = 0; i < P2PConfig.PUBLIC_ROOM_SHARD_COUNT; i++) {
             backoffMs.set(i, INITIAL_BACKOFF_MS);
             connectShard(i);
@@ -102,8 +105,33 @@ public final class PublicRoomBrowser {
     /** 지금 이 순간 열려 있는 공개 방 목록 (모든 샤드를 합친 것, 관전 세션 자신은 제외).
      * 목록이 바뀔 때만 새 리스트로 교체되므로 참조가 같으면 내용도 같다. */
     public List<RoomEntry> getCurrentRooms() {
-        return currentRooms.get();
+        List<RoomEntry> real = currentRooms.get();
+        if (FAKE_ROOMS <= 0) return real;
+        // 참조가 같으면 내용도 같다는 약속을 지키려고, 실제 목록·채널이 그대로면 같은 합본을 돌려준다.
+        String channel = P2PConfig.getChannel();
+        if (real != fakeSource || !channel.equals(fakeChannel)) {
+            List<RoomEntry> all = new ArrayList<>(real);
+            for (int i = 0; i < FAKE_ROOMS; i++) {
+                String title = FAKE_TITLES[i % FAKE_TITLES.length];
+                all.add(new RoomEntry(String.format("FAKE%06d", i), title, "Dummy" + i, channel,
+                        1 + i % 8, 8, P2PConfig.MC_VERSION, "00000000-0000-0000-0000-" + String.format("%012d", i),
+                        "", new long[]{15, 90, 200, 450, 800, 1500, -1}[i % 7], i));
+            }
+            fakeRooms = all;
+            fakeSource = real;
+            fakeChannel = channel;
+        }
+        return fakeRooms;
     }
+
+    /** 디버그: 방 목록 레이아웃 확인용 가짜 방 수(-Dkfcudp.debug.fakeRooms=84). 누르면 없는 코드라 접속은 실패한다. */
+    private static final int FAKE_ROOMS = Integer.getInteger("kfcudp.debug.fakeRooms", 0);
+    /** 폭 제한 끝까지 찬 제목(한글 12자·영문 18자)과 짧은 제목을 섞는다. */
+    private static final String[] FAKE_TITLES = {
+            "야생 같이해요", "가나다라마바사아자차카타", "Survival SMP", "ABCDEFGHIJKLMNOPQR", "건축", "Room - Dummy"};
+    private List<RoomEntry> fakeRooms = List.of();
+    private List<RoomEntry> fakeSource;
+    private String fakeChannel;
 
     private void connectShard(int shard) {
         if (!running.get()) return;
@@ -122,7 +150,12 @@ public final class PublicRoomBrowser {
                 return LIVENESS_TIMEOUT_MS;
             }
             @Override public void onDisconnected() {
-                if (shardWs.get(shard) == this) scheduleReconnect(shard);
+                if (shardWs.get(shard) != this) return;
+                // 끊긴 동안 이 샤드 목록은 더는 안 갱신된다 — 그대로 두면 그 사이 닫힌 방이 계속
+                // 보이고 눌러도 접속이 안 된다. 다시 붙으면 서버가 최신 목록을 곧장 보낸다.
+                shardRooms.set(shard, null);
+                recombine();
+                scheduleReconnect(shard);
             }
         };
         WebSocketClient prev = shardWs.getAndSet(shard, client);
@@ -167,9 +200,20 @@ public final class PublicRoomBrowser {
                 current = 0;
                 max = 0;
             }
-            String version = decoded[6], hostUuid = decoded[7], blockedUuids = decoded[8];
+            long hostRtt, openedAt;
+            try {
+                hostRtt = Long.parseLong(decoded[9]);
+            } catch (NumberFormatException e) {
+                hostRtt = -1;
+            }
+            try {
+                openedAt = Long.parseLong(decoded[10]);
+            } catch (NumberFormatException e) {
+                openedAt = Long.MAX_VALUE; // 알 수 없으면 맨 뒤
+            }
+            String version = decoded[6], hostUuid = decoded[7], bannedHashes = decoded[8];
             rooms.add(new RoomEntry(decoded[0], decoded[1], decoded[2], channel, current, max,
-                    version, hostUuid, blockedUuids));
+                    version, hostUuid, bannedHashes, hostRtt, openedAt));
         }
         this.shardRooms.set(shard, rooms);
         this.recombine();
@@ -181,14 +225,18 @@ public final class PublicRoomBrowser {
      * 매번 랜덤이라(Go 언어 자체의 map 보장 사항), 정렬 없이 그대로 이어붙이면
      * 방 자체는 그대로인데도 브로드캐스트가 올 때마다(다른 관전자가 들고나는 것만
      * 으로도 발생) 목록 순서가 바뀌어 화면에서 방들이 이유 없이 뒤섞여 보였다.
+     * <p>
+     * 샤드마다 수신 스레드가 달라 동시에 불린다 — 직렬화하지 않으면 늦게 끝난 쪽이 다른
+     * 샤드의 더 새로운 목록을 빠뜨린 합본으로 덮어쓸 수 있다.
      */
-    private void recombine() {
+    private synchronized void recombine() {
         List<RoomEntry> all = new ArrayList<>();
         for (int i = 0; i < this.shardRooms.length(); i++) {
             List<RoomEntry> r = this.shardRooms.get(i);
             if (r != null) all.addAll(r);
         }
-        all.sort(Comparator.comparing(RoomEntry::code));
+        // 연 시각 순(오래된 방이 앞) — 새 방은 뒤에 붙어 이미 보던 방들을 밀지 않는다. 같은 시각이면 코드 순.
+        all.sort(Comparator.comparingLong(RoomEntry::openedAtMs).thenComparing(RoomEntry::code));
         currentRooms.set(all);
     }
 }

@@ -46,6 +46,8 @@ public class CustomRoomScreen extends Screen {
     private static final int APPLY_BUTTON_Y = 10;
     private static final int APPLY_BUTTON_H = 20;
     private static final int APPLY_BUTTON_W = 100;
+    /** "방 닫기 🚫" 버튼 폭 — 라벨(약 45px)에 양옆 여백만 남긴다. */
+    private static final int CLOSE_ROOM_W = 64;
     private static final int TITLE_Y = APPLY_BUTTON_Y + (APPLY_BUTTON_H - 9) / 2;
     private static final int ROW1_Y  = 55;
     private static final int DIVIDER1_Y = ROW1_Y + 28;
@@ -74,7 +76,6 @@ public class CustomRoomScreen extends Screen {
     private static final Component GAME_MODE_TEXT     = Component.translatable("instant-p2p.custom_room.game_mode");
     private static final Component MAX_PLAYERS_TEXT   = Component.translatable("instant-p2p.custom_room.max_players", MAX_PLAYERS);
     private static final Component ALLOW_COMMANDS_TEXT = Component.translatable("instant-p2p.custom_room.allow_commands");
-    private static final Component MANAGE_COMMANDS_TEXT = Component.translatable("instant-p2p.custom_room.manage_commands");
     private static final Component FORCE_RELAY_TEXT   = Component.translatable("instant-p2p.force_relay");
     private static final Component START_TEXT         = Component.translatable("instant-p2p.custom_room.start");
     private static final Component RESTART_TEXT       = Component.translatable("instant-p2p.custom_room.restart");
@@ -92,7 +93,6 @@ public class CustomRoomScreen extends Screen {
     private static final Text GAME_MODE_TEXT     = Text.translatable("instant-p2p.custom_room.game_mode");
     private static final Text MAX_PLAYERS_TEXT   = Text.translatable("instant-p2p.custom_room.max_players", MAX_PLAYERS);
     private static final Text ALLOW_COMMANDS_TEXT = Text.translatable("instant-p2p.custom_room.allow_commands");
-    private static final Text MANAGE_COMMANDS_TEXT = Text.translatable("instant-p2p.custom_room.manage_commands");
     private static final Text FORCE_RELAY_TEXT   = Text.translatable("instant-p2p.force_relay");
     private static final Text START_TEXT         = Text.translatable("instant-p2p.custom_room.start");
     private static final Text RESTART_TEXT       = Text.translatable("instant-p2p.custom_room.restart");
@@ -123,16 +123,15 @@ public class CustomRoomScreen extends Screen {
     //?}
     private int maxPlayers;
     private boolean allowCheats;
-    private boolean manageCommands;
     private boolean publicRoom;
     /** 다른 방 옵션과 마찬가지로 체크박스 자체는 그냥 이 필드만 바꾸고, 실제
      * {@link kfc.udp.client.webrtc.P2PConfig#setRelayOnly}는 적용 버튼을 눌러야
      * (호스팅 전이면 즉시) 반영된다 — 예전엔 이 옵션만 체크하자마자 바로 나갔다. */
     private boolean forceRelay;
-    /** 다른 방 옵션과 마찬가지로 입력란 자체는 이 필드만 바꾸고, 호스팅 중이면
-     * 적용 버튼을 눌러야 {@link kfc.udp.client.webrtc.P2PConfig#setChannel}에
+    /** 채널 1·2 — 다른 방 옵션과 마찬가지로 입력란 자체는 이 필드만 바꾸고, 호스팅 중이면
+     * 적용 버튼을 눌러야 {@link kfc.udp.client.webrtc.P2PConfig#setChannelPart}에
      * 실제로 반영된다(호스팅 전이면 즉시 — forceRelay와 동일한 패턴). */
-    private String channel;
+    private String channel1, channel2;
     private int checkboxScrollIndex = 0;
     /** init()이 끝나기 전까진 위젯들의 초기값 세팅 자체가 "값이 바뀜" 콜백을 트리거해도
      * 무시한다 — 안 그러면 화면을 열기만 해도 적용 버튼이 매번 활성 상태로 뜬다. */
@@ -145,14 +144,12 @@ public class CustomRoomScreen extends Screen {
     //? if >=26.1 {
     /*@Nullable private EditBox maxPlayersField;
     @Nullable private EditBox titleField;
-    @Nullable private EditBox channelField;
     @Nullable private Button    startButton;
     @Nullable private Button    settingsApplyButton;
     private final List<Checkbox> optionCheckboxes = new ArrayList<>();
     *///?} else {
     @Nullable private TextFieldWidget maxPlayersField;
     @Nullable private TextFieldWidget titleField;
-    @Nullable private TextFieldWidget channelField;
     @Nullable private ButtonWidget    startButton;
     @Nullable private ButtonWidget    settingsApplyButton;
     private final List<CheckboxWidget> optionCheckboxes = new ArrayList<>();
@@ -162,13 +159,13 @@ public class CustomRoomScreen extends Screen {
         super(KfcudpClient.isRoomActive() ? EDIT_TITLE_TEXT : TITLE_TEXT);
         this.parent = parent;
         this.forceRelay = kfc.udp.client.webrtc.P2PConfig.isRelayOnly();
-        this.channel = kfc.udp.client.webrtc.P2PConfig.getChannel();
+        this.channel1 = kfc.udp.client.webrtc.P2PConfig.getChannelPart(0);
+        this.channel2 = kfc.udp.client.webrtc.P2PConfig.getChannelPart(1);
         if (this.editingActiveRoom) {
             // 이미 켜진 방 — 지금 실제로 적용돼 있는 값을 그대로 보여준다.
             this.gameMode = KfcudpClient.getActiveGameMode();
             this.maxPlayers = KfcudpClient.getActiveMaxPlayers();
             this.allowCheats = KfcudpClient.isActiveAllowCheats();
-            this.manageCommands = KfcudpClient.isActiveManageCommands();
             this.publicRoom = KfcudpClient.isActivePublicRoom();
         } else {
             //? if >=26.1 {
@@ -178,7 +175,6 @@ public class CustomRoomScreen extends Screen {
             //?}
             this.maxPlayers = 8;
             this.allowCheats = false;
-            this.manageCommands = false;
             this.publicRoom = false;
         }
     }
@@ -227,24 +223,44 @@ public class CustomRoomScreen extends Screen {
         this.startButton = startBuilder.build();
         this.addRenderableWidget(this.startButton);
 
+        // 방 닫기 — 호스팅 중에만, 화면 제목("방 설정 변경") 바로 아래 가운데. 🚫는 빨간색(1.21~ 게임 안에서 표시 확인).
+        if (this.editingActiveRoom) {
+            this.addRenderableWidget(Button.builder(
+                            Component.translatable("instant-p2p.pause.close_room").append(" ")
+                                    .append(Component.literal("🚫").withStyle(ChatFormatting.RED)),
+                            b -> KfcudpClient.closeRoomFromMenu())
+                    .bounds(cx - CLOSE_ROOM_W / 2, APPLY_BUTTON_Y + APPLY_BUTTON_H + 2, CLOSE_ROOM_W, APPLY_BUTTON_H)
+                    .build());
+        }
+
         // 채널 입력란 — 위 재생성/시작 버튼(우측 상단 자리)과 중심 기준 좌우반전된
         // 위치(좌측 상단). RoomListScreen과 똑같은 좌표라 호스트/접속자 화면 어디서든
         // 같은 자리에 뜬다. 다른 방 옵션과 마찬가지로 호스팅 중이면(editingActiveRoom)
         // 적용 버튼을 눌러야 반영되고, 아니면(호스팅 전) 즉시 반영된다 — forceRelay와
         // 동일한 패턴.
-        this.channelField = new EditBox(this.font, cx - 155, APPLY_BUTTON_Y, APPLY_BUTTON_W, APPLY_BUTTON_H, CHANNEL_TEXT);
-        this.channelField.setMaxLength(32);
-        this.channelField.setValue(this.channel);
-        this.channelField.setTooltip(Tooltip.create(CHANNEL_TEXT));
-        this.channelField.setResponder(text -> {
-            this.channel = text;
-            if (this.editingActiveRoom) {
-                this.refreshSettingsApplyButton();
-            } else {
-                kfc.udp.client.webrtc.P2PConfig.setChannel(text);
-            }
-        });
-        this.addRenderableWidget(this.channelField);
+        // 원래 한 칸 자리를 채널 1(위)·2(아래) 두 칸으로 나눈다 — 좌표는 RoomListScreen과 같다.
+        for (int part = 0; part < 2; part++) {
+            int p = part;
+            EditBox field = new EditBox(this.font, cx - 155, RoomListScreen.channelFieldY(part), APPLY_BUTTON_W,
+                    RoomListScreen.CHANNEL_PART_H, CHANNEL_TEXT);
+            field.setMaxLength(RoomListScreen.CHANNEL_MAX_CHARS);
+            field.setValue(part == 0 ? this.channel1 : this.channel2);
+            field.setTooltip(Tooltip.create(CHANNEL_TEXT));
+            field.setResponder(text -> {
+                if (this.font.width(text) > RoomListScreen.CHANNEL_MAX_W) { // 폭 한도 — 잘라 다시 넣으면 이 응답이 한 번 더 불린다
+                    field.setValue(this.font.plainSubstrByWidth(text, RoomListScreen.CHANNEL_MAX_W));
+                    return;
+                }
+                if (p == 0) this.channel1 = text;
+                else this.channel2 = text;
+                if (this.editingActiveRoom) {
+                    this.refreshSettingsApplyButton();
+                } else {
+                    kfc.udp.client.webrtc.P2PConfig.setChannelPart(p, text);
+                }
+            });
+            this.addRenderableWidget(field);
+        }
 
         // 방 옵션 전체 통합 적용 버튼 — 게임모드/정원/공개 허용/제목/치트/관리 명령어를
         // 한 번에 반영한다(onApplyButtonClicked/refreshSettingsApplyButton 참고).
@@ -273,7 +289,7 @@ public class CustomRoomScreen extends Screen {
         int titleFieldX = cx - 60;
         int titleFieldW = (cx + 155) - titleFieldX;
         this.titleField = new EditBox(this.font, titleFieldX, ROW3_Y, titleFieldW, 20, TITLE_PLACEHOLDER_TEXT);
-        this.titleField.setMaxLength(32);
+        this.titleField.setMaxLength(RoomListScreen.MAX_TITLE_LENGTH);
         this.titleField.setHint(TITLE_PLACEHOLDER_TEXT);
         if (this.editingActiveRoom) {
             String activeTitle = KfcudpClient.getActiveTitle();
@@ -281,7 +297,14 @@ public class CustomRoomScreen extends Screen {
         }
         this.titleField.visible = this.publicRoom;
         this.addRenderableWidget(this.titleField);
-        this.titleField.setResponder(text -> this.refreshSettingsApplyButton());
+        this.titleField.setResponder(text -> {
+            // 방 목록 칸에 들어가는 폭까지만 — 넘치면 잘라 다시 넣는다(다시 불린 응답은 폭 안이라 여기서 끝).
+            if (this.font.width(text) > RoomListScreen.TITLE_TEXT_W) {
+                this.titleField.setValue(this.font.plainSubstrByWidth(text, RoomListScreen.TITLE_TEXT_W));
+                return;
+            }
+            this.refreshSettingsApplyButton();
+        });
 
         this.addRenderableWidget(
                 Checkbox.builder(PUBLIC_TEXT, this.font)
@@ -295,8 +318,8 @@ public class CustomRoomScreen extends Screen {
                         .build()
         );
 
-        // 옵션 체크박스 — 치트/관리 명령어/중계 강제. 치트와 관리 명령어는 서로
-        // 완전히 독립(P2PBanManager 참고). 목록이 늘어날 걸 대비해 스크롤 영역에
+        // 옵션 체크박스 — 치트/중계 강제. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은 사람만 쓴다
+        // (P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
         // 담는다(repositionCheckboxes/mouseScrolled 참고).
         this.optionCheckboxes.clear();
         this.optionCheckboxes.add(
@@ -304,13 +327,6 @@ public class CustomRoomScreen extends Screen {
                         .pos(cx - 155, LIST_Y)
                         .selected(this.allowCheats)
                         .onValueChange((cb, value) -> { this.allowCheats = value; this.refreshSettingsApplyButton(); })
-                        .build()
-        );
-        this.optionCheckboxes.add(
-                Checkbox.builder(MANAGE_COMMANDS_TEXT, this.font)
-                        .pos(cx - 155, LIST_Y)
-                        .selected(this.manageCommands)
-                        .onValueChange((cb, value) -> { this.manageCommands = value; this.refreshSettingsApplyButton(); })
                         .build()
         );
         this.optionCheckboxes.add(
@@ -379,24 +395,44 @@ public class CustomRoomScreen extends Screen {
         this.startButton = startBuilder.build();
         this.addDrawableChild(this.startButton);
 
+        // 방 닫기 — 호스팅 중에만, 화면 제목("방 설정 변경") 바로 아래 가운데. 🚫는 빨간색(1.21~ 게임 안에서 표시 확인).
+        if (this.editingActiveRoom) {
+            this.addDrawableChild(ButtonWidget.builder(
+                            Text.translatable("instant-p2p.pause.close_room").append(" ")
+                                    .append(Text.literal("🚫").formatted(Formatting.RED)),
+                            b -> KfcudpClient.closeRoomFromMenu())
+                    .dimensions(cx - CLOSE_ROOM_W / 2, APPLY_BUTTON_Y + APPLY_BUTTON_H + 2, CLOSE_ROOM_W, APPLY_BUTTON_H)
+                    .build());
+        }
+
         // 채널 입력란 — 위 재생성/시작 버튼(우측 상단 자리)과 중심 기준 좌우반전된
         // 위치(좌측 상단). RoomListScreen과 똑같은 좌표라 호스트/접속자 화면 어디서든
         // 같은 자리에 뜬다. 다른 방 옵션과 마찬가지로 호스팅 중이면(editingActiveRoom)
         // 적용 버튼을 눌러야 반영되고, 아니면(호스팅 전) 즉시 반영된다 — forceRelay와
         // 동일한 패턴.
-        this.channelField = new TextFieldWidget(this.textRenderer, cx - 155, APPLY_BUTTON_Y, APPLY_BUTTON_W, APPLY_BUTTON_H, CHANNEL_TEXT);
-        this.channelField.setMaxLength(32);
-        this.channelField.setText(this.channel);
-        this.channelField.setTooltip(Tooltip.of(CHANNEL_TEXT));
-        this.channelField.setChangedListener(text -> {
-            this.channel = text;
-            if (this.editingActiveRoom) {
-                this.refreshSettingsApplyButton();
-            } else {
-                kfc.udp.client.webrtc.P2PConfig.setChannel(text);
-            }
-        });
-        this.addDrawableChild(this.channelField);
+        // 원래 한 칸 자리를 채널 1(위)·2(아래) 두 칸으로 나눈다 — 좌표는 RoomListScreen과 같다.
+        for (int part = 0; part < 2; part++) {
+            int p = part;
+            TextFieldWidget field = new TextFieldWidget(this.textRenderer, cx - 155, RoomListScreen.channelFieldY(part), APPLY_BUTTON_W,
+                    RoomListScreen.CHANNEL_PART_H, CHANNEL_TEXT);
+            field.setMaxLength(RoomListScreen.CHANNEL_MAX_CHARS);
+            field.setText(part == 0 ? this.channel1 : this.channel2);
+            field.setTooltip(Tooltip.of(CHANNEL_TEXT));
+            field.setChangedListener(text -> {
+                if (this.textRenderer.getWidth(text) > RoomListScreen.CHANNEL_MAX_W) { // 폭 한도 — 잘라 다시 넣으면 이 응답이 한 번 더 불린다
+                    field.setText(this.textRenderer.trimToWidth(text, RoomListScreen.CHANNEL_MAX_W));
+                    return;
+                }
+                if (p == 0) this.channel1 = text;
+                else this.channel2 = text;
+                if (this.editingActiveRoom) {
+                    this.refreshSettingsApplyButton();
+                } else {
+                    kfc.udp.client.webrtc.P2PConfig.setChannelPart(p, text);
+                }
+            });
+            this.addDrawableChild(field);
+        }
 
         // 방 옵션 전체 통합 적용 버튼 — 게임모드/정원/공개 허용/제목/치트/관리 명령어를
         // 한 번에 반영한다(onApplyButtonClicked/refreshSettingsApplyButton 참고).
@@ -425,7 +461,7 @@ public class CustomRoomScreen extends Screen {
         int titleFieldX = cx - 60;
         int titleFieldW = (cx + 155) - titleFieldX;
         this.titleField = new TextFieldWidget(this.textRenderer, titleFieldX, ROW3_Y, titleFieldW, 20, TITLE_PLACEHOLDER_TEXT);
-        this.titleField.setMaxLength(32);
+        this.titleField.setMaxLength(RoomListScreen.MAX_TITLE_LENGTH);
         this.titleField.setPlaceholder(TITLE_PLACEHOLDER_TEXT);
         if (this.editingActiveRoom) {
             String activeTitle = KfcudpClient.getActiveTitle();
@@ -433,7 +469,14 @@ public class CustomRoomScreen extends Screen {
         }
         this.titleField.visible = this.publicRoom;
         this.addDrawableChild(this.titleField);
-        this.titleField.setChangedListener(text -> this.refreshSettingsApplyButton());
+        this.titleField.setChangedListener(text -> {
+            // 방 목록 칸에 들어가는 폭까지만 — 넘치면 잘라 다시 넣는다(다시 불린 응답은 폭 안이라 여기서 끝).
+            if (this.textRenderer.getWidth(text) > RoomListScreen.TITLE_TEXT_W) {
+                this.titleField.setText(this.textRenderer.trimToWidth(text, RoomListScreen.TITLE_TEXT_W));
+                return;
+            }
+            this.refreshSettingsApplyButton();
+        });
 
         this.addDrawableChild(
                 CheckboxWidget.builder(PUBLIC_TEXT, this.textRenderer)
@@ -447,8 +490,8 @@ public class CustomRoomScreen extends Screen {
                         .build()
         );
 
-        // 옵션 체크박스 — 치트/관리 명령어/중계 강제. 치트와 관리 명령어는 서로
-        // 완전히 독립(P2PBanManager 참고). 목록이 늘어날 걸 대비해 스크롤 영역에
+        // 옵션 체크박스 — 치트/중계 강제. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은 사람만 쓴다
+        // (P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
         // 담는다(repositionCheckboxes/mouseScrolled 참고).
         this.optionCheckboxes.clear();
         this.optionCheckboxes.add(
@@ -456,13 +499,6 @@ public class CustomRoomScreen extends Screen {
                         .pos(cx - 155, LIST_Y)
                         .checked(this.allowCheats)
                         .callback((cb, value) -> { this.allowCheats = value; this.refreshSettingsApplyButton(); })
-                        .build()
-        );
-        this.optionCheckboxes.add(
-                CheckboxWidget.builder(MANAGE_COMMANDS_TEXT, this.textRenderer)
-                        .pos(cx - 155, LIST_Y)
-                        .checked(this.manageCommands)
-                        .callback((cb, value) -> { this.manageCommands = value; this.refreshSettingsApplyButton(); })
                         .build()
         );
         this.optionCheckboxes.add(
@@ -532,24 +568,44 @@ public class CustomRoomScreen extends Screen {
         this.startButton = startBuilder.build();
         this.addDrawableChild(this.startButton);
 
+        // 방 닫기 — 호스팅 중에만, 화면 제목("방 설정 변경") 바로 아래 가운데. 🚫는 빨간색(1.21~ 게임 안에서 표시 확인).
+        if (this.editingActiveRoom) {
+            this.addDrawableChild(ButtonWidget.builder(
+                            Text.translatable("instant-p2p.pause.close_room").append(" ")
+                                    .append(Text.literal("🚫").formatted(Formatting.RED)),
+                            b -> KfcudpClient.closeRoomFromMenu())
+                    .dimensions(cx - CLOSE_ROOM_W / 2, APPLY_BUTTON_Y + APPLY_BUTTON_H + 2, CLOSE_ROOM_W, APPLY_BUTTON_H)
+                    .build());
+        }
+
         // 채널 입력란 — 위 재생성/시작 버튼(우측 상단 자리)과 중심 기준 좌우반전된
         // 위치(좌측 상단). RoomListScreen과 똑같은 좌표라 호스트/접속자 화면 어디서든
         // 같은 자리에 뜬다. 다른 방 옵션과 마찬가지로 호스팅 중이면(editingActiveRoom)
         // 적용 버튼을 눌러야 반영되고, 아니면(호스팅 전) 즉시 반영된다 — forceRelay와
         // 동일한 패턴.
-        this.channelField = new TextFieldWidget(this.textRenderer, cx - 155, APPLY_BUTTON_Y, APPLY_BUTTON_W, APPLY_BUTTON_H, CHANNEL_TEXT);
-        this.channelField.setMaxLength(32);
-        this.channelField.setText(this.channel);
-        this.channelField.setTooltip(Tooltip.of(CHANNEL_TEXT));
-        this.channelField.setChangedListener(text -> {
-            this.channel = text;
-            if (this.editingActiveRoom) {
-                this.refreshSettingsApplyButton();
-            } else {
-                kfc.udp.client.webrtc.P2PConfig.setChannel(text);
-            }
-        });
-        this.addDrawableChild(this.channelField);
+        // 원래 한 칸 자리를 채널 1(위)·2(아래) 두 칸으로 나눈다 — 좌표는 RoomListScreen과 같다.
+        for (int part = 0; part < 2; part++) {
+            int p = part;
+            TextFieldWidget field = new TextFieldWidget(this.textRenderer, cx - 155, RoomListScreen.channelFieldY(part), APPLY_BUTTON_W,
+                    RoomListScreen.CHANNEL_PART_H, CHANNEL_TEXT);
+            field.setMaxLength(RoomListScreen.CHANNEL_MAX_CHARS);
+            field.setText(part == 0 ? this.channel1 : this.channel2);
+            field.setTooltip(Tooltip.of(CHANNEL_TEXT));
+            field.setChangedListener(text -> {
+                if (this.textRenderer.getWidth(text) > RoomListScreen.CHANNEL_MAX_W) { // 폭 한도 — 잘라 다시 넣으면 이 응답이 한 번 더 불린다
+                    field.setText(this.textRenderer.trimToWidth(text, RoomListScreen.CHANNEL_MAX_W));
+                    return;
+                }
+                if (p == 0) this.channel1 = text;
+                else this.channel2 = text;
+                if (this.editingActiveRoom) {
+                    this.refreshSettingsApplyButton();
+                } else {
+                    kfc.udp.client.webrtc.P2PConfig.setChannelPart(p, text);
+                }
+            });
+            this.addDrawableChild(field);
+        }
 
         // 방 옵션 전체 통합 적용 버튼 — 게임모드/정원/공개 허용/제목/치트/관리 명령어를
         // 한 번에 반영한다(onApplyButtonClicked/refreshSettingsApplyButton 참고).
@@ -578,7 +634,7 @@ public class CustomRoomScreen extends Screen {
         int titleFieldX = cx - 60;
         int titleFieldW = (cx + 155) - titleFieldX;
         this.titleField = new TextFieldWidget(this.textRenderer, titleFieldX, ROW3_Y, titleFieldW, 20, TITLE_PLACEHOLDER_TEXT);
-        this.titleField.setMaxLength(32);
+        this.titleField.setMaxLength(RoomListScreen.MAX_TITLE_LENGTH);
         this.titleField.setPlaceholder(TITLE_PLACEHOLDER_TEXT);
         if (this.editingActiveRoom) {
             String activeTitle = KfcudpClient.getActiveTitle();
@@ -586,7 +642,14 @@ public class CustomRoomScreen extends Screen {
         }
         this.titleField.visible = this.publicRoom;
         this.addDrawableChild(this.titleField);
-        this.titleField.setChangedListener(text -> this.refreshSettingsApplyButton());
+        this.titleField.setChangedListener(text -> {
+            // 방 목록 칸에 들어가는 폭까지만 — 넘치면 잘라 다시 넣는다(다시 불린 응답은 폭 안이라 여기서 끝).
+            if (this.textRenderer.getWidth(text) > RoomListScreen.TITLE_TEXT_W) {
+                this.titleField.setText(this.textRenderer.trimToWidth(text, RoomListScreen.TITLE_TEXT_W));
+                return;
+            }
+            this.refreshSettingsApplyButton();
+        });
 
         this.addDrawableChild(
                 CheckboxWidget.builder(PUBLIC_TEXT, this.textRenderer)
@@ -600,8 +663,8 @@ public class CustomRoomScreen extends Screen {
                         .build()
         );
 
-        // 옵션 체크박스 — 치트/관리 명령어/중계 강제. 치트와 관리 명령어는 서로
-        // 완전히 독립(P2PBanManager 참고). 목록이 늘어날 걸 대비해 스크롤 영역에
+        // 옵션 체크박스 — 치트/중계 강제. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은 사람만 쓴다
+        // (P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
         // 담는다(repositionCheckboxes/mouseScrolled 참고).
         this.optionCheckboxes.clear();
         this.optionCheckboxes.add(
@@ -609,13 +672,6 @@ public class CustomRoomScreen extends Screen {
                         .pos(cx - 155, LIST_Y)
                         .checked(this.allowCheats)
                         .callback((cb, value) -> { this.allowCheats = value; this.refreshSettingsApplyButton(); })
-                        .build()
-        );
-        this.optionCheckboxes.add(
-                CheckboxWidget.builder(MANAGE_COMMANDS_TEXT, this.textRenderer)
-                        .pos(cx - 155, LIST_Y)
-                        .checked(this.manageCommands)
-                        .callback((cb, value) -> { this.manageCommands = value; this.refreshSettingsApplyButton(); })
                         .build()
         );
         this.optionCheckboxes.add(
@@ -715,12 +771,12 @@ public class CustomRoomScreen extends Screen {
         //? if >=26.1 {
         /*assert this.minecraft != null;
         String title = this.publicRoom ? this.titleField.getValue().trim() : null;
-        KfcudpClient.startCustomRoom(this.minecraft, this.gameMode, this.maxPlayers, this.allowCheats, this.manageCommands,
+        KfcudpClient.startCustomRoom(this.minecraft, this.gameMode, this.maxPlayers, this.allowCheats,
                 this.publicRoom, title);
         *///?} else {
         assert this.client != null;
         String title = this.publicRoom ? this.titleField.getText().trim() : null;
-        KfcudpClient.startCustomRoom(this.client, this.gameMode, this.maxPlayers, this.allowCheats, this.manageCommands,
+        KfcudpClient.startCustomRoom(this.client, this.gameMode, this.maxPlayers, this.allowCheats,
                 this.publicRoom, title);
         //?}
     }
@@ -737,10 +793,11 @@ public class CustomRoomScreen extends Screen {
         // applyRoomSettings가 채널 변경 여부를 판단하려면 그 안에서 P2PConfig.getChannel()을
         // 읽을 때 이미 새 값이어야 한다 — 그래서 setChannel을 먼저 호출한다(전엔 나중에
         // 불러서, 채널만 바꾼 경우 재공지 판단 자체가 옛 값 기준으로 이뤄졌었다).
-        kfc.udp.client.webrtc.P2PConfig.setChannel(this.channel);
+        kfc.udp.client.webrtc.P2PConfig.setChannelPart(0, this.channel1);
+        kfc.udp.client.webrtc.P2PConfig.setChannelPart(1, this.channel2);
         String title = this.publicRoom ? this.titleField.getValue().trim() : null;
         KfcudpClient.applyRoomSettings(this.minecraft, this.gameMode, this.maxPlayers,
-                this.allowCheats, this.manageCommands, this.publicRoom, title);
+                this.allowCheats, this.publicRoom, title);
         // 제목을 비워둔 채 공개하면 applyRoomSettings가 "Room - 코드"를 대신 지어
         // 붙인다 — 화면 입력란은 여전히 빈 채로 남으므로, 그대로 두면 입력란(빈 값)과
         // 실제 활성 제목(자동 생성값)이 영원히 안 맞아 적용 버튼이 계속 활성 상태로
@@ -755,10 +812,11 @@ public class CustomRoomScreen extends Screen {
         // applyRoomSettings가 채널 변경 여부를 판단하려면 그 안에서 P2PConfig.getChannel()을
         // 읽을 때 이미 새 값이어야 한다 — 그래서 setChannel을 먼저 호출한다(전엔 나중에
         // 불러서, 채널만 바꾼 경우 재공지 판단 자체가 옛 값 기준으로 이뤄졌었다).
-        kfc.udp.client.webrtc.P2PConfig.setChannel(this.channel);
+        kfc.udp.client.webrtc.P2PConfig.setChannelPart(0, this.channel1);
+        kfc.udp.client.webrtc.P2PConfig.setChannelPart(1, this.channel2);
         String title = this.publicRoom ? this.titleField.getText().trim() : null;
         KfcudpClient.applyRoomSettings(this.client, this.gameMode, this.maxPlayers,
-                this.allowCheats, this.manageCommands, this.publicRoom, title);
+                this.allowCheats, this.publicRoom, title);
         // 제목을 비워둔 채 공개하면 applyRoomSettings가 "Room - 코드"를 대신 지어
         // 붙인다 — 화면 입력란은 여전히 빈 채로 남으므로, 그대로 두면 입력란(빈 값)과
         // 실제 활성 제목(자동 생성값)이 영원히 안 맞아 적용 버튼이 계속 활성 상태로
@@ -769,8 +827,20 @@ public class CustomRoomScreen extends Screen {
         // 다음에 새로 접속할 때부터 이 값을 적용받는다.
         kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
         //?}
-        // 적용하고 나면 지금 화면 값 = 활성값이 되므로 버튼은 다시 비활성으로 돌아간다.
-        this.refreshSettingsApplyButton();
+        // 적용 결과는 채팅으로 알리고, 초대코드 재생성처럼 곧장 게임 화면으로 돌아간다.
+        //? if >=26.1 {
+        /*if (this.minecraft.player != null) {
+            this.minecraft.player.sendSystemMessage(Component.translatable("instant-p2p.msg.settings_applied"));
+        }
+        this.minecraft.setScreenAndShow(null);
+        this.minecraft.mouseHandler.grabMouse();
+        *///?} else {
+        if (this.client.player != null) {
+            this.client.player.sendMessage(Text.translatable("instant-p2p.msg.settings_applied"), false);
+        }
+        this.client.setScreen(null);
+        this.client.mouse.lockCursor();
+        //?}
     }
 
     /** 방 옵션 중 하나라도 지금 활성값과 다르면 통합 적용 버튼을 활성화한다. */
@@ -779,10 +849,11 @@ public class CustomRoomScreen extends Screen {
         boolean changed = this.gameMode != KfcudpClient.getActiveGameMode()
                 || this.maxPlayers != KfcudpClient.getActiveMaxPlayers()
                 || this.allowCheats != KfcudpClient.isActiveAllowCheats()
-                || this.manageCommands != KfcudpClient.isActiveManageCommands()
                 || this.publicRoom != KfcudpClient.isActivePublicRoom()
                 || this.forceRelay != kfc.udp.client.webrtc.P2PConfig.isRelayOnly()
-                || !kfc.udp.client.webrtc.P2PConfig.channelMatches(this.channel, kfc.udp.client.webrtc.P2PConfig.getChannel());
+                || !kfc.udp.client.webrtc.P2PConfig.channelMatches(
+                        kfc.udp.client.webrtc.P2PConfig.composeChannel(this.channel1, this.channel2),
+                        kfc.udp.client.webrtc.P2PConfig.getChannel());
         //? if >=26.1 {
         /*if (!changed && this.publicRoom) {
             changed = !this.titleField.getValue().trim().equals(KfcudpClient.getActiveTitle());

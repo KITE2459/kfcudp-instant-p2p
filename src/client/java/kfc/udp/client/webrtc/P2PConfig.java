@@ -92,6 +92,24 @@ public final class P2PConfig {
         return o != null && o.has("relayOnly") && o.get("relayOnly").getAsBoolean();
     }
 
+    /** 방 목록 실시간 갱신(RoomListScreen) — 끄면 1분마다·새로고침 버튼으로만 갱신한다. 기본 켜짐. */
+    private static volatile boolean liveRoomList = loadLiveRoomList();
+
+    public static boolean isLiveRoomList() {
+        return liveRoomList;
+    }
+
+    public static void setLiveRoomList(boolean value) {
+        if (liveRoomList == value) return;
+        liveRoomList = value;
+        updateSettingsFile(o -> o.addProperty("liveRoomList", value));
+    }
+
+    private static boolean loadLiveRoomList() {
+        JsonObject o = readSettingsFile();
+        return o == null || !o.has("liveRoomList") || o.get("liveRoomList").getAsBoolean();
+    }
+
     /**
      * settings.json의 다른 키(예: channel)를 안 지우고 이 키만 갈아끼운다 — 예전엔
      * 각 설정이 자기 값 하나만 담은 JsonObject를 통째로 새로 만들어 파일 전체를
@@ -139,31 +157,51 @@ public final class P2PConfig {
      * 구분하지 않는다(오타로 채널이 갈리는 걸 막기 위한 선택 — 필요하면 나중에
      * 구분하게 바꿀 수 있다). 빈 문자열은 저장 시 기본값으로 되돌린다.
      */
-    private static volatile String channel = loadChannel();
+    // 채널은 두 칸(채널 1·2)이다 — 둘 다 같은 방끼리만 서로 보인다. 방 공지와 목록 필터는 두 칸을 합친 값
+    // 하나(getChannel)만 주고받아서, 공지 형식·필터 코드는 채널이 한 칸일 때와 똑같다.
+    private static volatile String channel = loadChannel("channel");
+    private static volatile String channel2 = loadChannel("channel2");
 
+    /** 방 공지·목록 필터가 쓰는 채널 키 — 채널 1과 2를 합친 값. */
     public static String getChannel() {
-        return channel;
+        return composeChannel(channel, channel2);
     }
 
-    public static void setChannel(String value) {
-        String normalized = value == null || value.isBlank() ? DEFAULT_CHANNEL : value.trim();
-        if (channel.equals(normalized)) return;
-        channel = normalized;
-        updateSettingsFile(o -> o.addProperty("channel", normalized));
+    /** 입력란용 — part 0 = 채널 1, 1 = 채널 2. */
+    public static String getChannelPart(int part) {
+        return part == 0 ? channel : channel2;
     }
 
-    /** 두 채널 이름이 같은 채널을 가리키는지 — 대소문자 구분 없이 비교. */
+    public static void setChannelPart(int part, String value) {
+        String normalized = normalizeChannel(value);
+        if (getChannelPart(part).equals(normalized)) return;
+        String key = part == 0 ? "channel" : "channel2";
+        if (part == 0) channel = normalized;
+        else channel2 = normalized;
+        updateSettingsFile(o -> o.addProperty(key, normalized));
+    }
+
+    /** 채널 1·2를 getChannel과 같은 형식으로 합친다 — 방 설정 화면이 저장 전 값끼리 비교할 때 쓴다. */
+    public static String composeChannel(String part1, String part2) {
+        return normalizeChannel(part1) + CHANNEL_SEPARATOR + normalizeChannel(part2);
+    }
+
+    /** 두 채널 키가 같은 채널을 가리키는지 — 대소문자 구분 없이 비교. */
     public static boolean channelMatches(String a, String b) {
         return a != null && b != null && a.equalsIgnoreCase(b);
     }
 
     private static final String DEFAULT_CHANNEL = "normal";
+    /** 두 칸을 합칠 때 사이에 넣는 문자 — 입력란으로는 칠 수 없는 제어 문자라 "a"+"b/c"와 "a/b"+"c" 같은 충돌이 없다. */
+    private static final char CHANNEL_SEPARATOR = '';
 
-    private static String loadChannel() {
+    private static String normalizeChannel(String value) {
+        return value == null || value.isBlank() ? DEFAULT_CHANNEL : value.trim();
+    }
+
+    private static String loadChannel(String key) {
         JsonObject o = readSettingsFile();
-        if (o == null || !o.has("channel")) return DEFAULT_CHANNEL;
-        String v = o.get("channel").getAsString();
-        return v == null || v.isBlank() ? DEFAULT_CHANNEL : v.trim();
+        return o == null || !o.has(key) ? DEFAULT_CHANNEL : normalizeChannel(o.get(key).getAsString());
     }
 
     /**
@@ -196,10 +234,15 @@ public final class P2PConfig {
         return Math.floorMod(roomCode.hashCode(), PUBLIC_ROOM_SHARD_COUNT);
     }
 
-    /** shard(0..{@link #PUBLIC_ROOM_SHARD_COUNT}-1)번 공개 방 목록 lobby의 실제 경로. */
+    /** shard(0..{@link #PUBLIC_ROOM_SHARD_COUNT}-1)번 공개 방 목록 lobby의 실제 경로. 마인크래프트
+     * 버전마다 로비가 따로라, 서로 접속도 못 하는 다른 버전의 방 공지·목록 갱신은 아예 오가지 않는다
+     * (예전엔 전 버전이 로비 4개에 섞여 서로의 브로드캐스트를 받아 놓고 화면에서 버렸다). */
     public static String publicRoomsLobbyId(int shard) {
-        return PUBLIC_ROOMS_LOBBY_PREFIX + "_" + shard;
+        return PUBLIC_ROOMS_LOBBY_PREFIX + "_" + LOBBY_VERSION_TAG + "_" + shard;
     }
+
+    /** URL 경로 한 조각에 들어가도록 버전 문자열에서 안전한 문자만 남긴다. */
+    private static final String LOBBY_VERSION_TAG = MC_VERSION.replaceAll("[^A-Za-z0-9._-]", "_");
 
     // ── 파이프 버퍼 한도 (지연 ↔ 처리량 트레이드오프) ─────────────────────────
 

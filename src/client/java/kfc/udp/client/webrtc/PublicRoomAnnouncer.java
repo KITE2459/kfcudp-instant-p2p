@@ -90,11 +90,29 @@ final class PublicRoomAnnouncer {
     private long lastReconnectAtMs = 0;
     private final Object debounceLock = new Object();
 
+    /** 마지막 발표에 실은 방장 RTT — 막대 수가 달라질 만큼 변했을 때만 재공지한다. 재공지는
+     * 재접속이라 RTT가 조금 흔들릴 때마다 하면 샤드 로비 전원에게 브로드캐스트가 쏟아진다. */
+    private volatile long announcedRttMs = -1;
+
+    /** 방을 연 시각(방장 시계, epoch ms) — 방 목록 정렬용. start() 참고. */
+    private volatile long openedAtMs;
+
+    PublicRoomAnnouncer() {
+        scheduler.scheduleWithFixedDelay(() -> {
+            if (running.get() && SignalingRtt.bars(SignalingRtt.currentMs()) != SignalingRtt.bars(announcedRttMs)) {
+                connect(generation.get());
+            }
+        }, 5, 5, TimeUnit.SECONDS);
+    }
+
     /** 방을 공개 목록에 올린다. 접속/재접속은 백그라운드에서 진행되며 즉시 반환.
      * hostUuid는 개인 차단(=밴) 기능용 — 방장을 차단한 사람 목록에서 걸러내려면
      * (또는 반대로) 방장의 UUID가 필요하다(P2PBanManager 클래스 주석 참고). */
     void start(String roomCode, String title, String hostNickname, String hostUuid, int currentPlayers, int maxPlayers) {
         if (!running.compareAndSet(false, true)) return;
+        // 방 목록은 연 시각 순(오래된 방이 앞)이다 — 같은 방을 설정 변경으로 내렸다 다시 올릴 땐 처음 연 시각을
+        // 유지해야 목록에서 자리가 안 바뀐다. 코드가 바뀌면(새 방·초대코드 재생성) 새로 잡는다.
+        if (!roomCode.equals(this.roomCode)) this.openedAtMs = System.currentTimeMillis();
         this.roomCode = roomCode;
         this.title = title;
         this.hostNickname = hostNickname;
@@ -175,11 +193,16 @@ final class PublicRoomAnnouncer {
         ws = null;
         if (old != null) old.close();
 
-        String peerName = "r" + encode(roomCode, title, hostNickname, P2PConfig.getChannel(), currentPlayers, maxPlayers,
-                P2PConfig.MC_VERSION, hostUuid, P2PBanManager.encodeBannedPlayerUuids());
         String lobbyId = P2PConfig.publicRoomsLobbyId(P2PConfig.publicRoomShardFor(roomCode));
-        WebSocketClient client = new WebSocketClient(
-                P2PConfig.SIGNALING_URL + "/" + lobbyId + "/" + peerName) {
+        WebSocketClient client = new WebSocketClient(P2PConfig.SIGNALING_URL + "/" + lobbyId) {
+            // peer 이름(=방 정보)은 TCP 연결 뒤에 만든다 — 방을 막 열었을 땐 RTT 표본이 하나도 없어서
+            // 예전엔 -1이 실렸고, 방 목록엔 다음 재공지(최대 5초)까지 "측정 중"만 떴다.
+            @Override protected String requestPath(String path) {
+                long rtt = SignalingRtt.currentMs();
+                announcedRttMs = rtt;
+                return path + "/r" + encode(roomCode, title, hostNickname, P2PConfig.getChannel(), currentPlayers, maxPlayers,
+                        P2PConfig.MC_VERSION, hostUuid, P2PBanManager.encodeBannedPlayerHashes(roomCode), rtt, openedAtMs);
+            }
             @Override public void onConnected() {
                 backoffMs = INITIAL_BACKOFF_MS;
                 send(VillasMsg.hello());
@@ -215,25 +238,28 @@ final class PublicRoomAnnouncer {
         } catch (RejectedExecutionException ignored) {}
     }
 
-    /** "r"/"b" 다음에 오는 페이로드: code|title|nickname|channel|current|max|version|hostUuid|blockedUuids
-     * (UTF-8, URL-safe Base64, 패딩 없음). version/hostUuid/blockedUuids는 뒤에 새로 붙인 필드라
-     * 앞의 6개와 순서가 바뀌면 안 된다(이미 떠 있는 예전 클라이언트와의 파싱 호환 때문은
-     * 아니고 — 어차피 이 모드는 그런 걸 신경 안 씀 — 그냥 필드 늘어난 순서 기록용). */
+    /** "r"/"b" 다음에 오는 페이로드: code|title|nickname|channel|current|max|version|hostUuid|bannedHashes|hostRttMs|openedAtMs
+     * (UTF-8, URL-safe Base64, 패딩 없음). version 이후는 뒤에 새로 붙인 필드라 앞의 6개와 순서가
+     * 바뀌면 안 된다(이미 떠 있는 예전 클라이언트와의 파싱 호환 때문은 아니고 — 어차피 이 모드는
+     * 그런 걸 신경 안 씀 — 그냥 필드 늘어난 순서 기록용).
+     * bannedHashes는 밴한 UUID 원문이 아니라 방 코드로 솔팅한 해시다(P2PBanManager.encodeBannedPlayerHashes).
+     * hostRttMs는 방장→시그널링 서버 RTT, 모르면 -1(SignalingRtt 참고). openedAtMs는 방을 연 시각(방 목록 정렬용). */
     static String encode(String code, String title, String nickname, String channel, int currentPlayers, int maxPlayers,
-                          String version, String hostUuid, String blockedUuids) {
+                          String version, String hostUuid, String bannedHashes, long hostRttMs, long openedAtMs) {
         String raw = code + "|" + sanitize(title) + "|" + sanitize(nickname) + "|" + sanitize(channel)
                 + "|" + currentPlayers + "|" + maxPlayers
-                + "|" + sanitize(version) + "|" + sanitize(hostUuid) + "|" + sanitize(blockedUuids);
+                + "|" + sanitize(version) + "|" + sanitize(hostUuid) + "|" + sanitize(bannedHashes)
+                + "|" + hostRttMs + "|" + openedAtMs;
         return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
     }
 
-    /** {code, title, nickname, channel, current, max, version, hostUuid, blockedUuids} 또는
+    /** {code, title, nickname, channel, current, max, version, hostUuid, bannedHashes, hostRttMs, openedAtMs} 또는
      * 파싱 실패 시 null — 숫자들도 문자열 그대로 담아 둔다. */
     static String[] decode(String payload) {
         try {
             String raw = new String(Base64.getUrlDecoder().decode(payload), StandardCharsets.UTF_8);
-            String[] parts = raw.split("\\|", 9);
-            return parts.length == 9 ? parts : null;
+            String[] parts = raw.split("\\|", 11);
+            return parts.length == 11 ? parts : null;
         } catch (Exception e) {
             return null;
         }

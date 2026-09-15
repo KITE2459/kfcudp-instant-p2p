@@ -29,6 +29,9 @@ loom {
             sourceSet(sourceSets["client"])
         }
     }
+
+    // 디버그: ./gradlew ":<버전>:runClient" -PfakeRooms=84 → 방 목록에 가짜 방 84개(PublicRoomBrowser.FAKE_ROOMS)
+    findProperty("fakeRooms")?.let { n -> runs.named("client") { vmArg("-Dkfcudp.debug.fakeRooms=$n") } }
 }
 
 dependencies {
@@ -48,7 +51,8 @@ dependencies {
 tasks.processResources {
     val modVersion = project.version
     val loaderDepends = ">=${project.property("loader_version")}"
-    val minecraftDepends = ">=1.21.5 <=1.21.11"
+    // jar마다 자기 버전에만 설치되게 고정 — 범위로 두면 다른 버전용 jar가 로드돼 믹스인/API 불일치로 튕긴다.
+    val minecraftDepends = stonecutter.current.version
     val javaDepends = ">=21"
     inputs.property("version", modVersion)
     inputs.property("loaderDepends", loaderDepends)

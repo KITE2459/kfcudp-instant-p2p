@@ -244,6 +244,13 @@ public class WebRtcHost {
             if (name.length() != 18 || !name.startsWith("j")) continue;
             if (handledJoins.putIfAbsent(name, now) != null) continue;
 
+            // "jq" = 입장 전 확인(RoomMembersProbe) — 연결하지 않고 지금 접속자 해시만 알려주고 끝낸다.
+            if (name.charAt(1) == 'q') {
+                String probeSid = name.substring(2);
+                worker.execute(() -> sendMembers(probeSid));
+                continue;
+            }
+
             boolean clientRelayForced = name.charAt(1) == 'r';
             String sid = name.substring(2);
             String clientIp = remote.contains(":") ? remote.substring(0, remote.lastIndexOf(':')) : remote;
@@ -263,6 +270,25 @@ public class WebRtcHost {
                 pair.open();
             });
         }
+    }
+
+    /** 입장 전 확인에 답한다 — 확인하는 쪽이 먼저 열어 둔 페어 세션에 잠깐 붙어 접속자 해시만 보내고 바로 나간다.
+     * 서버는 description.type을 그대로 중계하고, 끊는 프레임보다 먼저 온 메시지를 먼저 처리한다. */
+    private void sendMembers(String sid) {
+        if (!running.get()) return;
+        WebSocketClient w = new WebSocketClient(P2PConfig.SIGNALING_URL + "/" + roomId + "-" + sid + "/hq" + sid) {
+            @Override public void onConnected() {
+                send(VillasMsg.hello());
+                send(VillasMsg.description("members", P2PBanManager.encodeOnlinePlayerHashes(roomId)));
+            }
+            @Override public void onMessage(String type, String json) {}
+        };
+        try {
+            w.connect();
+        } catch (Exception e) {
+            LOG.warn("[host] members reply failed sid={}: {}", sid, e.toString());
+        }
+        w.close();
     }
 
     private void updateRelays(String json) {
@@ -574,7 +600,9 @@ public class WebRtcHost {
          * allowRelay=true(2차, 최종)면 더 이상 재시도가 없으므로 진짜 실패로 취급한다.
          */
         private void onAttemptFailed(boolean allowRelay) {
-            if (allowRelay) {
+            // 이미 성사됐던 세션이 끊긴 경우 조인자는 재협상을 보내지 않는다 — 세션만 닫고 페어를
+            // 남기면 페어 시그널링 연결과 pairs 항목이 방이 닫힐 때까지 샌다.
+            if (allowRelay || dcOpened) {
                 if (!dcOpened) notifyHostFailure();
                 pair.close();
             } else {

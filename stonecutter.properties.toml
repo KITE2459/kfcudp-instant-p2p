@@ -1,7 +1,27 @@
 # 버전 무관 공통 값(mod.*)은 여기, loader/loom 버전은 gradle.properties 참고.
 # 버전별 값은 아래 [<version>] 테이블에.
-mod.version = "1.0.14"
+mod.version = "1.0.16"
 mod.group = "kfc.udp"
+
+["1.21"]
+deps.yarn = "1.21+build.9"
+deps.fabric_api = "0.102.0+1.21"
+
+["1.21.1"]
+deps.yarn = "1.21.1+build.3"
+deps.fabric_api = "0.116.17+1.21.1"
+
+["1.21.2"]
+deps.yarn = "1.21.2+build.1"
+deps.fabric_api = "0.106.1+1.21.2"
+
+["1.21.3"]
+deps.yarn = "1.21.3+build.2"
+deps.fabric_api = "0.114.1+1.21.3"
+
+["1.21.4"]
+deps.yarn = "1.21.4+build.8"
+deps.fabric_api = "0.119.4+1.21.4"
 
 ["1.21.5"]
 deps.yarn = "1.21.5+build.1"

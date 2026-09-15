@@ -14,7 +14,10 @@
     "IntegratedServerMaxPlayersMixin",
     "PlayerJoinMessageMixin",
     "PlayerManagerAccessor",
-    "PlayerManagerMixin"
+    "PlayerManagerMixin",
+    "DevBadgeMixin",
+    "DevNameMixin",
+    "SocialHideMixin"
   ],
   "injectors": {
     "defaultRequire": 1
