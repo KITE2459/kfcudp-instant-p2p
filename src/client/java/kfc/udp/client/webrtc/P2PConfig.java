@@ -96,6 +96,24 @@ public final class P2PConfig {
         return o != null && o.has("relayOnly") && o.get("relayOnly").getAsBoolean();
     }
 
+    /** 커스텀 방 생성·접속 전에 뜨는 안전 경고 팝업의 "다시 보지 않기" — 기본은 매번 뜬다. */
+    private static volatile boolean safetyWarningDismissed = loadSafetyWarningDismissed();
+
+    public static boolean isSafetyWarningDismissed() {
+        return safetyWarningDismissed;
+    }
+
+    public static void setSafetyWarningDismissed(boolean value) {
+        if (safetyWarningDismissed == value) return;
+        safetyWarningDismissed = value;
+        updateSettingsFile(o -> o.addProperty("safetyWarningDismissed", value));
+    }
+
+    private static boolean loadSafetyWarningDismissed() {
+        JsonObject o = readSettingsFile();
+        return o != null && o.has("safetyWarningDismissed") && o.get("safetyWarningDismissed").getAsBoolean();
+    }
+
     /** 방 목록에서 내 마인크래프트 버전과 다른 방을 숨길지 — 기본은 보여준다(회색으로). */
     private static volatile boolean hideOtherVersions = loadHideOtherVersions();
 
@@ -112,6 +130,93 @@ public final class P2PConfig {
     private static boolean loadHideOtherVersions() {
         JsonObject o = readSettingsFile();
         return o != null && o.has("hideOtherVersions") && o.get("hideOtherVersions").getAsBoolean();
+    }
+
+    /**
+     * <b>방송(인터넷 스트리밍) 노출 허용.</b>
+     * <p>
+     * 새 신호 필드 없이 채널 시스템을 그대로 재사용한다 — 이 값이 켜져 있으면 공지되는 채널 문자열에
+     * {@link #BROADCAST_TAG}가 하나 더 붙을 뿐이고(PublicRoomAnnouncer.sendUpdate 참고), 실제 접속 lobby
+     * (getEffectiveChannels)는 안 건드린다 — 즉 이 방을 원래 볼 수 있는 사람에게만(채널이 겹치는 사람)
+     * "방송 허용" 여부가 추가로 드러날 뿐, 못 보던 사람이 새로 보이게 되는 건 아니다. 기본값은 꺼짐
+     * (노출에 동의하는 사람만 켠다).
+     */
+    private static volatile boolean allowBroadcast = loadAllowBroadcast();
+
+    public static boolean isAllowBroadcast() {
+        return allowBroadcast;
+    }
+
+    public static void setAllowBroadcast(boolean value) {
+        if (allowBroadcast == value) return;
+        allowBroadcast = value;
+        updateSettingsFile(o -> o.addProperty("allowBroadcast", value));
+    }
+
+    private static boolean loadAllowBroadcast() {
+        JsonObject o = readSettingsFile();
+        return o != null && o.has("allowBroadcast") && o.get("allowBroadcast").getAsBoolean();
+    }
+
+    /** 방 목록에서 "방송 허용" 여부로 방을 어떻게 거를지 — 전체(기본)/허용만/비허용만 세 상태.
+     * 체크박스(2상태)로는 "비방송만 보기"를 표현할 수 없어서(꺼짐이 "전체"만 뜻함) 순환 버튼으로 둔다. */
+    public enum BroadcastFilter { ALL, ALLOWED_ONLY, DISALLOWED_ONLY }
+
+    private static volatile BroadcastFilter broadcastFilter = loadBroadcastFilter();
+
+    public static BroadcastFilter getBroadcastFilter() {
+        return broadcastFilter;
+    }
+
+    public static void setBroadcastFilter(BroadcastFilter value) {
+        if (broadcastFilter == value) return;
+        broadcastFilter = value;
+        updateSettingsFile(o -> o.addProperty("broadcastFilter", value.name()));
+    }
+
+    private static BroadcastFilter loadBroadcastFilter() {
+        JsonObject o = readSettingsFile();
+        if (o == null || !o.has("broadcastFilter")) return BroadcastFilter.ALL;
+        try {
+            return BroadcastFilter.valueOf(o.get("broadcastFilter").getAsString());
+        } catch (IllegalArgumentException e) {
+            return BroadcastFilter.ALL;
+        }
+    }
+
+    /** 채널 문자열에 붙는 예약 태그 — 사용자가 직접 만드는 채널 목록(최대 {@link #MAX_CHANNEL_LENGTH}자,
+     * 쉼표 구분)과는 별개로 공지 시에만 덧붙는다(setChannels로 저장되는 목록엔 안 들어간다). */
+    private static final String BROADCAST_TAG = "broadcast";
+
+    /** 공지용 채널 문자열 — {@link #isAllowBroadcast()}가 켜져 있으면 {@link #BROADCAST_TAG}를 덧붙인다.
+     * and 모드(여러 채널을 하나로 묶어 보내는 규칙)에서도 그냥 붙인다 — {@link #roomVisible}로 실제 채널
+     * 매칭에 쓰기 전에 {@link #stripBroadcastTag}로 먼저 떼어내는 쪽(PublicRoomBrowser)이 책임진다.
+     * 방송 허용 여부는 사용자가 정한 채널 목록·and/or 규칙과는 독립적인 별개의 태그로 취급한다. */
+    public static String announcedChannel() {
+        String base = getChannel();
+        return allowBroadcast ? base + "," + BROADCAST_TAG : base;
+    }
+
+    /** 방 목록에서 받은 채널 문자열에 방송 허용 태그가 있는지 — {@link #isBroadcastOnly()} 필터용. */
+    public static boolean isBroadcastTagged(String channelStr) {
+        if (channelStr == null) return false;
+        for (String part : channelStr.split(",")) {
+            if (part.trim().equalsIgnoreCase(BROADCAST_TAG)) return true;
+        }
+        return false;
+    }
+
+    /** {@link #roomVisible}에 넘기기 전에 방송 태그를 떼어낸 채널 문자열 — and 묶음 채널 매칭이 방송
+     * 태그 때문에 깨지지 않게(붙인 채로 넘기면 묶인 값 자체가 달라져 원래 겹쳐야 할 채널까지 안 보인다). */
+    public static String stripBroadcastTag(String channelStr) {
+        if (channelStr == null) return null;
+        StringBuilder out = new StringBuilder();
+        for (String part : channelStr.split(",", -1)) {
+            if (part.trim().equalsIgnoreCase(BROADCAST_TAG)) continue;
+            if (out.length() > 0) out.append(',');
+            out.append(part);
+        }
+        return out.toString();
     }
 
     /**

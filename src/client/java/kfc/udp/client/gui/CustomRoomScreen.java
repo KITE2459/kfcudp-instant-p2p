@@ -76,12 +76,17 @@ public class CustomRoomScreen extends Screen {
     private static final Component GAME_MODE_TEXT     = Component.translatable("instant-p2p.custom_room.game_mode");
     private static final Component MAX_PLAYERS_TEXT   = Component.translatable("instant-p2p.custom_room.max_players", MAX_PLAYERS);
     private static final Component ALLOW_COMMANDS_TEXT = Component.translatable("instant-p2p.custom_room.allow_commands");
+    private static final Component ALLOW_COMMANDS_TOOLTIP_TEXT = Component.translatable("instant-p2p.custom_room.allow_commands_tooltip");
+    private static final Component ALLOW_BROADCAST_TEXT = Component.translatable("instant-p2p.custom_room.allow_broadcast");
+    private static final Component ALLOW_BROADCAST_TOOLTIP_TEXT = Component.translatable("instant-p2p.custom_room.allow_broadcast_tooltip");
     private static final Component FORCE_RELAY_TEXT   = Component.translatable("instant-p2p.force_relay");
+    private static final Component FORCE_RELAY_TOOLTIP_TEXT = Component.translatable("instant-p2p.force_relay_tooltip");
     private static final Component START_TEXT         = Component.translatable("instant-p2p.custom_room.start");
     private static final Component RESTART_TEXT       = Component.translatable("instant-p2p.custom_room.restart");
     private static final Component RESTART_WARNING_TEXT = Component.translatable("instant-p2p.custom_room.restart_warning");
     private static final Component RESTART_TOOLTIP_TEXT = Component.translatable("instant-p2p.custom_room.restart_tooltip");
     private static final Component PUBLIC_TEXT        = Component.translatable("instant-p2p.custom_room.public_allow");
+    private static final Component PUBLIC_TOOLTIP_TEXT = Component.translatable("instant-p2p.custom_room.public_allow_tooltip");
     private static final Component TITLE_PLACEHOLDER_TEXT = Component.translatable("instant-p2p.custom_room.title_placeholder");
     private static final Component TITLE_APPLY_TEXT   = Component.translatable("instant-p2p.custom_room.apply_title");
     private static final Component BACK_TEXT          = Component.translatable("instant-p2p.custom_room.back");
@@ -93,12 +98,17 @@ public class CustomRoomScreen extends Screen {
     private static final Text GAME_MODE_TEXT     = Text.translatable("instant-p2p.custom_room.game_mode");
     private static final Text MAX_PLAYERS_TEXT   = Text.translatable("instant-p2p.custom_room.max_players", MAX_PLAYERS);
     private static final Text ALLOW_COMMANDS_TEXT = Text.translatable("instant-p2p.custom_room.allow_commands");
+    private static final Text ALLOW_COMMANDS_TOOLTIP_TEXT = Text.translatable("instant-p2p.custom_room.allow_commands_tooltip");
+    private static final Text ALLOW_BROADCAST_TEXT = Text.translatable("instant-p2p.custom_room.allow_broadcast");
+    private static final Text ALLOW_BROADCAST_TOOLTIP_TEXT = Text.translatable("instant-p2p.custom_room.allow_broadcast_tooltip");
     private static final Text FORCE_RELAY_TEXT   = Text.translatable("instant-p2p.force_relay");
+    private static final Text FORCE_RELAY_TOOLTIP_TEXT = Text.translatable("instant-p2p.force_relay_tooltip");
     private static final Text START_TEXT         = Text.translatable("instant-p2p.custom_room.start");
     private static final Text RESTART_TEXT       = Text.translatable("instant-p2p.custom_room.restart");
     private static final Text RESTART_WARNING_TEXT = Text.translatable("instant-p2p.custom_room.restart_warning");
     private static final Text RESTART_TOOLTIP_TEXT = Text.translatable("instant-p2p.custom_room.restart_tooltip");
     private static final Text PUBLIC_TEXT        = Text.translatable("instant-p2p.custom_room.public_allow");
+    private static final Text PUBLIC_TOOLTIP_TEXT = Text.translatable("instant-p2p.custom_room.public_allow_tooltip");
     private static final Text TITLE_PLACEHOLDER_TEXT = Text.translatable("instant-p2p.custom_room.title_placeholder");
     private static final Text TITLE_APPLY_TEXT   = Text.translatable("instant-p2p.custom_room.apply_title");
     private static final Text BACK_TEXT          = Text.translatable("instant-p2p.custom_room.back");
@@ -128,6 +138,9 @@ public class CustomRoomScreen extends Screen {
      * {@link kfc.udp.client.webrtc.P2PConfig#setRelayOnly}는 적용 버튼을 눌러야
      * (호스팅 전이면 즉시) 반영된다 — 예전엔 이 옵션만 체크하자마자 바로 나갔다. */
     private boolean forceRelay;
+    /** forceRelay와 같은 방식 — 체크박스는 이 필드만 바꾸고, {@link kfc.udp.client.webrtc.P2PConfig#setAllowBroadcast}는
+     * 적용 버튼을 눌러야(호스팅 전이면 즉시) 반영된다. */
+    private boolean allowBroadcast;
     private int checkboxScrollIndex = 0;
     /** init()이 끝나기 전까진 위젯들의 초기값 세팅 자체가 "값이 바뀜" 콜백을 트리거해도
      * 무시한다 — 안 그러면 화면을 열기만 해도 적용 버튼이 매번 활성 상태로 뜬다. */
@@ -155,6 +168,7 @@ public class CustomRoomScreen extends Screen {
         super(KfcudpClient.isRoomActive() ? EDIT_TITLE_TEXT : TITLE_TEXT);
         this.parent = parent;
         this.forceRelay = kfc.udp.client.webrtc.P2PConfig.isRelayOnly();
+        this.allowBroadcast = kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
         if (this.editingActiveRoom) {
             // 이미 켜진 방 — 지금 실제로 적용돼 있는 값을 그대로 보여준다.
             this.gameMode = KfcudpClient.getActiveGameMode();
@@ -278,43 +292,60 @@ public class CustomRoomScreen extends Screen {
             this.refreshSettingsApplyButton();
         });
 
-        this.addRenderableWidget(
-                Checkbox.builder(PUBLIC_TEXT, this.font)
-                        .pos(cx - 155, ROW3_Y)
-                        .selected(this.publicRoom)
-                        .onValueChange((cb, value) -> {
-                            this.publicRoom = value;
-                            this.titleField.visible = value;
-                            this.refreshSettingsApplyButton();
-                        })
-                        .build()
-        );
+        // Checkbox.Builder.build()의 tooltip()은 라벨이 한 줄을 넘칠 때만(overflowsRowLimit) 실제로
+        // setTooltip을 불러준다(바이트코드로 확인) — 우리 라벨은 전부 한 줄이라 빌더로는 절대 안 뜬다.
+        // build() 뒤에 Checkbox.setTooltip을 직접 불러야 라벨 길이와 무관하게 항상 붙는다.
+        Checkbox publicCheckbox = Checkbox.builder(PUBLIC_TEXT, this.font)
+                .pos(cx - 155, ROW3_Y)
+                .selected(this.publicRoom)
+                .onValueChange((cb, value) -> {
+                    this.publicRoom = value;
+                    this.titleField.visible = value;
+                    this.refreshSettingsApplyButton();
+                })
+                .build();
+        publicCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(PUBLIC_TOOLTIP_TEXT));
+        this.addRenderableWidget(publicCheckbox);
 
-        // 옵션 체크박스 — 치트/중계 강제. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은 사람만 쓴다
-        // (P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
+        // 옵션 체크박스 — 치트/중계 강제/방송 허용. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은
+        // 사람만 쓴다(P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
         // 담는다(repositionCheckboxes/mouseScrolled 참고).
         this.optionCheckboxes.clear();
-        this.optionCheckboxes.add(
-                Checkbox.builder(ALLOW_COMMANDS_TEXT, this.font)
-                        .pos(cx - 155, LIST_Y)
-                        .selected(this.allowCheats)
-                        .onValueChange((cb, value) -> { this.allowCheats = value; this.refreshSettingsApplyButton(); })
-                        .build()
-        );
-        this.optionCheckboxes.add(
-                Checkbox.builder(FORCE_RELAY_TEXT, this.font)
-                        .pos(cx - 155, LIST_Y)
-                        .selected(this.forceRelay)
-                        .onValueChange((cb, value) -> {
-                            this.forceRelay = value;
-                            if (this.editingActiveRoom) {
-                                this.refreshSettingsApplyButton();
-                            } else {
-                                kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value);
-                            }
-                        })
-                        .build()
-        );
+        Checkbox allowCommandsCheckbox = Checkbox.builder(ALLOW_COMMANDS_TEXT, this.font)
+                .pos(cx - 155, LIST_Y)
+                .selected(this.allowCheats)
+                .onValueChange((cb, value) -> { this.allowCheats = value; this.refreshSettingsApplyButton(); })
+                .build();
+        allowCommandsCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(ALLOW_COMMANDS_TOOLTIP_TEXT));
+        this.optionCheckboxes.add(allowCommandsCheckbox);
+        Checkbox forceRelayCheckbox = Checkbox.builder(FORCE_RELAY_TEXT, this.font)
+                .pos(cx - 155, LIST_Y)
+                .selected(this.forceRelay)
+                .onValueChange((cb, value) -> {
+                    this.forceRelay = value;
+                    if (this.editingActiveRoom) {
+                        this.refreshSettingsApplyButton();
+                    } else {
+                        kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value);
+                    }
+                })
+                .build();
+        forceRelayCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(FORCE_RELAY_TOOLTIP_TEXT));
+        this.optionCheckboxes.add(forceRelayCheckbox);
+        Checkbox allowBroadcastCheckbox = Checkbox.builder(ALLOW_BROADCAST_TEXT, this.font)
+                .pos(cx - 155, LIST_Y)
+                .selected(this.allowBroadcast)
+                .onValueChange((cb, value) -> {
+                    this.allowBroadcast = value;
+                    if (this.editingActiveRoom) {
+                        this.refreshSettingsApplyButton();
+                    } else {
+                        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
+                    }
+                })
+                .build();
+        allowBroadcastCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(ALLOW_BROADCAST_TOOLTIP_TEXT));
+        this.optionCheckboxes.add(allowBroadcastCheckbox);
         for (Checkbox cb : this.optionCheckboxes) this.addRenderableWidget(cb);
         this.checkboxScrollIndex = 0;
         this.repositionCheckboxes();
@@ -432,6 +463,7 @@ public class CustomRoomScreen extends Screen {
                 CheckboxWidget.builder(PUBLIC_TEXT, this.textRenderer)
                         .pos(cx - 155, ROW3_Y)
                         .checked(this.publicRoom)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(PUBLIC_TOOLTIP_TEXT))
                         .callback((cb, value) -> {
                             this.publicRoom = value;
                             this.titleField.visible = value;
@@ -440,14 +472,15 @@ public class CustomRoomScreen extends Screen {
                         .build()
         );
 
-        // 옵션 체크박스 — 치트/중계 강제. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은 사람만 쓴다
-        // (P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
+        // 옵션 체크박스 — 치트/중계 강제/방송 허용. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은
+        // 사람만 쓴다(P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
         // 담는다(repositionCheckboxes/mouseScrolled 참고).
         this.optionCheckboxes.clear();
         this.optionCheckboxes.add(
                 CheckboxWidget.builder(ALLOW_COMMANDS_TEXT, this.textRenderer)
                         .pos(cx - 155, LIST_Y)
                         .checked(this.allowCheats)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(ALLOW_COMMANDS_TOOLTIP_TEXT))
                         .callback((cb, value) -> { this.allowCheats = value; this.refreshSettingsApplyButton(); })
                         .build()
         );
@@ -455,12 +488,28 @@ public class CustomRoomScreen extends Screen {
                 CheckboxWidget.builder(FORCE_RELAY_TEXT, this.textRenderer)
                         .pos(cx - 155, LIST_Y)
                         .checked(this.forceRelay)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(FORCE_RELAY_TOOLTIP_TEXT))
                         .callback((cb, value) -> {
                             this.forceRelay = value;
                             if (this.editingActiveRoom) {
                                 this.refreshSettingsApplyButton();
                             } else {
                                 kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value);
+                            }
+                        })
+                        .build()
+        );
+        this.optionCheckboxes.add(
+                CheckboxWidget.builder(ALLOW_BROADCAST_TEXT, this.textRenderer)
+                        .pos(cx - 155, LIST_Y)
+                        .checked(this.allowBroadcast)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(ALLOW_BROADCAST_TOOLTIP_TEXT))
+                        .callback((cb, value) -> {
+                            this.allowBroadcast = value;
+                            if (this.editingActiveRoom) {
+                                this.refreshSettingsApplyButton();
+                            } else {
+                                kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
                             }
                         })
                         .build()
@@ -583,6 +632,7 @@ public class CustomRoomScreen extends Screen {
                 CheckboxWidget.builder(PUBLIC_TEXT, this.textRenderer)
                         .pos(cx - 155, ROW3_Y)
                         .checked(this.publicRoom)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(PUBLIC_TOOLTIP_TEXT))
                         .callback((cb, value) -> {
                             this.publicRoom = value;
                             this.titleField.visible = value;
@@ -591,14 +641,15 @@ public class CustomRoomScreen extends Screen {
                         .build()
         );
 
-        // 옵션 체크박스 — 치트/중계 강제. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은 사람만 쓴다
-        // (P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
+        // 옵션 체크박스 — 치트/중계 강제/방송 허용. kick/ban/whitelist는 체크박스가 아니라 방장과 /op 받은
+        // 사람만 쓴다(P2PBanManager.requireAdminOrHost). 목록이 늘어날 걸 대비해 스크롤 영역에
         // 담는다(repositionCheckboxes/mouseScrolled 참고).
         this.optionCheckboxes.clear();
         this.optionCheckboxes.add(
                 CheckboxWidget.builder(ALLOW_COMMANDS_TEXT, this.textRenderer)
                         .pos(cx - 155, LIST_Y)
                         .checked(this.allowCheats)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(ALLOW_COMMANDS_TOOLTIP_TEXT))
                         .callback((cb, value) -> { this.allowCheats = value; this.refreshSettingsApplyButton(); })
                         .build()
         );
@@ -606,12 +657,28 @@ public class CustomRoomScreen extends Screen {
                 CheckboxWidget.builder(FORCE_RELAY_TEXT, this.textRenderer)
                         .pos(cx - 155, LIST_Y)
                         .checked(this.forceRelay)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(FORCE_RELAY_TOOLTIP_TEXT))
                         .callback((cb, value) -> {
                             this.forceRelay = value;
                             if (this.editingActiveRoom) {
                                 this.refreshSettingsApplyButton();
                             } else {
                                 kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value);
+                            }
+                        })
+                        .build()
+        );
+        this.optionCheckboxes.add(
+                CheckboxWidget.builder(ALLOW_BROADCAST_TEXT, this.textRenderer)
+                        .pos(cx - 155, LIST_Y)
+                        .checked(this.allowBroadcast)
+                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(ALLOW_BROADCAST_TOOLTIP_TEXT))
+                        .callback((cb, value) -> {
+                            this.allowBroadcast = value;
+                            if (this.editingActiveRoom) {
+                                this.refreshSettingsApplyButton();
+                            } else {
+                                kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
                             }
                         })
                         .build()
@@ -730,6 +797,7 @@ public class CustomRoomScreen extends Screen {
         // 붙어있는 접속자를 강제로 끊어 재접속시키는 건 하지 않는다 — 그 접속자는
         // 다음에 새로 접속할 때부터 이 값을 적용받는다.
         kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
+        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(this.allowBroadcast);
         *///?} else {
         assert this.client != null;
         String title = this.publicRoom ? this.titleField.getText().trim() : null;
@@ -744,6 +812,7 @@ public class CustomRoomScreen extends Screen {
         // 붙어있는 접속자를 강제로 끊어 재접속시키는 건 하지 않는다 — 그 접속자는
         // 다음에 새로 접속할 때부터 이 값을 적용받는다.
         kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
+        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(this.allowBroadcast);
         //?}
         // 적용 결과는 채팅으로 알리고, 초대코드 재생성처럼 곧장 게임 화면으로 돌아간다.
         // 방 전원에게 바뀐 설정을 알렸으면(applyRoomSettings) 방장에게 "적용 완료"를 또 띄우지 않는다.
@@ -769,7 +838,8 @@ public class CustomRoomScreen extends Screen {
                 || this.maxPlayers != KfcudpClient.getActiveMaxPlayers()
                 || this.allowCheats != KfcudpClient.isActiveAllowCheats()
                 || this.publicRoom != KfcudpClient.isActivePublicRoom()
-                || this.forceRelay != kfc.udp.client.webrtc.P2PConfig.isRelayOnly();
+                || this.forceRelay != kfc.udp.client.webrtc.P2PConfig.isRelayOnly()
+                || this.allowBroadcast != kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
         //? if >=26.1 {
         /*if (!changed && this.publicRoom) {
             changed = !this.titleField.getValue().trim().equals(KfcudpClient.getActiveTitle());

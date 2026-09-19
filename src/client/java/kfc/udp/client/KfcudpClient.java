@@ -204,6 +204,21 @@ public class KfcudpClient implements ClientModInitializer {
                                 boolean publicRoom, String title) {}
     //?}
 
+    // "Custom Room"/"Join Room" 버튼을 누르면 실제 화면으로 바로 가는 대신, 한 번도 확인 안 눌렀다면
+    // SafetyWarningScreen을 먼저 보여준다 — "다시 보지 않기"를 눌렀으면(P2PConfig.isSafetyWarningDismissed)
+    // 곧장 target으로 간다.
+    //? if >=26.1 {
+    /*private static void kfcudp$openWithSafetyWarning(net.minecraft.client.Minecraft client, Screen parent, Screen target) {
+        if (kfc.udp.client.webrtc.P2PConfig.isSafetyWarningDismissed()) client.setScreenAndShow(target);
+        else client.setScreenAndShow(new kfc.udp.client.gui.SafetyWarningScreen(parent, target));
+    }
+    *///?} else {
+    private static void kfcudp$openWithSafetyWarning(MinecraftClient client, Screen parent, Screen target) {
+        if (kfc.udp.client.webrtc.P2PConfig.isSafetyWarningDismissed()) client.setScreen(target);
+        else client.setScreen(new kfc.udp.client.gui.SafetyWarningScreen(parent, target));
+    }
+    //?}
+
     // 26.3부터 publishServer에서 게임 모드 인자가 빠졌다 — 접속자 게임 모드는 IntegratedServerMaxPlayersMixin이
     // getForcedGameType을 가로채 방 게임 모드(activeGameMode)로 돌려준다.
     //? if >=26.3 {
@@ -325,7 +340,7 @@ public class KfcudpClient implements ClientModInitializer {
                 int btnY = 10;
                 Button joinBtn = Button.builder(
                                 Component.translatable("instant-p2p.join_room.title"),
-                                button -> client.setScreenAndShow(new RoomListScreen(screen))
+                                button -> kfcudp$openWithSafetyWarning(client, screen, new RoomListScreen(screen))
                         ).bounds(btnX, btnY, btnW, btnH).build();
                 Screens.getWidgets(screen).add(joinBtn);
                 kfcudp$injectedWidgets.put(screen, java.util.List.of(joinBtn));
@@ -542,7 +557,7 @@ public class KfcudpClient implements ClientModInitializer {
                 int btnY = 10;
                 ButtonWidget joinBtn = ButtonWidget.builder(
                                 Text.translatable("instant-p2p.join_room.title"),
-                                button -> client.setScreen(new RoomListScreen(screen))
+                                button -> kfcudp$openWithSafetyWarning(client, screen, new RoomListScreen(screen))
                         ).dimensions(btnX, btnY, btnW, btnH).build();
                 Screens.getButtons(screen).add(joinBtn);
                 kfcudp$injectedWidgets.put(screen, java.util.List.of(joinBtn));
@@ -1272,7 +1287,7 @@ public class KfcudpClient implements ClientModInitializer {
                             Component.translatable(activeInviteCode != null
                                     ? "instant-p2p.custom_room.edit_title"
                                     : "instant-p2p.custom_room.title"),
-                            button -> client.setScreenAndShow(new CustomRoomScreen(screen))
+                            button -> kfcudp$openWithSafetyWarning(client, screen, new CustomRoomScreen(screen))
                     ).bounds(btnX, nextY, btnW, btnH).build();
             Screens.getWidgets(screen).add(customRoomBtn);
             added.add(customRoomBtn);
@@ -1379,7 +1394,7 @@ public class KfcudpClient implements ClientModInitializer {
                             Text.translatable(activeInviteCode != null
                                     ? "instant-p2p.custom_room.edit_title"
                                     : "instant-p2p.custom_room.title"),
-                            button -> client.setScreen(new CustomRoomScreen(screen))
+                            button -> kfcudp$openWithSafetyWarning(client, screen, new CustomRoomScreen(screen))
                     ).dimensions(btnX, nextY, btnW, btnH).build();
             Screens.getButtons(screen).add(customRoomBtn);
             added.add(customRoomBtn);

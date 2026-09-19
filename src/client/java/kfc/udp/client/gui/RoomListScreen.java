@@ -7,6 +7,7 @@ import kfc.udp.client.webrtc.PublicRoomBrowser;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
+import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.StringWidget;
 import net.minecraft.client.gui.components.Tooltip;
@@ -18,6 +19,7 @@ import net.minecraft.client.gui.DrawContext;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.gui.widget.ButtonWidget;
 import net.minecraft.client.gui.widget.CheckboxWidget;
+import net.minecraft.client.gui.widget.CyclingButtonWidget;
 import net.minecraft.client.gui.widget.TextFieldWidget;
 import net.minecraft.client.gui.widget.TextWidget;
 import net.minecraft.screen.ScreenTexts;
@@ -63,6 +65,16 @@ public class RoomListScreen extends Screen {
     private static final int CHECKBOX_GAP = 10;
     /** 체크박스를 버튼과 같은 줄에서 세로 가운데에 오게 이만큼 내린다. */
     private static final int CHECKBOX_DY = 2;
+
+    /** 방송 필터 순환 버튼의 라벨 번역 키 접미사 — enum 이름을 그대로 안 쓰는 이유는
+     * lang 키를 소문자·스네이크케이스 관례로 맞추기 위함. */
+    private static String broadcastFilterKey(kfc.udp.client.webrtc.P2PConfig.BroadcastFilter f) {
+        return switch (f) {
+            case ALL -> "all";
+            case ALLOWED_ONLY -> "allowed_only";
+            case DISALLOWED_ONLY -> "disallowed_only";
+        };
+    }
 
     static final int TITLE_Y = CHANNEL_Y + (CHANNEL_FIELD_H - 9) / 2;
 
@@ -129,6 +141,7 @@ public class RoomListScreen extends Screen {
     private static final Component CODE_LABEL_TEXT = Component.translatable("instant-p2p.join_room.code_label");
     private static final Component JOIN_TEXT       = Component.translatable("instant-p2p.join_room.join");
     private static final Component FORCE_RELAY_TEXT = Component.translatable("instant-p2p.force_relay");
+    private static final Component FORCE_RELAY_TOOLTIP_TEXT = Component.translatable("instant-p2p.force_relay_tooltip");
     private static final Component SEARCH_LABEL_TEXT = Component.translatable("instant-p2p.room_list.search_label");
     private static final Component QUICK_START_TEXT = Component.translatable("instant-p2p.room_list.quick_start");
     private static final Component CHANNEL_SETTINGS_TEXT = Component.translatable("instant-p2p.channel.settings");
@@ -136,6 +149,8 @@ public class RoomListScreen extends Screen {
     private static final Component BLOCK_TOOLTIP_TEXT = Component.translatable("instant-p2p.room_list.block_tooltip");
     private static final Component CLEANUP_TEXT = Component.translatable("instant-p2p.room_list.cleanup");
     private static final Component HIDE_OTHER_VERSIONS_TEXT = Component.translatable("instant-p2p.room_list.hide_other_versions");
+    private static final Component HIDE_OTHER_VERSIONS_TOOLTIP_TEXT = Component.translatable("instant-p2p.room_list.hide_other_versions_tooltip");
+    private static final Component BROADCAST_FILTER_TEXT = Component.translatable("instant-p2p.room_list.broadcast_filter");
     private static final Component REMOVED_TEXT = Component.translatable("instant-p2p.room_list.removed");
     private static final Component OTHER_VERSION_TOOLTIP_TEXT = Component.translatable("instant-p2p.room_list.other_version_tooltip");
     *///?} else {
@@ -144,6 +159,7 @@ public class RoomListScreen extends Screen {
     private static final Text CODE_LABEL_TEXT = Text.translatable("instant-p2p.join_room.code_label");
     private static final Text JOIN_TEXT       = Text.translatable("instant-p2p.join_room.join");
     private static final Text FORCE_RELAY_TEXT = Text.translatable("instant-p2p.force_relay");
+    private static final Text FORCE_RELAY_TOOLTIP_TEXT = Text.translatable("instant-p2p.force_relay_tooltip");
     private static final Text SEARCH_LABEL_TEXT = Text.translatable("instant-p2p.room_list.search_label");
     private static final Text QUICK_START_TEXT = Text.translatable("instant-p2p.room_list.quick_start");
     private static final Text CHANNEL_SETTINGS_TEXT = Text.translatable("instant-p2p.channel.settings");
@@ -151,6 +167,8 @@ public class RoomListScreen extends Screen {
     private static final Text BLOCK_TOOLTIP_TEXT = Text.translatable("instant-p2p.room_list.block_tooltip");
     private static final Text CLEANUP_TEXT = Text.translatable("instant-p2p.room_list.cleanup");
     private static final Text HIDE_OTHER_VERSIONS_TEXT = Text.translatable("instant-p2p.room_list.hide_other_versions");
+    private static final Text HIDE_OTHER_VERSIONS_TOOLTIP_TEXT = Text.translatable("instant-p2p.room_list.hide_other_versions_tooltip");
+    private static final Text BROADCAST_FILTER_TEXT = Text.translatable("instant-p2p.room_list.broadcast_filter");
     private static final Text REMOVED_TEXT = Text.translatable("instant-p2p.room_list.removed");
     private static final Text OTHER_VERSION_TOOLTIP_TEXT = Text.translatable("instant-p2p.room_list.other_version_tooltip");
     //?}
@@ -230,6 +248,9 @@ public class RoomListScreen extends Screen {
 
         // 초대코드 입력란 바로 위 줄 — 체크박스 둘을 가로로 이어 붙여 화면 가운데에 둔다(라벨 길이가 언어마다 달라
         // 만든 뒤 폭을 잰다).
+        // Checkbox.Builder.build()의 tooltip()은 라벨이 한 줄을 넘칠 때만(overflowsRowLimit) 실제로
+        // setTooltip을 불러준다(바이트코드로 확인) — 우리 라벨은 전부 한 줄이라 빌더로는 절대 안 뜬다.
+        // build() 뒤에 Checkbox.setTooltip을 직접 불러야 라벨 길이와 무관하게 항상 붙는다.
         var hideVersionsCheckbox = Checkbox.builder(HIDE_OTHER_VERSIONS_TEXT, this.font)
                 .pos(0, sectionRowY + CHECKBOX_DY)
                 .selected(kfc.udp.client.webrtc.P2PConfig.isHideOtherVersions())
@@ -238,16 +259,38 @@ public class RoomListScreen extends Screen {
                     this.refreshRooms();
                 })
                 .build();
+        hideVersionsCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(HIDE_OTHER_VERSIONS_TOOLTIP_TEXT));
         var forceRelayCheckbox = Checkbox.builder(FORCE_RELAY_TEXT, this.font)
                 .pos(0, sectionRowY + CHECKBOX_DY)
                 .selected(kfc.udp.client.webrtc.P2PConfig.isRelayOnly())
                 .onValueChange((cb, value) -> kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value))
                 .build();
-        int checkboxX = cx - (hideVersionsCheckbox.getWidth() + CHECKBOX_GAP + forceRelayCheckbox.getWidth()) / 2;
+        forceRelayCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(FORCE_RELAY_TOOLTIP_TEXT));
+        // 오른쪽에 하나 더 — 방송 필터. 체크박스(2상태)로는 "비방송만 보기"를 표현할 수 없어서 순환
+        // 버튼(전체/허용만/비허용만 3상태)으로 둔다. 순수 로컬 필터 — PublicRoomAnnouncer가 채널
+        // 문자열에 붙이는 태그를 읽기만 한다(P2PConfig.announcedChannel/isBroadcastTagged 참고).
+        int broadcastFilterW = 130;
+        var broadcastFilterButton = net.minecraft.client.gui.components.CycleButton.builder(
+                        (kfc.udp.client.webrtc.P2PConfig.BroadcastFilter f) -> Component.translatable(
+                                "instant-p2p.room_list.broadcast_filter." + broadcastFilterKey(f)),
+                        kfc.udp.client.webrtc.P2PConfig.getBroadcastFilter())
+                .withValues(kfc.udp.client.webrtc.P2PConfig.BroadcastFilter.values())
+                .withTooltip(f -> net.minecraft.client.gui.components.Tooltip.create(Component.translatable(
+                        "instant-p2p.room_list.broadcast_filter_tooltip." + broadcastFilterKey(f))))
+                .create(0, sectionRowY, broadcastFilterW, 20, BROADCAST_FILTER_TEXT, (btn, value) -> {
+                    kfc.udp.client.webrtc.P2PConfig.setBroadcastFilter(value);
+                    this.refreshRooms();
+                });
+        // 왼쪽부터 다른 버전 숨기기 · 방송 필터(가운데) · 중계 통신 강제(오른쪽) 순으로 배치한다.
+        int checkboxesW = hideVersionsCheckbox.getWidth() + CHECKBOX_GAP + broadcastFilterW
+                + CHECKBOX_GAP + forceRelayCheckbox.getWidth();
+        int checkboxX = cx - checkboxesW / 2;
         hideVersionsCheckbox.setX(checkboxX);
-        forceRelayCheckbox.setX(checkboxX + hideVersionsCheckbox.getWidth() + CHECKBOX_GAP);
+        broadcastFilterButton.setX(checkboxX + hideVersionsCheckbox.getWidth() + CHECKBOX_GAP);
+        forceRelayCheckbox.setX(broadcastFilterButton.getX() + broadcastFilterW + CHECKBOX_GAP);
         this.addRenderableWidget(hideVersionsCheckbox);
         this.addRenderableWidget(forceRelayCheckbox);
+        this.addRenderableWidget(broadcastFilterButton);
 
         // 검색 줄 — 왼쪽 삭제된 방 정리(채널 설정 버튼과 왼쪽 끝을 맞춤), 오른쪽 차단 목록(랜덤 접속과 오른쪽 끝을 맞춤,
         // 아래에서 추가), 가운데 검색창이 그 사이를 6px씩 띄우고 채운다.
@@ -354,6 +397,7 @@ public class RoomListScreen extends Screen {
         var hideVersionsCheckbox = CheckboxWidget.builder(HIDE_OTHER_VERSIONS_TEXT, this.textRenderer)
                 .pos(0, sectionRowY + CHECKBOX_DY)
                 .checked(kfc.udp.client.webrtc.P2PConfig.isHideOtherVersions())
+                .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(HIDE_OTHER_VERSIONS_TOOLTIP_TEXT))
                 .callback((cb, value) -> {
                     kfc.udp.client.webrtc.P2PConfig.setHideOtherVersions(value);
                     this.refreshRooms();
@@ -362,13 +406,49 @@ public class RoomListScreen extends Screen {
         var forceRelayCheckbox = CheckboxWidget.builder(FORCE_RELAY_TEXT, this.textRenderer)
                 .pos(0, sectionRowY + CHECKBOX_DY)
                 .checked(kfc.udp.client.webrtc.P2PConfig.isRelayOnly())
+                .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(FORCE_RELAY_TOOLTIP_TEXT))
                 .callback((cb, value) -> kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value))
                 .build();
-        int checkboxX = cx - (hideVersionsCheckbox.getWidth() + CHECKBOX_GAP + forceRelayCheckbox.getWidth()) / 2;
+        // 오른쪽에 하나 더 — 방송 필터. 체크박스(2상태)로는 "비방송만 보기"를 표현할 수 없어서 순환
+        // 버튼(전체/허용만/비허용만 3상태)으로 둔다. 순수 로컬 필터 — PublicRoomAnnouncer가 채널
+        // 문자열에 붙이는 태그를 읽기만 한다(P2PConfig.announcedChannel/isBroadcastTagged 참고).
+        int broadcastFilterW = 130;
+        //? if >=1.21.11 <26.1 {
+        /*var broadcastFilterButton = CyclingButtonWidget.builder(
+                        (kfc.udp.client.webrtc.P2PConfig.BroadcastFilter f) -> Text.translatable(
+                                "instant-p2p.room_list.broadcast_filter." + broadcastFilterKey(f)),
+                        kfc.udp.client.webrtc.P2PConfig.getBroadcastFilter())
+                .values(kfc.udp.client.webrtc.P2PConfig.BroadcastFilter.values())
+                .tooltip(f -> net.minecraft.client.gui.tooltip.Tooltip.of(Text.translatable(
+                        "instant-p2p.room_list.broadcast_filter_tooltip." + broadcastFilterKey(f))))
+                .build(0, sectionRowY, broadcastFilterW, 20, BROADCAST_FILTER_TEXT, (btn, value) -> {
+                    kfc.udp.client.webrtc.P2PConfig.setBroadcastFilter(value);
+                    this.refreshRooms();
+                });
+        *///?}
+        //? if <1.21.11 {
+        var broadcastFilterButton = CyclingButtonWidget.builder(
+                        (kfc.udp.client.webrtc.P2PConfig.BroadcastFilter f) -> Text.translatable(
+                                "instant-p2p.room_list.broadcast_filter." + broadcastFilterKey(f)))
+                .values(kfc.udp.client.webrtc.P2PConfig.BroadcastFilter.values())
+                .initially(kfc.udp.client.webrtc.P2PConfig.getBroadcastFilter())
+                .tooltip(f -> net.minecraft.client.gui.tooltip.Tooltip.of(Text.translatable(
+                        "instant-p2p.room_list.broadcast_filter_tooltip." + broadcastFilterKey(f))))
+                .build(0, sectionRowY, broadcastFilterW, 20, BROADCAST_FILTER_TEXT, (btn, value) -> {
+                    kfc.udp.client.webrtc.P2PConfig.setBroadcastFilter(value);
+                    this.refreshRooms();
+                });
+        //?}
+        // 왼쪽부터 다른 버전 숨기기 · 방송 필터(가운데) · 중계 통신 강제(오른쪽) 순으로 배치한다.
+        int checkboxesW = hideVersionsCheckbox.getWidth() + CHECKBOX_GAP + broadcastFilterW
+                + CHECKBOX_GAP + forceRelayCheckbox.getWidth();
+        int checkboxX = cx - checkboxesW / 2;
         hideVersionsCheckbox.setX(checkboxX);
-        forceRelayCheckbox.setX(checkboxX + hideVersionsCheckbox.getWidth() + CHECKBOX_GAP);
+        broadcastFilterButton.setX(checkboxX + hideVersionsCheckbox.getWidth() + CHECKBOX_GAP);
+        forceRelayCheckbox.setX(broadcastFilterButton.getX() + broadcastFilterW + CHECKBOX_GAP);
         this.addDrawableChild(hideVersionsCheckbox);
         this.addDrawableChild(forceRelayCheckbox);
+        this.addDrawableChild(broadcastFilterButton);
 
         // 검색 줄 — 왼쪽 삭제된 방 정리(채널 설정 버튼과 왼쪽 끝을 맞춤), 오른쪽 차단 목록(랜덤 접속과 오른쪽 끝을 맞춤,
         // 아래에서 추가), 가운데 검색창이 그 사이를 6px씩 띄우고 채운다.
@@ -564,9 +644,13 @@ public class RoomListScreen extends Screen {
 
     private void refreshRooms() {
         List<PublicRoomBrowser.RoomEntry> all = this.displayRooms();
-        // 채널 목록과 버전 숨기기까지 캐시 키에 넣는다 — 채널 설정 화면에서 돌아오면 바로 다시 걸러진다.
+        // 채널 목록·버전 숨기기·방송 필터까지 캐시 키에 넣는다 — 안 넣으면 그 값만 바뀌었을 땐
+        // all/searchQuery/banVersion이 그대로라 재계산을 건너뛰어서, 체크박스를 눌러도 화면을
+        // 나갔다 들어와야(다른 값이 바뀌어 캐시가 깨져야) 반영되는 것처럼 보인다 — 방송 필터가
+        // 실제로 이 버그였다.
         String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey()
-                + (kfc.udp.client.webrtc.P2PConfig.isHideOtherVersions() ? "#v" : "");
+                + (kfc.udp.client.webrtc.P2PConfig.isHideOtherVersions() ? "#v" : "")
+                + "#b" + kfc.udp.client.webrtc.P2PConfig.getBroadcastFilter();
         int banVersion = kfc.udp.client.webrtc.P2PBanManager.banListVersion();
         if (all != this.filterSource || !channel.equals(this.filterChannel)
                 || !this.searchQuery.equals(this.filterQuery) || banVersion != this.filterBanVersion) {
@@ -575,9 +659,16 @@ public class RoomListScreen extends Screen {
             List<String> mine = kfc.udp.client.webrtc.P2PConfig.getChannels();
             boolean mineAnd = kfc.udp.client.webrtc.P2PConfig.isChannelAnd();
             boolean hideOtherVersions = kfc.udp.client.webrtc.P2PConfig.isHideOtherVersions();
+            kfc.udp.client.webrtc.P2PConfig.BroadcastFilter broadcastFilter = kfc.udp.client.webrtc.P2PConfig.getBroadcastFilter();
             this.filteredRooms = all.stream()
-                    .filter(r -> kfc.udp.client.webrtc.P2PConfig.roomVisible(r.channel(), r.channelAnd(), mine, mineAnd))
+                    .filter(r -> kfc.udp.client.webrtc.P2PConfig.roomVisible(
+                            kfc.udp.client.webrtc.P2PConfig.stripBroadcastTag(r.channel()), r.channelAnd(), mine, mineAnd))
                     .filter(r -> !hideOtherVersions || r.sameVersion())
+                    .filter(r -> switch (broadcastFilter) {
+                        case ALL -> true;
+                        case ALLOWED_ONLY -> kfc.udp.client.webrtc.P2PConfig.isBroadcastTagged(r.channel());
+                        case DISALLOWED_ONLY -> !kfc.udp.client.webrtc.P2PConfig.isBroadcastTagged(r.channel());
+                    })
                     .filter(r -> !kfc.udp.client.webrtc.P2PBanManager.isPlayerBanned(r.hostUuid()))
                     .filter(r -> !kfc.udp.client.webrtc.P2PBanManager.isBannedIn(r.bannedHashes(), r.code(), myUuid))
                     .filter(r -> q.isEmpty()
