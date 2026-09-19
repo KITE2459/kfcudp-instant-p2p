@@ -27,7 +27,14 @@ import java.util.List;
 final class ConfirmPopup {
 
     private static final int PAD = 8, LINE = 13, BTN_W = 80, BTN_H = 20, BTN_GAP = 8, MIN_W = 200;
+    // 26.3에서 키 번호 체계가 통째로 바뀌었다(Enter 257 → 40, Esc 256 → 41) — 26.x는 바닐라 상수를 그대로 쓴다.
+    //? if >=26.1 {
+    /*private static final int KEY_ENTER = com.mojang.blaze3d.platform.InputConstants.KEY_RETURN,
+            KEY_KP_ENTER = com.mojang.blaze3d.platform.InputConstants.KEY_NUMPADENTER,
+            KEY_ESCAPE = com.mojang.blaze3d.platform.InputConstants.KEY_ESCAPE;
+    *///?} else {
     private static final int KEY_ENTER = 257, KEY_KP_ENTER = 335, KEY_ESCAPE = 256;
+    //?}
     private static final int DIM_COLOR = 0xA0000000, BG_COLOR = 0xFF000000, BORDER_COLOR = 0xFFA0A0A0;
     private static final int OTHERS_COLOR = 0xFFFFFF55;
     private static final long BLOCKED_JOIN_TIMEOUT_MS = 10_000;

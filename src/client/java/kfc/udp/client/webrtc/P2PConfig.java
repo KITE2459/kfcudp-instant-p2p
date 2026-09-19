@@ -12,6 +12,8 @@ import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * P2P 인프라 접속 설정 (시그널링/STUN/TURN) — 호스트·조인 공용.
@@ -24,7 +26,8 @@ import java.nio.file.Path;
  *   -Dkfcudp.turn.user=USER  -Dkfcudp.turn.pass=PASS
  * </pre>
  * 현재 배치 (오라클 클라우드 kite-private-cloud.kro.kr):
- * villas-signaling → *:8088, coturn → *:3478
+ * mc-signaling → *:8090(villas-signaling에서 갈라져 나온 실험용 사본 — mc-signaling/deploy-mc-signaling.sh
+ * 참고, 8088의 villas-signaling은 그대로 둔 채 별도 포트로 떠 있다), coturn → *:3478(양쪽이 같이 쓴다).
  */
 public final class P2PConfig {
 
@@ -42,9 +45,10 @@ public final class P2PConfig {
             .map(c -> c.getMetadata().getVersion().getFriendlyString())
             .orElse("unknown");
 
-    /** villas-signaling WebSocket 주소 */
+    /** mc-signaling WebSocket 주소 — room_update 델타 메시지 최적화가 여기(8090)에만 있고
+     * 8088의 villas-signaling은 옛 프로토콜 그대로다(클래스 주석 참고). */
     public static final String SIGNALING_URL =
-            System.getProperty("kfcudp.signaling", "ws://kite-private-cloud.kro.kr:8088");
+            System.getProperty("kfcudp.signaling", "ws://kite-private-cloud.kro.kr:8090");
 
     /** coturn STUN (무인증) */
     public static final String STUN_URL =
@@ -92,22 +96,22 @@ public final class P2PConfig {
         return o != null && o.has("relayOnly") && o.get("relayOnly").getAsBoolean();
     }
 
-    /** 방 목록 실시간 갱신(RoomListScreen) — 끄면 1분마다·새로고침 버튼으로만 갱신한다. 기본 켜짐. */
-    private static volatile boolean liveRoomList = loadLiveRoomList();
+    /** 방 목록에서 내 마인크래프트 버전과 다른 방을 숨길지 — 기본은 보여준다(회색으로). */
+    private static volatile boolean hideOtherVersions = loadHideOtherVersions();
 
-    public static boolean isLiveRoomList() {
-        return liveRoomList;
+    public static boolean isHideOtherVersions() {
+        return hideOtherVersions;
     }
 
-    public static void setLiveRoomList(boolean value) {
-        if (liveRoomList == value) return;
-        liveRoomList = value;
-        updateSettingsFile(o -> o.addProperty("liveRoomList", value));
+    public static void setHideOtherVersions(boolean value) {
+        if (hideOtherVersions == value) return;
+        hideOtherVersions = value;
+        updateSettingsFile(o -> o.addProperty("hideOtherVersions", value));
     }
 
-    private static boolean loadLiveRoomList() {
+    private static boolean loadHideOtherVersions() {
         JsonObject o = readSettingsFile();
-        return o == null || !o.has("liveRoomList") || o.get("liveRoomList").getAsBoolean();
+        return o != null && o.has("hideOtherVersions") && o.get("hideOtherVersions").getAsBoolean();
     }
 
     /**
@@ -157,70 +161,102 @@ public final class P2PConfig {
      * 구분하지 않는다(오타로 채널이 갈리는 걸 막기 위한 선택 — 필요하면 나중에
      * 구분하게 바꿀 수 있다). 빈 문자열은 저장 시 기본값으로 되돌린다.
      */
-    // 채널은 두 칸(채널 1·2)이다 — 둘 다 같은 방끼리만 서로 보인다. 방 공지와 목록 필터는 두 칸을 합친 값
-    // 하나(getChannel)만 주고받아서, 공지 형식·필터 코드는 채널이 한 칸일 때와 똑같다.
-    private static volatile String channel = loadChannel("channel");
-    private static volatile String channel2 = loadChannel("channel2");
+    // 채널은 여러 개다 — 쉼표로 구분해 저장하고("normal,minedapple"), 방을 공개할 때 목록 전체와 or/and 규칙이
+    // 같이 실려 나간다. 보는 쪽은 자기 채널 목록으로 그 규칙을 판정한다(roomVisible).
+    private static volatile List<String> channels = loadChannels();
+    /** 내 방을 공개할 때의 규칙 — true(and)면 접속자가 내 채널을 전부 갖고 있어야 보이고, false(or)면 하나만 겹쳐도 보인다. */
+    private static volatile boolean channelAnd = loadChannelAnd();
 
-    /** 방 공지·목록 필터가 쓰는 채널 키 — 채널 1과 2를 합친 값. */
+    /** 내 채널 목록 — 비어 있지 않다(기본 "normal"). */
+    public static List<String> getChannels() {
+        return channels;
+    }
+
+    /** 방 공지에 실리는 채널 문자열("a,b") — 입력란 표시에도 그대로 쓴다. */
     public static String getChannel() {
-        return composeChannel(channel, channel2);
+        return String.join(",", channels);
     }
 
-    /** "채널 가리기" — 켜면 채널 입력란 대신 "채널 보안 활성됨" 상자를 보여준다(방송 화면 등에 채널 이름이 드러나지
-     * 않게). 화면에서만 가리고 채널 값 자체는 그대로 쓰인다. */
-    private static volatile boolean hideChannel = loadHideChannel();
-
-    public static boolean isHideChannel() {
-        return hideChannel;
+    /** 채널 목록 + 규칙을 한 문자열로 — 방 설정이 바뀌었는지 비교할 때 쓴다. */
+    public static String getChannelKey() {
+        return getChannel() + (channelAnd ? "&" : "|");
     }
 
-    public static void setHideChannel(boolean value) {
-        if (hideChannel == value) return;
-        hideChannel = value;
-        updateSettingsFile(o -> o.addProperty("hideChannel", value));
+    public static boolean isChannelAnd() {
+        return channelAnd;
     }
 
-    private static boolean loadHideChannel() {
-        JsonObject o = readSettingsFile();
-        return o != null && o.has("hideChannel") && o.get("hideChannel").getAsBoolean();
+    public static void setChannelAnd(boolean value) {
+        if (channelAnd == value) return;
+        channelAnd = value;
+        updateSettingsFile(o -> o.addProperty("channelAnd", value));
     }
 
-    /** 입력란용 — part 0 = 채널 1, 1 = 채널 2. */
-    public static String getChannelPart(int part) {
-        return part == 0 ? channel : channel2;
+    /** 채널 개수 상한 — 채널마다 lobby에 접속(방장 1개, 구경꾼 샤드 수만큼)하므로 소켓 수를 묶어 둔다. */
+    public static final int MAX_CHANNELS = 5;
+    /** 채널 하나의 글자 수 상한 — 부하와는 무관(채널 이름은 고정 크기 해시로만 쓰인다), 칩 표시가 줄바꿈
+     * 없이 들어가고 공지 payload 크기를 예측 가능하게 두기 위함. */
+    public static final int MAX_CHANNEL_LENGTH = 24;
+
+    /** 쉼표로 구분한 입력을 목록으로 — 공백은 걷어내고, 빈 항목("a,,b"의 가운데, 맨 앞)은 기본 채널로 친다.
+     * 맨 끝 쉼표 하나("a,")는 아직 입력 중인 것으로 보고 무시한다. 대소문자 무시 중복 제거, MAX_CHANNELS개까지,
+     * 채널 하나당 MAX_CHANNEL_LENGTH자까지(넘으면 자른다). */
+    public static List<String> parseChannels(String text) {
+        List<String> out = new ArrayList<>();
+        String[] parts = (text == null ? "" : text).split(",", -1);
+        int n = parts.length;
+        if (n > 1 && parts[n - 1].isBlank()) n--;
+        for (int i = 0; i < n; i++) {
+            String t = parts[i].trim();
+            if (t.isEmpty()) t = DEFAULT_CHANNEL;
+            if (t.length() > MAX_CHANNEL_LENGTH) t = t.substring(0, MAX_CHANNEL_LENGTH);
+            if (out.stream().anyMatch(t::equalsIgnoreCase)) continue;
+            if (out.size() >= MAX_CHANNELS) break;
+            out.add(t);
+        }
+        return List.copyOf(out);
     }
 
-    public static void setChannelPart(int part, String value) {
-        String normalized = normalizeChannel(value);
-        if (getChannelPart(part).equals(normalized)) return;
-        String key = part == 0 ? "channel" : "channel2";
-        if (part == 0) channel = normalized;
-        else channel2 = normalized;
-        updateSettingsFile(o -> o.addProperty(key, normalized));
+    public static void setChannels(String text) {
+        List<String> parsed = parseChannels(text);
+        if (parsed.equals(channels)) return;
+        channels = parsed;
+        updateSettingsFile(o -> o.addProperty("channels", String.join(",", parsed)));
     }
 
-    /** 채널 1·2를 getChannel과 같은 형식으로 합친다 — 방 설정 화면이 저장 전 값끼리 비교할 때 쓴다. */
-    public static String composeChannel(String part1, String part2) {
-        return normalizeChannel(part1) + CHANNEL_SEPARATOR + normalizeChannel(part2);
+    /** 규칙을 적용한 "실제 채널" 목록 — or면 적은 채널 하나하나가 각각 채널이고, and면 전부를 묶은 채널 하나다
+     * (소문자·정렬·입력 불가능한 구분 문자로 이어서, "a,b"를 and로 쓰는 사람끼리만 같은 값이 된다). lobby 이름과
+     * 보임 판정이 둘 다 이 목록을 쓴다 — 채널이 하나라도 겹쳐야 서로 보인다. */
+    public static List<String> effectiveChannels(List<String> channels, boolean and) {
+        if (!and || channels.size() <= 1) return channels;
+        return List.of(channels.stream().map(c -> c.toLowerCase(java.util.Locale.ROOT)).sorted()
+                .collect(java.util.stream.Collectors.joining(String.valueOf(AND_SEPARATOR))));
     }
 
-    /** 두 채널 키가 같은 채널을 가리키는지 — 대소문자 구분 없이 비교. */
-    public static boolean channelMatches(String a, String b) {
-        return a != null && b != null && a.equalsIgnoreCase(b);
+    public static List<String> getEffectiveChannels() {
+        return effectiveChannels(channels, channelAnd);
     }
+
+    /** 이 방이 내게 보이는지 — 방장의 실제 채널과 내 실제 채널이 하나라도 겹치면. 대소문자 구분 없음. */
+    public static boolean roomVisible(String hostChannels, boolean hostAnd, List<String> mine, boolean mineAnd) {
+        List<String> host = effectiveChannels(parseChannels(hostChannels), hostAnd);
+        List<String> me = effectiveChannels(mine, mineAnd);
+        return host.stream().anyMatch(h -> me.stream().anyMatch(h::equalsIgnoreCase));
+    }
+
+    /** and 묶음 채널의 구분 문자 — 입력란으로는 칠 수 없는 제어 문자라 "a&b" 같은 채널 이름과 안 겹친다. */
+    private static final char AND_SEPARATOR = '\u001F';
 
     private static final String DEFAULT_CHANNEL = "normal";
-    /** 두 칸을 합칠 때 사이에 넣는 문자 — 입력란으로는 칠 수 없는 제어 문자라 "a"+"b/c"와 "a/b"+"c" 같은 충돌이 없다. */
-    private static final char CHANNEL_SEPARATOR = '';
 
-    private static String normalizeChannel(String value) {
-        return value == null || value.isBlank() ? DEFAULT_CHANNEL : value.trim();
+    private static List<String> loadChannels() {
+        JsonObject o = readSettingsFile();
+        return parseChannels(o == null || !o.has("channels") ? null : o.get("channels").getAsString());
     }
 
-    private static String loadChannel(String key) {
+    private static boolean loadChannelAnd() {
         JsonObject o = readSettingsFile();
-        return o == null || !o.has(key) ? DEFAULT_CHANNEL : normalizeChannel(o.get(key).getAsString());
+        return o != null && o.has("channelAnd") && o.get("channelAnd").getAsBoolean();
     }
 
     /**
@@ -253,15 +289,28 @@ public final class P2PConfig {
         return Math.floorMod(roomCode.hashCode(), PUBLIC_ROOM_SHARD_COUNT);
     }
 
-    /** shard(0..{@link #PUBLIC_ROOM_SHARD_COUNT}-1)번 공개 방 목록 lobby의 실제 경로. 마인크래프트
+    /** 채널 하나의 shard(0..{@link #PUBLIC_ROOM_SHARD_COUNT}-1)번 공개 방 목록 lobby의 실제 경로. 마인크래프트
      * 버전마다 로비가 따로라, 서로 접속도 못 하는 다른 버전의 방 공지·목록 갱신은 아예 오가지 않는다
      * (예전엔 전 버전이 로비 4개에 섞여 서로의 브로드캐스트를 받아 놓고 화면에서 버렸다). */
-    public static String publicRoomsLobbyId(int shard) {
-        return PUBLIC_ROOMS_LOBBY_PREFIX + "_" + LOBBY_VERSION_TAG + "_" + shard;
+    public static String publicRoomsLobbyId(String channel, int shard) {
+        // lobby는 채널마다 따로다 — 내 채널의 방만 받으니 서버가 보내는 명단이 채널 단위로 작아진다. 채널 이름은
+        // 해시로만 나간다(서버 로그·URL에 채널 이름이 안 남게). 버전은 lobby 이름에 넣지 않는다 — 다른 버전의 방도
+        // 목록에 보이게(회색 표시) 하고, 버전은 방 정보로 판단한다.
+        return PUBLIC_ROOMS_LOBBY_PREFIX + "_" + channelTag(channel) + "_" + shard;
     }
 
-    /** URL 경로 한 조각에 들어가도록 버전 문자열에서 안전한 문자만 남긴다. */
-    private static final String LOBBY_VERSION_TAG = MC_VERSION.replaceAll("[^A-Za-z0-9._-]", "_");
+    /** 채널 이름(대소문자 무시)의 SHA-256 앞 8바이트 — lobby 이름용. */
+    private static String channelTag(String channel) {
+        try {
+            byte[] d = java.security.MessageDigest.getInstance("SHA-256")
+                    .digest(channel.toLowerCase(java.util.Locale.ROOT).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(16);
+            for (int i = 0; i < 8; i++) sb.append(String.format("%02x", d[i]));
+            return sb.toString();
+        } catch (java.security.NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
 
     // ── 파이프 버퍼 한도 (지연 ↔ 처리량 트레이드오프) ─────────────────────────
 

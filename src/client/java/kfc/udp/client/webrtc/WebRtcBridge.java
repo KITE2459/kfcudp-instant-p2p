@@ -122,11 +122,12 @@ public class WebRtcBridge {
         unpublishPublicRoom();
     }
 
-    /** 방을 공개 목록에 올린다 — PublicRoomAnnouncer 클래스 주석 참고. hostUuid는
-     * 개인 차단(=밴) 기능용(P2PBanManager 클래스 주석 참고). */
+    /** 방을 공개 목록에 올리거나 이미 올라와 있으면 정보를 갱신한다 — PublicRoomAnnouncer 클래스
+     * 주석 참고(방 코드·채널이 그대로면 재접속 없이 메시지만 보낸다). hostUuid는 개인 차단(=밴)
+     * 기능용(P2PBanManager 클래스 주석 참고). */
     public static void publishPublicRoom(String roomCode, String title, String hostNickname, String hostUuid,
                                           int currentPlayers, int maxPlayers) {
-        publicRoomAnnouncer.start(roomCode, title, hostNickname, hostUuid, currentPlayers, maxPlayers);
+        publicRoomAnnouncer.publish(roomCode, title, hostNickname, hostUuid, currentPlayers, maxPlayers);
     }
 
     public static void unpublishPublicRoom() {
@@ -139,7 +140,7 @@ public class WebRtcBridge {
         publicRoomAnnouncer.republishNow();
     }
 
-    /** 공개 방 인원(현재/최대)이 바뀔 때마다 호출 — 재발행 자체는 디바운스된다(PublicRoomAnnouncer 참고). */
+    /** 공개 방 인원(현재/최대)이 바뀔 때마다 호출 — 재접속 없이 메시지만 보낸다(PublicRoomAnnouncer 참고). */
     public static void updatePublicRoomPlayerCount(int currentPlayers, int maxPlayers) {
         publicRoomAnnouncer.updatePlayerCount(currentPlayers, maxPlayers);
     }

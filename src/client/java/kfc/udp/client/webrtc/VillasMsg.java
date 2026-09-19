@@ -12,6 +12,7 @@ import java.util.List;
  *   {"description":{"spd":"...","type":"offer|answer"}}   ← 필드명이 "spd" (서버 오타 그대로)
  *   {"candidate":{"spd":"candidate:...","mid":"0"}}
  *   {"servers":[{"url":..,"user":..,"pass":..,"realm":..,"expires":..}]}
+ *   {"room_update":{"code":..,"title":..,..}}                            ← mc-signaling 전용 확장
  * </pre>
  * 주의: 서버 수신 한도 4096바이트(maxMessageSize), 접속 직후 클라이언트가
  * signals 메시지({} 가능)를 1회 먼저 보내야 하며, 릴레이 메시지에는 발신자 정보가 없다.
@@ -27,6 +28,28 @@ final class VillasMsg {
 
     static String candidate(String candidate, String mid) {
         return "{\"candidate\":{\"spd\":\"" + escape(candidate) + "\",\"mid\":\"" + escape(mid) + "\"}}";
+    }
+
+    /** mc-signaling 전용 확장 — 공개 방 정보 하나(PublicRoomAnnouncer 클래스 주석 참고). 서버는
+     * 내용을 해석하지 않고 같은 로비의 다른 peer에게 그대로 중계한다. 보낸 peer 이름이 릴레이에
+     * 안 실리므로 code를 본문에 직접 담는다. */
+    static String roomUpdate(String code, String title, String nickname, String channel, boolean channelAnd,
+                              int currentPlayers, int maxPlayers, String version, String hostUuid,
+                              String bannedHashes, long hostRttMs, long openedAtMs) {
+        return "{\"room_update\":{"
+                + "\"code\":\"" + escape(code) + "\","
+                + "\"title\":\"" + escape(title) + "\","
+                + "\"nickname\":\"" + escape(nickname) + "\","
+                + "\"channel\":\"" + escape(channel) + "\","
+                + "\"channel_and\":" + channelAnd + ","
+                + "\"current\":" + currentPlayers + ","
+                + "\"max\":" + maxPlayers + ","
+                + "\"version\":\"" + escape(version) + "\","
+                + "\"host_uuid\":\"" + escape(hostUuid) + "\","
+                + "\"banned_hashes\":\"" + escape(bannedHashes) + "\","
+                + "\"host_rtt_ms\":" + hostRttMs + ","
+                + "\"opened_at_ms\":" + openedAtMs
+                + "}}";
     }
 
     static boolean has(String json, String key) {

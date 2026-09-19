@@ -319,10 +319,10 @@ public class BlockedPlayersScreen extends Screen {
     /*@Override
     public boolean mouseClicked(net.minecraft.client.input.MouseButtonEvent click, boolean doubleClick) {
         if (this.popup.isOpen()) {
-            if (click.button() == 0) this.popup.mouseClicked(click.x(), click.y());
+            if (click.button() == com.mojang.blaze3d.platform.InputConstants.MOUSE_BUTTON_LEFT) this.popup.mouseClicked(click.x(), click.y());
             return true;
         }
-        if (click.button() == 0 && this.handleClick(click.x(), click.y())) return true;
+        if (click.button() == com.mojang.blaze3d.platform.InputConstants.MOUSE_BUTTON_LEFT && this.handleClick(click.x(), click.y())) return true;
         return super.mouseClicked(click, doubleClick);
     }
 

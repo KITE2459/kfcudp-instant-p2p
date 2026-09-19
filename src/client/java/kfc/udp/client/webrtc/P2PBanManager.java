@@ -9,10 +9,12 @@ import net.minecraft.server.MinecraftServer;
 import com.mojang.brigadier.CommandDispatcher;
 //? if >=26.1 {
 /*import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.players.NameAndId;
 *///?} else {
+import net.minecraft.command.CommandSource;
 import net.minecraft.server.command.ServerCommandSource;
 import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.text.Text;
@@ -265,80 +267,74 @@ public class P2PBanManager {
     /*
     private static final SuggestionProvider<CommandSourceStack> ONLINE_PLAYERS =
             (ctx, builder) -> {
+                List<String> names = new ArrayList<>();
                 for (ServerPlayer sp : ctx.getSource().getServer().getPlayerList().getPlayers()) {
-                    builder.suggest(profileName(sp.getGameProfile()));
+                    names.add(profileName(sp.getGameProfile()));
                 }
-                return builder.buildFuture();
+                return SharedSuggestionProvider.suggest(names, builder);
             };
 
     private static final SuggestionProvider<CommandSourceStack> BANNED_PLAYER_NAMES =
             (ctx, builder) -> {
+                List<String> names = new ArrayList<>();
                 synchronized (P2PBanManager.class) {
                     for (JsonObject o : bannedPlayers.values()) {
-                        if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                        if (o.has("name")) names.add(o.get("name").getAsString());
                     }
                 }
-                return builder.buildFuture();
+                return SharedSuggestionProvider.suggest(names, builder);
             };
 
     private static final SuggestionProvider<CommandSourceStack> BANNED_IPS_LIST =
             (ctx, builder) -> {
+                List<String> ips;
                 synchronized (P2PBanManager.class) {
-                    for (String ip : bannedIps.keySet()) {
-                        builder.suggest(ip);
-                    }
+                    ips = new ArrayList<>(bannedIps.keySet());
                 }
-                return builder.buildFuture();
+                return SharedSuggestionProvider.suggest(ips, builder);
             };
 
     // 현재 OP인 플레이어 이름 자동완성 (deop 용)
     private static final SuggestionProvider<CommandSourceStack> OP_NAMES =
-            (ctx, builder) -> {
-                for (String name : ctx.getSource().getServer().getPlayerList().getOpNames()) {
-                    builder.suggest(name);
-                }
-                return builder.buildFuture();
-            };
+            (ctx, builder) -> SharedSuggestionProvider.suggest(
+                    ctx.getSource().getServer().getPlayerList().getOpNames(), builder);
     *///?} else {
     /** 현재 접속 중인 플레이어 이름 자동완성 */
     private static final SuggestionProvider<ServerCommandSource> ONLINE_PLAYERS =
             (ctx, builder) -> {
+                List<String> names = new ArrayList<>();
                 for (ServerPlayerEntity sp : ctx.getSource().getServer().getPlayerManager().getPlayerList()) {
-                    builder.suggest(profileName(sp.getGameProfile()));
+                    names.add(profileName(sp.getGameProfile()));
                 }
-                return builder.buildFuture();
+                return CommandSource.suggestMatching(names, builder);
             };
 
     /** 밴된 플레이어 이름 자동완성 */
     private static final SuggestionProvider<ServerCommandSource> BANNED_PLAYER_NAMES =
             (ctx, builder) -> {
+                List<String> names = new ArrayList<>();
                 synchronized (P2PBanManager.class) {
                     for (JsonObject o : bannedPlayers.values()) {
-                        if (o.has("name")) builder.suggest(o.get("name").getAsString());
+                        if (o.has("name")) names.add(o.get("name").getAsString());
                     }
                 }
-                return builder.buildFuture();
+                return CommandSource.suggestMatching(names, builder);
             };
 
     /** 밴된 IP 자동완성 */
     private static final SuggestionProvider<ServerCommandSource> BANNED_IPS_LIST =
             (ctx, builder) -> {
+                List<String> ips;
                 synchronized (P2PBanManager.class) {
-                    for (String ip : bannedIps.keySet()) {
-                        builder.suggest(ip);
-                    }
+                    ips = new ArrayList<>(bannedIps.keySet());
                 }
-                return builder.buildFuture();
+                return CommandSource.suggestMatching(ips, builder);
             };
 
     // 현재 OP인 플레이어 이름 자동완성 (deop 용)
     private static final SuggestionProvider<ServerCommandSource> OP_NAMES =
-            (ctx, builder) -> {
-                for (String name : ctx.getSource().getServer().getPlayerManager().getOpNames()) {
-                    builder.suggest(name);
-                }
-                return builder.buildFuture();
-            };
+            (ctx, builder) -> CommandSource.suggestMatching(
+                    ctx.getSource().getServer().getPlayerManager().getOpNames(), builder);
     //?}
 
     // -------------------------------------------------------------------------

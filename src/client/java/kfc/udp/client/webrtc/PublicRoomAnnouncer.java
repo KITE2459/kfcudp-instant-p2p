@@ -3,51 +3,47 @@ package kfc.udp.client.webrtc;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 공개 방 목록 — 새 서버 인프라 없이 기존 시그널링 relay의 lobby/peer 목록
- * 브로드캐스트를 재사용한다.
+ * 공개 방 목록 — 새 서버 인프라 없이 기존 시그널링 relay의 lobby/peer 메커니즘을 재사용한다.
  * <p>
- * {@link WebRtcHost}가 방마다 여는 {@code /{roomId}} lobby(조인 감지용)와는
- * 별개로, 공개 방을 연 호스트는 방 코드로 결정되는 샤드 lobby
- * ({@link P2PConfig#publicRoomsLobbyId(int)}, {@link P2PConfig#publicRoomShardFor(String)}
- * 참고 — 샤딩하는 이유는 그쪽 클래스 주석에)에도 접속해서 peer 이름에
- * "초대 코드/방 제목/방장 닉네임/인원"을 인코딩해 넣어 둔다. 방 목록 화면
- * ({@link PublicRoomBrowser})은 모든 샤드 lobby에 동시 접속해서 현재 peer
- * 목록(=지금 열려 있는 공개 방들)을 합쳐 읽어온다 — 호스트가 방을 닫으면
- * 이 WebSocket 연결도 끊어지므로 자동으로 목록에서 사라진다.
+ * {@link WebRtcHost}가 방마다 여는 {@code /{roomId}} lobby(조인 감지용)와는 별개로, 공개 방을 연
+ * 호스트는 자기 채널마다 결정되는 샤드 lobby({@link P2PConfig#publicRoomsLobbyId(String, int)},
+ * {@link P2PConfig#publicRoomShardFor(String)} 참고)에 {@code "r" + 방코드}라는 짧고 고정된 이름의
+ * peer로 접속해 둔다. 방 목록 화면({@link PublicRoomBrowser})은 자기 채널들의 lobby에 동시 접속해서
+ * "r" 접두사 peer들(=지금 열려 있는 공개 방들)을 훑어본다 — 호스트가 방을 닫으면 이 WebSocket
+ * 연결도 끊어지므로 자동으로 목록에서 사라진다.
  * <p>
- * peer 이름은 URL 경로의 한 조각이라 임의 텍스트(한글 제목 등)를 안전하게
- * 못 담는다 — URL-safe Base64로 인코딩해서 "r" 접두사를 붙인다. 방 목록을
- * 훑어보기만 하는 {@code RoomListScreen} 쪽도 같은 lobby에 잠깐 접속하는데,
- * 그쪽은 "b" 접두사를 써서 서로 구분한다(관전자는 방이 아니므로 무시).
+ * <b>정보는 메시지로, 재접속은 정체성이 바뀔 때만</b> — 예전엔(villas-signaling) peer 이름 자체에
+ * 제목·인원·핑 등 방 정보를 전부 인코딩해서 실었다. peer 이름은 접속 시점에 고정이라, 정보가 하나라도
+ * 바뀌면(인원 변화·핑 흔들림 등, 방 하나가 떠 있는 동안 아주 잦음) 재접속(TCP+TLS+WS 핸드셰이크 전부
+ * 다시)해야 했고, 재접속은 그 로비 전원에게 서버가 전체 스냅샷을 다시 뿌리게 만든다 — 로비를 보는
+ * 사람이 늘수록, 그리고 인원/핑이 자주 흔들릴수록 낭비가 커지는 구조였다.
  * <p>
- * <b>인원(현재/최대) 표기 — 왜 이벤트+디바운스인가</b> — peer 이름은 접속 시점에
- * 고정이라 인원이 바뀔 때마다 반영하려면 재접속해야 하고, 재접속은 그 샤드
- * lobby 전원에게 다시 브로드캐스트가 나간다. 방 등록/해제(각 방 생애주기당
- * 1번뿐)와 달리 사람 들고남은 방 하나가 열려 있는 동안 훨씬 잦을 수 있어서,
- * 인원이 바뀔 때마다 그대로 재접속하면 등록/해제보다 부하가 커진다. 그래서
- * {@link #updatePlayerCount(int, int)}는 매번 즉시 재접속하지 않고
- * {@link #DEBOUNCE_MS} 간격으로만 실제로 재접속한다 — 그 사이 인원이 여러 번
- * 바뀌어도 마지막 값 하나로 합쳐지고, 디바운스가 발동하는 시점에 최종 값이
- * 직전에 발표한 값과 같으면(예: 들어왔다 바로 나가서 도로 원래 인원) 그마저도
- * 재접속을 안 한다.
+ * mc-signaling은 서버가 peer가 보낸 임의 메시지를 세션의 다른 peer들에게 그대로 중계하는 기존 통로
+ * (session.go의 handleMessage)를 그대로 쓰는 {@code room_update} 메시지 타입을 하나 얹었다(서버는
+ * 내용을 해석하지 않는다 — VillasMsg.roomUpdate 클래스 주석 참고). 그래서 이제:
+ * <ul>
+ *   <li>정보만 바뀌면(인원·핑·제목·정원 등) — 접속을 유지한 채 작은 메시지 하나만 보낸다. 재접속이
+ *       없으니 디바운스도 필요 없다({@link #publish}가 곧장 반영).</li>
+ *   <li>새로 이 로비에 들어온 관전자가 있으면(=이 peer 자신이 받는 control 메시지의 peer 수가 바뀜)
+ *       그쪽은 아직 이 방의 정보를 못 받았을 수 있으니 마지막 값을 한 번 다시 보낸다({@link #onMessage}).</li>
+ *   <li>정체성이 실제로 바뀔 때만(방 코드가 바뀜 = 새 방/초대코드 재생성, 채널 구성이 바뀜) 재접속한다
+ *       — 이때는 어차피 다른 로비로 옮겨가야 하니 재접속이 불가피하다.</li>
+ * </ul>
  * <p>
- * <b>스레드</b> — 접속(TCP+핸드셰이크, 서버가 느리면 수 초)은 전부 {@link #scheduler}
- * 스레드 하나에서만 한다. 예전엔 {@code start()}/{@code republishNow()}가 부른 쪽
- * 스레드에서 곧장 접속해서, 방을 열거나 밴할 때 게임 렌더/서버 스레드가 최대 수십 초
- * 멈출 수 있었다. 이 인스턴스는 WebRtcBridge의 싱글턴이라 scheduler를 절대 종료하지
- * 않는다 — 예전엔 {@code stop()}에서 종료해서, 방을 한 번 닫거나 방 설정을 한 번
- * 적용(unpublish→publish)한 뒤로는 인원 갱신·재접속 예약이 전부 거부됐다.
+ * <b>스레드</b> — 접속(TCP+핸드셰이크, 서버가 느리면 수 초)과 메시지 전송은 전부 {@link #scheduler}
+ * 스레드 하나에서만 한다. 예전엔 {@code publish()}가 부른 쪽 스레드에서 곧장 접속해서, 방을 열거나
+ * 밴할 때 게임 렌더/서버 스레드가 최대 수십 초 멈출 수 있었다. 이 인스턴스는 WebRtcBridge의 싱글턴이라
+ * scheduler를 절대 종료하지 않는다.
  */
 final class PublicRoomAnnouncer {
 
@@ -56,9 +52,6 @@ final class PublicRoomAnnouncer {
     private static final long INITIAL_BACKOFF_MS = 2_000;
     private static final long MAX_BACKOFF_MS     = 30_000;
 
-    /** 클래스 주석 참고 — 인원 변경 재발행의 최소 간격. */
-    private static final long DEBOUNCE_MS = 5_000;
-
     private final ScheduledExecutorService scheduler =
             new ScheduledThreadPoolExecutor(1, r -> {
                 Thread t = new Thread(r, "public-room-announce");
@@ -66,12 +59,14 @@ final class PublicRoomAnnouncer {
                 return t;
             });
 
-    private final AtomicBoolean running = new AtomicBoolean(false);
-    /** start/stop마다 바뀐다 — 이전 방에서 예약된 작업은 무시하고, 접속이 끝났을 때
-     * 이미 멈췄거나 새로 시작됐으면 방금 붙은 연결을 닫는다(안 닫으면 유령 방이 남는다). */
+    private volatile boolean running = false;
+    /** 접속(재접속) 세대 — 이전 세대에서 예약된 재접속/재연결 시도는 무시한다. */
     private final AtomicInteger generation = new AtomicInteger();
-    private volatile WebSocketClient ws;
+    /** 채널마다 하나씩 — 같은 방 정보를 각 채널 lobby에 올린다. 교체는 통째로(불변 리스트). */
+    private volatile List<WebSocketClient> ws = List.of();
     private volatile long backoffMs = INITIAL_BACKOFF_MS;
+    /** 지금 ws가 물려 있는 채널 구성 — publish()가 이게 최신 채널과 다르면 재접속을 건다. */
+    private List<String> connectedChannels = List.of();
 
     private volatile String roomCode;
     private volatile String title;
@@ -80,37 +75,28 @@ final class PublicRoomAnnouncer {
     private volatile int currentPlayers;
     private volatile int maxPlayers;
 
-    /** 마지막으로 실제 발표(재접속)했던 현재/최대 인원 — 디바운스/중복 재접속 판단용.
-     * 둘 다 봐야 한다 — 최대 인원만 바뀌고 현재 인원은 그대로인 경우(방 설정에서
-     * 정원만 조정)도 재발행이 필요한데, 예전엔 현재 인원만 비교해서 그런 변경이
-     * 그냥 씹혔다(우연히 다른 이유로 재접속이 걸릴 때만 같이 반영됨). 전용 락으로 보호. */
-    private int lastAnnouncedPlayers = -1;
-    private int lastAnnouncedMax = -1;
-    private boolean debouncePending = false;
-    private long lastReconnectAtMs = 0;
-    private final Object debounceLock = new Object();
-
-    /** 마지막 발표에 실은 방장 RTT — 막대 수가 달라질 만큼 변했을 때만 재공지한다. 재공지는
-     * 재접속이라 RTT가 조금 흔들릴 때마다 하면 샤드 로비 전원에게 브로드캐스트가 쏟아진다. */
+    /** 마지막 발표에 실은 방장 RTT — 막대 수가 달라질 만큼 변했을 때만 재발표(메시지)한다. */
     private volatile long announcedRttMs = -1;
 
-    /** 방을 연 시각(방장 시계, epoch ms) — 방 목록 정렬용. start() 참고. */
+    /** 방을 연 시각(방장 시계, epoch ms) — 방 목록 정렬용. publish() 참고. */
     private volatile long openedAtMs;
 
     PublicRoomAnnouncer() {
         scheduler.scheduleWithFixedDelay(() -> {
-            if (running.get() && SignalingRtt.bars(SignalingRtt.currentMs()) != SignalingRtt.bars(announcedRttMs)) {
-                connect(generation.get());
+            if (running && SignalingRtt.bars(SignalingRtt.currentMs()) != SignalingRtt.bars(announcedRttMs)) {
+                sendUpdate();
             }
         }, 5, 5, TimeUnit.SECONDS);
     }
 
-    /** 방을 공개 목록에 올린다. 접속/재접속은 백그라운드에서 진행되며 즉시 반환.
-     * hostUuid는 개인 차단(=밴) 기능용 — 방장을 차단한 사람 목록에서 걸러내려면
-     * (또는 반대로) 방장의 UUID가 필요하다(P2PBanManager 클래스 주석 참고). */
-    void start(String roomCode, String title, String hostNickname, String hostUuid, int currentPlayers, int maxPlayers) {
-        if (!running.compareAndSet(false, true)) return;
-        // 방 목록은 연 시각 순(오래된 방이 앞)이다 — 같은 방을 설정 변경으로 내렸다 다시 올릴 땐 처음 연 시각을
+    /** 방을 공개 목록에 올리거나(처음 호출) 이미 올라와 있으면 정보를 갱신한다. 방 코드·채널 구성이
+     * 지난 접속과 같으면 재접속 없이 메시지만 보낸다 — hostUuid는 개인 차단(=밴) 기능용(P2PBanManager
+     * 클래스 주석 참고). 접속/재접속은 백그라운드에서 진행되며 즉시 반환. */
+    synchronized void publish(String roomCode, String title, String hostNickname, String hostUuid,
+                               int currentPlayers, int maxPlayers) {
+        boolean firstTime = !running;
+        running = true;
+        // 방 목록은 연 시각 순(오래된 방이 앞)이다 — 같은 방을 설정 변경으로 갱신할 땐 처음 연 시각을
         // 유지해야 목록에서 자리가 안 바뀐다. 코드가 바뀌면(새 방·초대코드 재생성) 새로 잡는다.
         if (!roomCode.equals(this.roomCode)) this.openedAtMs = System.currentTimeMillis();
         this.roomCode = roomCode;
@@ -119,114 +105,115 @@ final class PublicRoomAnnouncer {
         this.hostUuid = hostUuid;
         this.currentPlayers = currentPlayers;
         this.maxPlayers = maxPlayers;
-        this.backoffMs = INITIAL_BACKOFF_MS;
-        synchronized (debounceLock) {
-            lastAnnouncedPlayers = currentPlayers;
-            lastAnnouncedMax = maxPlayers;
-            lastReconnectAtMs = System.currentTimeMillis();
-            debouncePending = false;
+
+        List<String> channels = P2PConfig.getEffectiveChannels();
+        if (firstTime || !channels.equals(connectedChannels)) {
+            this.backoffMs = INITIAL_BACKOFF_MS;
+            int gen = generation.incrementAndGet();
+            LOG.info("[public-room] announcing: code={} title={}", roomCode, title);
+            scheduler.execute(() -> connect(gen, channels));
+        } else {
+            LOG.debug("[public-room] updating (no reconnect): code={} title={}", roomCode, title);
+            sendUpdate();
         }
-        int gen = generation.incrementAndGet();
-        LOG.info("[public-room] announcing: code={} title={}", roomCode, title);
-        scheduler.execute(() -> connect(gen));
     }
 
     void stop() {
-        if (!running.compareAndSet(true, false)) return;
+        if (!running) return;
+        running = false;
         generation.incrementAndGet();
         LOG.info("[public-room] un-announcing");
-        WebSocketClient w = ws;
-        ws = null;
-        if (w != null) w.close();
+        List<WebSocketClient> old = ws;
+        ws = List.of();
+        connectedChannels = List.of();
+        for (WebSocketClient w : old) w.close();
     }
 
-    /** 인원 또는 최대 인원이 바뀔 때마다 호출 — 실제 재접속은 클래스 주석 설명대로
-     * 디바운스된다. 방 설정에서 정원만 바꾼 경우(현재 인원은 그대로)도 여기로
-     * 들어오므로 max도 같이 비교해야 한다. */
+    /** 인원 또는 최대 인원이 바뀔 때마다 호출 — 이제 재접속이 아니라 메시지 하나라 디바운스가
+     * 필요 없다. 방 설정에서 정원만 바꾼 경우(현재 인원은 그대로)도 여기로 들어온다. */
     void updatePlayerCount(int current, int max) {
+        if (current == this.currentPlayers && max == this.maxPlayers) return;
         this.currentPlayers = current;
         this.maxPlayers = max;
-        if (!running.get()) return;
-        synchronized (debounceLock) {
-            if ((current == lastAnnouncedPlayers && max == lastAnnouncedMax) || debouncePending) return;
-            long waitMs = Math.max(0, DEBOUNCE_MS - (System.currentTimeMillis() - lastReconnectAtMs));
-            debouncePending = true;
-            int gen = generation.get();
-            try {
-                scheduler.schedule(() -> flushPlayerCountUpdate(gen), waitMs, TimeUnit.MILLISECONDS);
-            } catch (RejectedExecutionException e) {
-                debouncePending = false;
-            }
-        }
+        if (running) sendUpdate();
     }
 
-    /** 밴(=차단) 목록이 바뀌었을 때 P2PBanManager가 호출 — 인원 변경과 달리 사람이
-     * 명령어/아이콘을 직접 눌러 만든, 드물고 의도적인 변경이라 디바운스 없이 즉시
-     * 재접속한다. 방이 공개돼 있지 않으면(running=false) 아무 것도 안 한다. */
+    /** 밴(=차단) 목록이 바뀌었을 때 P2PBanManager가 호출 — 방이 공개돼 있지 않으면 아무 것도 안 한다. */
     void republishNow() {
-        if (!running.get()) return;
-        int gen = generation.get();
-        scheduler.execute(() -> connect(gen));
+        if (running) sendUpdate();
     }
 
-    private void flushPlayerCountUpdate(int gen) {
-        synchronized (debounceLock) {
-            debouncePending = false;
-            if (!isCurrent(gen) || (currentPlayers == lastAnnouncedPlayers && maxPlayers == lastAnnouncedMax)) return;
-            lastAnnouncedPlayers = currentPlayers;
-            lastAnnouncedMax = maxPlayers;
-            lastReconnectAtMs = System.currentTimeMillis();
-        }
-        // 재접속 자체는 락 밖에서 — 소켓 I/O를 debounceLock 아래에서 하면 그동안
-        // updatePlayerCount 호출이 다 막힌다.
-        connect(gen);
+    /** scheduler 스레드에서 현재 연결(들)에 최신 정보를 보낸다. */
+    private void sendUpdate() {
+        scheduler.execute(() -> {
+            if (!running) return;
+            long rtt = SignalingRtt.currentMs();
+            announcedRttMs = rtt;
+            String msg = VillasMsg.roomUpdate(roomCode, title, hostNickname, P2PConfig.getChannel(),
+                    P2PConfig.isChannelAnd(), currentPlayers, maxPlayers, P2PConfig.MC_VERSION, hostUuid,
+                    P2PBanManager.encodeBannedPlayerHashes(roomCode), rtt, openedAtMs);
+            for (WebSocketClient client : ws) client.send(msg);
+        });
     }
 
     private boolean isCurrent(int gen) {
-        return running.get() && gen == generation.get();
+        return running && gen == generation.get();
     }
 
-    /** scheduler 스레드에서만 호출된다 — 이전 연결을 닫고(peer 이름이 바뀌었을 수 있음) 새로 붙는다. */
-    private void connect(int gen) {
+    /** scheduler 스레드에서만 호출된다 — 이전 연결을 닫고(채널 구성이 바뀌었을 수 있음) 채널마다
+     * 새로 붙는다. 하나라도 실패하거나 끊기면 묶음 전체를 다시 붙인다(재접속 자체가 드문 이벤트라
+     * 채널별로 따로 관리할 이유가 없다). */
+    private void connect(int gen, List<String> channels) {
         if (!isCurrent(gen)) return;
-        WebSocketClient old = ws;
-        ws = null;
-        if (old != null) old.close();
+        List<WebSocketClient> old = ws;
+        ws = List.of();
+        for (WebSocketClient w : old) w.close();
+        connectedChannels = channels;
 
-        String lobbyId = P2PConfig.publicRoomsLobbyId(P2PConfig.publicRoomShardFor(roomCode));
-        WebSocketClient client = new WebSocketClient(P2PConfig.SIGNALING_URL + "/" + lobbyId) {
-            // peer 이름(=방 정보)은 TCP 연결 뒤에 만든다 — 방을 막 열었을 땐 RTT 표본이 하나도 없어서
-            // 예전엔 -1이 실렸고, 방 목록엔 다음 재공지(최대 5초)까지 "측정 중"만 떴다.
-            @Override protected String requestPath(String path) {
-                long rtt = SignalingRtt.currentMs();
-                announcedRttMs = rtt;
-                return path + "/r" + encode(roomCode, title, hostNickname, P2PConfig.getChannel(), currentPlayers, maxPlayers,
-                        P2PConfig.MC_VERSION, hostUuid, P2PBanManager.encodeBannedPlayerHashes(roomCode), rtt, openedAtMs);
+        int shard = P2PConfig.publicRoomShardFor(roomCode);
+        List<WebSocketClient> clients = new ArrayList<>();
+        for (String channel : channels) {
+            clients.add(newClient(gen, P2PConfig.publicRoomsLobbyId(channel, shard)));
+        }
+        ws = List.copyOf(clients);
+        for (WebSocketClient client : clients) {
+            try {
+                client.connect();
+            } catch (Exception e) {
+                LOG.warn("[public-room] connect failed: {}", e.toString());
+                if (ws.contains(client)) scheduleReconnect(gen);
+                return;
             }
+            if (!isCurrent(gen) || !ws.contains(client)) {
+                client.close();
+                return;
+            }
+        }
+        // 채널 전부가 다 붙은 뒤 한 번만 — 채널마다 onConnected에서 따로 보내면 매번 ws 전체(그때까지
+        // 붙은 채널 전부)에 보내서 채널 수만큼 중복 전송된다(N개 채널이면 최대 N번 중복).
+        sendUpdate();
+    }
+
+    private WebSocketClient newClient(int gen, String lobbyId) {
+        return new WebSocketClient(P2PConfig.SIGNALING_URL + "/" + lobbyId + "/r" + roomCode) {
             @Override public void onConnected() {
                 backoffMs = INITIAL_BACKOFF_MS;
                 send(VillasMsg.hello());
             }
             @Override public void onMessage(String type, String json) {
-                // 방 목록 쪽에서 peer 목록을 읽어가는 것뿐 — 여기선 받을 게 없다.
+                // control(=이 로비의 peer 구성이 바뀜) 말고는 받을 게 없다. 누가 새로 들어왔을 수
+                // 있으니(그쪽은 아직 내 방 정보를 못 받았음) 마지막 값을 다시 보낸다 — 나가는
+                // 경우에도 걸리지만 그냥 한 번 더 보내는 것뿐이라 해될 게 없다.
+                if (isCurrent(gen) && VillasMsg.has(json, "peers")) sendUpdate();
             }
             @Override protected int readIdleTimeoutMs() {
                 return LIVENESS_TIMEOUT_MS;
             }
             @Override public void onDisconnected() {
-                // ws가 이미 다른(더 최신) 연결로 넘어갔으면 새 연결이 진행 중이거나 끝났다.
-                if (ws == this) scheduleReconnect(gen);
+                // ws가 이미 다른(더 최신) 묶음으로 넘어갔으면 새 연결이 진행 중이거나 끝났다.
+                if (ws.contains(this)) scheduleReconnect(gen);
             }
         };
-        ws = client;
-        try {
-            client.connect();
-        } catch (Exception e) {
-            LOG.warn("[public-room] connect failed: {}", e.toString());
-            if (ws == client) scheduleReconnect(gen);
-            return;
-        }
-        if (!isCurrent(gen) || ws != client) client.close();
     }
 
     private void scheduleReconnect(int gen) {
@@ -234,39 +221,8 @@ final class PublicRoomAnnouncer {
         long delay = backoffMs;
         backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS);
         try {
-            scheduler.schedule(() -> connect(gen), delay, TimeUnit.MILLISECONDS);
+            scheduler.schedule(() -> connect(gen, connectedChannels), delay, TimeUnit.MILLISECONDS);
         } catch (RejectedExecutionException ignored) {}
-    }
-
-    /** "r"/"b" 다음에 오는 페이로드: code|title|nickname|channel|current|max|version|hostUuid|bannedHashes|hostRttMs|openedAtMs
-     * (UTF-8, URL-safe Base64, 패딩 없음). version 이후는 뒤에 새로 붙인 필드라 앞의 6개와 순서가
-     * 바뀌면 안 된다(이미 떠 있는 예전 클라이언트와의 파싱 호환 때문은 아니고 — 어차피 이 모드는
-     * 그런 걸 신경 안 씀 — 그냥 필드 늘어난 순서 기록용).
-     * bannedHashes는 밴한 UUID 원문이 아니라 방 코드로 솔팅한 해시다(P2PBanManager.encodeBannedPlayerHashes).
-     * hostRttMs는 방장→시그널링 서버 RTT, 모르면 -1(SignalingRtt 참고). openedAtMs는 방을 연 시각(방 목록 정렬용). */
-    static String encode(String code, String title, String nickname, String channel, int currentPlayers, int maxPlayers,
-                          String version, String hostUuid, String bannedHashes, long hostRttMs, long openedAtMs) {
-        String raw = code + "|" + sanitize(title) + "|" + sanitize(nickname) + "|" + sanitize(channel)
-                + "|" + currentPlayers + "|" + maxPlayers
-                + "|" + sanitize(version) + "|" + sanitize(hostUuid) + "|" + sanitize(bannedHashes)
-                + "|" + hostRttMs + "|" + openedAtMs;
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(raw.getBytes(StandardCharsets.UTF_8));
-    }
-
-    /** {code, title, nickname, channel, current, max, version, hostUuid, bannedHashes, hostRttMs, openedAtMs} 또는
-     * 파싱 실패 시 null — 숫자들도 문자열 그대로 담아 둔다. */
-    static String[] decode(String payload) {
-        try {
-            String raw = new String(Base64.getUrlDecoder().decode(payload), StandardCharsets.UTF_8);
-            String[] parts = raw.split("\\|", 11);
-            return parts.length == 11 ? parts : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static String sanitize(String s) {
-        return s == null ? "" : s.replace("|", " ");
     }
 
     /** 방 목록 화면이 자기 관전 세션을 구분하기 위한 무작위 "b" peer 이름. */

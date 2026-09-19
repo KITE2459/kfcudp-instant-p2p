@@ -104,6 +104,42 @@ public class KfcudpClient implements ClientModInitializer {
     public static GameMode getActiveGameMode() { return activeGameMode; }
     //?}
 
+    // 바닐라 LAN 설정 화면(26.2 MultiplayerOptionsScreen / 26.3 WorldOptionsScreen)에서 접속자 관련 값을
+    // 바꾸면 방 설정과 어긋난다 — IntegratedServerMaxPlayersMixin이 그 지점에서 이리로 밀어넣어 방 설정을
+    // 같은 값으로 맞춘다. 방이 안 열려 있으면 그냥 바닐라 동작이라 건드리지 않는다.
+    //? if >=26.2 {
+    /*public static void syncGuestCheatsFromVanilla(boolean allowCheats) {
+        if (activeInviteCode != null) activeAllowCheats = allowCheats;
+    }
+
+    public static void syncGuestGameModeFromVanilla(GameType gameMode) {
+        if (activeInviteCode != null && gameMode != null) activeGameMode = gameMode;
+    }
+    *///?}
+
+    /** 채널 설정 화면(ChannelScreen)에서 적용을 눌렀을 때 — 공개 중인 방이면 새 채널·규칙으로 다시 공지한다. */
+    //? if >=26.1 {
+    /*public static void republishForChannelChange(Minecraft client) {
+        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        if (activeInviteCode == null || !activePublicRoom || client.player == null || channel.equals(activeChannel)) return;
+        // publishPublicRoom(=PublicRoomAnnouncer.publish)이 채널 구성이 바뀐 걸 스스로 감지해 재접속한다 —
+        // 여기서 먼저 내릴 필요 없다.
+        WebRtcBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
+                client.player.getUUID().toString(), activeGuestCount + 1, activeMaxPlayers);
+        activeChannel = channel;
+    }
+    *///?} else {
+    public static void republishForChannelChange(MinecraftClient client) {
+        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        if (activeInviteCode == null || !activePublicRoom || client.player == null || channel.equals(activeChannel)) return;
+        // publishPublicRoom(=PublicRoomAnnouncer.publish)이 채널 구성이 바뀐 걸 스스로 감지해 재접속한다 —
+        // 여기서 먼저 내릴 필요 없다.
+        WebRtcBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
+                client.player.getUuid().toString(), activeGuestCount + 1, activeMaxPlayers);
+        activeChannel = channel;
+    }
+    //?}
+
     /**
      * 정원(N/M) 표시용 — 접속자는 방장의 {@link #activeMaxPlayers}를 직접 모르므로,
      * 방장이 JOIN 완료 시점에 이 접두사로 시작하는 시스템 메시지로 몰래 보내준다.
@@ -168,14 +204,17 @@ public class KfcudpClient implements ClientModInitializer {
                                 boolean publicRoom, String title) {}
     //?}
 
-    //? if >=26.2 {
+    // 26.3부터 publishServer에서 게임 모드 인자가 빠졌다 — 접속자 게임 모드는 IntegratedServerMaxPlayersMixin이
+    // getForcedGameType을 가로채 방 게임 모드(activeGameMode)로 돌려준다.
+    //? if >=26.3 {
     /*private static boolean kfcudp$publishServer(net.minecraft.client.server.IntegratedServer server,
             net.minecraft.world.level.GameType gameMode, boolean allowCheats, int lanPort) {
-        // 26.2부터 PlayerList#isOp가 방장(싱글플레이 오너)에 대해서는
-        // commandsAllowedForOtherPlayers(구 allowCommandsForAllPlayers)를 아예 안 보고
-        // WorldData#isAllowCommands()만 그대로 반환한다 — 안 켜주면 게스트는 치트가 되는데
-        // 정작 방장 본인은 안 되는 상황이 생긴다.
-        server.setWorldAllowCommands(allowCheats);
+        return server.publishServer(net.minecraft.server.MinecraftServer.MultiplayerScope.LAN, allowCheats, lanPort);
+    }
+    *///?}
+    //? if >=26.2 <26.3 {
+    /*private static boolean kfcudp$publishServer(net.minecraft.client.server.IntegratedServer server,
+            net.minecraft.world.level.GameType gameMode, boolean allowCheats, int lanPort) {
         return server.publishServer(net.minecraft.server.MinecraftServer.MultiplayerScope.LAN, gameMode, allowCheats, lanPort);
     }
     *///?}
@@ -186,28 +225,43 @@ public class KfcudpClient implements ClientModInitializer {
     }
     *///?}
 
-    // 바닐라 "Open to LAN"으로 이미 열려 있어 publishServer를 다시 못 부르는 경우
-    // (재바인드 실패) Allow Commands만 값을 갱신하는 경로에서도 26.2는 방장 본인의
-    // 치트 권한을 위해 WorldData#allowCommands를 별도로 켜줘야 한다 — 위
-    // kfcudp$publishServer의 주석 참고.
-    //? if >=26.2 {
-    /*private static void kfcudp$applyWorldAllowCommands(net.minecraft.client.server.IntegratedServer server, boolean allowCheats) {
-        server.setWorldAllowCommands(allowCheats);
-        // setWorldAllowCommands() 안의 updateCommandsAllowedForOtherPlayers()는
-        // IntegratedServer가 따로 캐시해 둔 commandsAllowedForOtherPlayers 필드가
-        // null이 아니면 그 값을 그대로 PlayerList에 재전파한다. 그 필드는 최초
-        // publishServer() 호출(진짜 Open to LAN) 때 딱 한 번만 세팅되고 그 뒤로는
-        // 아무도 안 건드려서, "이미 열려 있어 재바인드 없이 값만 갱신"하는 이
-        // 경로에서 계속 최초 오픈 당시 값으로 되돌아간다 — 방을 다시 열어도
-        // 접속자 쪽 치트 설정이 1차 값에 고정되는 버그의 원인. 캐시 필드 자체를
-        // 직접 갱신해야 한다.
+    // 바닐라 "Open to LAN"으로 이미 열려 있어 publishServer를 다시 못 부르는 경우(재바인드 실패) 접속자
+    // 명령어 허용만 값을 갱신하는 경로.
+    //
+    // 월드 설정(WorldData#allowCommands)은 어느 버전에서도 건드리지 않는다 — 그건 level.dat에 저장돼서 방
+    // 옵션 하나가 싱글 월드의 치트 설정을 영구히 바꿔버린다(랜 서버는 임시 값만 쓴다). 방장 치트는 월드 설정
+    // 그대로 따라가고, 방 옵션은 접속자에게만 적용된다.
+    //? if >=26.3 {
+    /*private static void kfcudp$applyGuestCommandAccess(net.minecraft.client.server.IntegratedServer server, boolean allowCheats) {
+        // 26.3은 이 값이 월드 설정과 함께 봐야 효력이 있어서, 접속자 권한 자체는
+        // IntegratedServerMaxPlayersMixin이 방 옵션으로 답한다. 여기선 권한 재전송만 유발한다.
+        server.setGuestCommandAccess(allowCheats);
+    }
+    *///?}
+    //? if >=26.2 <26.3 {
+    /*private static void kfcudp$applyGuestCommandAccess(net.minecraft.client.server.IntegratedServer server, boolean allowCheats) {
+        server.getPlayerList().setAllowCommandsForAllPlayers(allowCheats);
+        // 최초 publishServer() 때 한 번만 세팅되고 그 뒤론 아무도 안 건드려서, 나중에 PlayerList 값만
+        // 갱신해도 다음 재전파 때 최초 값으로 되돌아간다 — 캐시 필드 자체도 같이 갱신해야 한다.
         server.setCommandsAllowedForOtherPlayers(allowCheats);
     }
     *///?}
     //? if >=26.1 <26.2 {
-    /*private static void kfcudp$applyWorldAllowCommands(net.minecraft.client.server.IntegratedServer server, boolean allowCheats) {
+    /*private static void kfcudp$applyGuestCommandAccess(net.minecraft.client.server.IntegratedServer server, boolean allowCheats) {
+        server.getPlayerList().setAllowCommandsForAllPlayers(allowCheats);
         // 26.1.x는 PlayerList#isOp가 방장에 대해 allowCommandsForAllPlayers로도 폴백하므로
         // 별도 처리가 필요 없다.
+    }
+    *///?}
+
+    // 이미 열려 있는 방의 접속자 게임 모드 갱신. 26.3은 그 필드가 없어져 IntegratedServerMaxPlayersMixin이
+    // activeGameMode를 읽어 가므로 할 일이 없다.
+    //? if >=26.3 {
+    /*private static void kfcudp$setGuestGameMode(net.minecraft.client.server.IntegratedServer server, GameType gameMode) {}
+    *///?}
+    //? if >=26.1 <26.3 {
+    /*private static void kfcudp$setGuestGameMode(net.minecraft.client.server.IntegratedServer server, GameType gameMode) {
+        ((kfc.udp.client.mixin.IntegratedServerAccessor) server).kfcudp$setForcedGameMode(gameMode);
     }
     *///?}
 
@@ -370,6 +424,14 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendSystemMessage(Component.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"));
+            // 제작자·서포터면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
+            String roleKey = DevBadge.roleMessageKey(client.player.getUUID());
+            if (roleKey != null) {
+                net.minecraft.network.chat.MutableComponent line = Component.translatable(roleKey);
+                // 특혜가 꺼져 있으면(DevBadge.PERKS_ENABLED) 괄호도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
+                if (DevBadge.hasPerk(client.player.getUUID())) line.append(Component.translatable("instant-p2p.msg.perk_note"));
+                client.player.sendSystemMessage(line);
+            }
         });
 
         // 방장 쪽: 지금 접속 중인 플레이어를 기록한다 — 입장하려는 사람이 차단한 유저가 있는지
@@ -578,6 +640,14 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendMessage(Text.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"), false);
+            // 제작자·서포터면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
+            String roleKey = DevBadge.roleMessageKey(client.player.getUuid());
+            if (roleKey != null) {
+                net.minecraft.text.MutableText line = Text.translatable(roleKey);
+                // 특혜가 꺼져 있으면(DevBadge.PERKS_ENABLED) 괄호도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
+                if (DevBadge.hasPerk(client.player.getUuid())) line.append(Text.translatable("instant-p2p.msg.perk_note"));
+                client.player.sendMessage(line, false);
+            }
         });
 
         // 방장 쪽: 지금 접속 중인 플레이어를 기록한다 — 입장하려는 사람이 차단한 유저가 있는지
@@ -748,10 +818,8 @@ public class KfcudpClient implements ClientModInitializer {
             // 바닐라 "Open to LAN"으로 이미 열려 있던 경우 — openToLan()을 다시 부르면
             // 포트 재바인드 시도로 실패해서 여기서 고른 설정이 그냥 무시된다.
             // Allow Commands / 게임모드 둘 다 값만 따로 적용한다.
-            server.getPlayerList().setAllowCommandsForAllPlayers(allowCheats);
-            kfcudp$applyWorldAllowCommands(server, allowCheats);
-            ((kfc.udp.client.mixin.IntegratedServerAccessor) server)
-                    .kfcudp$setForcedGameMode(gameMode);
+            kfcudp$applyGuestCommandAccess(server, allowCheats);
+            kfcudp$setGuestGameMode(server, gameMode);
         }
         // openToLan은 max player count를 안 건드리므로 바닐라 기본값(8)에 그대로 걸려 있다.
         // P2PBanManager.checkCanJoin은 여기서 정한 정원보다 낮은 경우에만 거부하고,
@@ -797,7 +865,7 @@ public class KfcudpClient implements ClientModInitializer {
         activeAllowCheats = allowCheats;
         activePublicRoom = publicRoom;
         activeTitle = title;
-        activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannel();
+        activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
 
         // 초대 코드 자체는 채팅에 안 띄운다(화면 공유·방송으로 새지 않게) — 누르면 클립보드로만 복사된다.
         MutableComponent prefix   = Component.translatable("instant-p2p.msg.invite_prefix");
@@ -888,7 +956,7 @@ public class KfcudpClient implements ClientModInitializer {
         activeAllowCheats = allowCheats;
         activePublicRoom = publicRoom;
         activeTitle = title;
-        activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannel();
+        activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
 
         // 초대 코드 자체는 채팅에 안 띄운다(화면 공유·방송으로 새지 않게) — 누르면 클립보드로만 복사된다.
         MutableText prefix   = Text.translatable("instant-p2p.msg.invite_prefix");
@@ -925,10 +993,13 @@ public class KfcudpClient implements ClientModInitializer {
         activeMaxPlayers = maxPlayers;
         P2PBanManager.setRoomMaxPlayers(maxPlayers);
 
-        server.getPlayerList().setAllowCommandsForAllPlayers(allowCheats);
-        kfcudp$applyWorldAllowCommands(server, allowCheats);
-        ((kfc.udp.client.mixin.IntegratedServerAccessor) server)
-                .kfcudp$setForcedGameMode(gameMode);
+        // 26.2+는 kfcudp$applyGuestCommandAccess가 setGuestCommandAccess/setCommandsAllowedForOtherPlayers를
+        // 부르는데, 그게 IntegratedServerMaxPlayersMixin의 동기화 훅(kfcudp$syncGuestCheats)을 건드려서
+        // activeAllowCheats가 이 호출 도중에 이미 새 값으로 바뀐다 — 아래 "바뀐 설정" 비교보다 먼저
+        // 비교값을 떠 둬야 "치트 허용 로그가 안 뜬다" 버그가 안 생긴다.
+        boolean allowCheatsChanged = allowCheats != activeAllowCheats;
+        kfcudp$applyGuestCommandAccess(server, allowCheats);
+        kfcudp$setGuestGameMode(server, gameMode);
 
         server.execute(() -> server.execute(() -> {
             P2PBanManager.reregisterToDispatcher(server);
@@ -963,20 +1034,23 @@ public class KfcudpClient implements ClientModInitializer {
         // 채널도 제목/정원과 마찬가지로 "적용" 버튼 전용 경로로만 여기 들어오므로
         // 스팸 걱정 없이 바로 반영한다 — 예전엔 채널만 바뀐 경우를 안 쳐서, 초대 코드를
         // 재생성(방 재시작)해야만 새 채널이 실제 공지에 반영되는 것처럼 보였다.
-        String channel = kfc.udp.client.webrtc.P2PConfig.getChannel();
+        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
         boolean publicChanged = publicRoom != activePublicRoom
                 || (publicRoom && !title.equals(activeTitle))
                 || (publicRoom && maxPlayers != oldMaxPlayers)
-                || (publicRoom && !kfc.udp.client.webrtc.P2PConfig.channelMatches(channel, activeChannel));
+                || (publicRoom && !channel.equals(activeChannel));
         if (publicChanged) {
-            WebRtcBridge.unpublishPublicRoom();
             if (publicRoom) {
+                // publishPublicRoom(=PublicRoomAnnouncer.publish)이 방 코드·채널이 그대로면 재접속 없이
+                // 메시지만 보낸다 — 여기서 먼저 내릴 필요가 없다(제목·정원만 바뀐 흔한 경우가 이렇게 된다).
                 // 여기서도 activeGuestCount를 쓴다 — 필드 선언부 주석 참고: GUI 스레드에서
                 // 서버 스레드가 만지는 플레이어 목록을 직접 스냅샷하는 건 안전하지 않다.
                 WebRtcBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
                         client.player.getUUID().toString(), activeGuestCount + 1, maxPlayers);
                 // 공개를 새로 켰을 때 방장에게 목록에 뭐로 보이는지 알린다 — 제목 변경은 아래에서 방 전원에게 알린다.
                 if (!activePublicRoom) kfcudp$sendPublicRoomNotice(client, title);
+            } else {
+                WebRtcBridge.unpublishPublicRoom();
             }
         }
 
@@ -989,7 +1063,7 @@ public class KfcudpClient implements ClientModInitializer {
         if (maxPlayers != oldMaxPlayers) {
             changes.add(Component.translatable("instant-p2p.msg.setting.max_players", maxPlayers));
         }
-        if (allowCheats != activeAllowCheats) {
+        if (allowCheatsChanged) {
             changes.add(Component.translatable("instant-p2p.msg.setting.allow_commands",
                     Component.translatable(allowCheats ? "options.on" : "options.off")));
         }
@@ -1075,20 +1149,23 @@ public class KfcudpClient implements ClientModInitializer {
         // 채널도 제목/정원과 마찬가지로 "적용" 버튼 전용 경로로만 여기 들어오므로
         // 스팸 걱정 없이 바로 반영한다 — 예전엔 채널만 바뀐 경우를 안 쳐서, 초대 코드를
         // 재생성(방 재시작)해야만 새 채널이 실제 공지에 반영되는 것처럼 보였다.
-        String channel = kfc.udp.client.webrtc.P2PConfig.getChannel();
+        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
         boolean publicChanged = publicRoom != activePublicRoom
                 || (publicRoom && !title.equals(activeTitle))
                 || (publicRoom && maxPlayers != oldMaxPlayers)
-                || (publicRoom && !kfc.udp.client.webrtc.P2PConfig.channelMatches(channel, activeChannel));
+                || (publicRoom && !channel.equals(activeChannel));
         if (publicChanged) {
-            WebRtcBridge.unpublishPublicRoom();
             if (publicRoom) {
+                // publishPublicRoom(=PublicRoomAnnouncer.publish)이 방 코드·채널이 그대로면 재접속 없이
+                // 메시지만 보낸다 — 여기서 먼저 내릴 필요가 없다(제목·정원만 바뀐 흔한 경우가 이렇게 된다).
                 // 여기서도 activeGuestCount를 쓴다 — 필드 선언부 주석 참고: GUI 스레드에서
                 // 서버 스레드가 만지는 플레이어 목록을 직접 스냅샷하는 건 안전하지 않다.
                 WebRtcBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
                         client.player.getUuid().toString(), activeGuestCount + 1, maxPlayers);
                 // 공개를 새로 켰을 때 방장에게 목록에 뭐로 보이는지 알린다 — 제목 변경은 아래에서 방 전원에게 알린다.
                 if (!activePublicRoom) kfcudp$sendPublicRoomNotice(client, title);
+            } else {
+                WebRtcBridge.unpublishPublicRoom();
             }
         }
 
@@ -1200,25 +1277,29 @@ public class KfcudpClient implements ClientModInitializer {
             Screens.getWidgets(screen).add(customRoomBtn);
             added.add(customRoomBtn);
             nextY += rowGap;
-
-            // 방이 열려 있으면 초대 코드를 다시 복사할 수 있게 바로 밑에 둔다 — 코드 자체는 안 보여준다.
-            if (activeInviteCode != null) {
-                String code = activeInviteCode;
-                Button codeBtn = Button.builder(
-                                Component.translatable("instant-p2p.pause.copy_invite").withStyle(ChatFormatting.YELLOW),
-                                button -> client.keyboardHandler.setClipboard(code)
-                        ).bounds(btnX, nextY, btnW, btnH).build();
-                Screens.getWidgets(screen).add(codeBtn);
-                added.add(codeBtn);
-                nextY += rowGap;
-            }
         } else {
-            nextY += 2 * rowGap; // 접속자도 인원 표시가 방장(방 설정 변경·초대코드 복사 아래)과 같은 높이에 오게
+            // 접속자가 제작자·서포터면 방장의 "방 설정 변경" 자리에 역할을 표시한다 — 본인 화면에만 보인다.
+            java.util.UUID me = client.player == null ? null : client.player.getUUID();
+            if (me != null && DevBadge.hasBadge(me)) {
+                boolean dev = DevBadge.isDev(me);
+                net.minecraft.client.gui.components.StringWidget roleText =
+                        new net.minecraft.client.gui.components.StringWidget(
+                                Component.translatable(dev ? "instant-p2p.pause.role_dev" : "instant-p2p.pause.role_supporter")
+                                        .withStyle(dev ? ChatFormatting.AQUA : ChatFormatting.GOLD),
+                                client.font);
+                roleText.setX(btnX + (btnW - roleText.getWidth()) / 2);
+                roleText.setY(nextY + (btnH - 9) / 2); // 방장의 버튼 한 줄 높이 가운데
+                // 특혜가 꺼져 있으면 설명도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
+                if (DevBadge.hasPerk(me)) roleText.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
+                        Component.translatable("instant-p2p.pause.role_tooltip")));
+                Screens.getWidgets(screen).add(roleText);
+                added.add(roleText);
+            }
+            nextY += rowGap; // 접속자도 인원 표시가 방장(방 설정 변경 아래)과 같은 높이에 오게
         }
 
-        // 인원 표시(N/M) — 버튼이 아니라 초대 코드 아래에 작은 흰색 그림자
-        // 텍스트로 표시한다. 방장은 직접 아는 값, 접속자는 JOIN 시점에 몰래 받아
-        // 캐시해 둔 값(guestRoomMaxPlayers)을 쓴다.
+        // 인원 표시(N/M) — 버튼이 아니라 작은 흰색 그림자 텍스트로 표시한다. 방장은 직접 아는 값,
+        // 접속자는 JOIN 시점에 몰래 받아 캐시해 둔 값(guestRoomMaxPlayers)을 쓴다.
         Integer current = null, max = null;
         if (isHost && activeInviteCode != null) {
             IntegratedServer server = client.getSingleplayerServer();
@@ -1240,6 +1321,23 @@ public class KfcudpClient implements ClientModInitializer {
             Screens.getWidgets(screen).add(countText);
             added.add(countText);
             nextY += 12; // 텍스트 한 줄(9px) + 여백 — 버튼 한 줄(22px)보다 훨씬 얇다
+        }
+
+        // 초대 코드 다시 복사 — 인원 표시 아래에 둔다(코드 자체는 안 보여준다). 접속자에겐 이 자리가 비니
+        // 같은 높이만큼만 띄워서 아래 플레이어 차단 버튼이 방장 화면과 같은 줄에 오게 한다.
+        if (isHost) {
+            if (activeInviteCode != null) {
+                String code = activeInviteCode;
+                Button codeBtn = Button.builder(
+                                Component.translatable("instant-p2p.pause.copy_invite").withStyle(ChatFormatting.YELLOW),
+                                button -> client.keyboardHandler.setClipboard(code)
+                        ).bounds(btnX, nextY, btnW, btnH).build();
+                Screens.getWidgets(screen).add(codeBtn);
+                added.add(codeBtn);
+                nextY += rowGap;
+            }
+        } else {
+            nextY += rowGap;
         }
 
         // 플레이어 차단 — 방장·접속자 모두, 다른 사람이 들어올 수 있는 세션일 때만. 같은 월드에 있는 사람을 골라
@@ -1286,20 +1384,25 @@ public class KfcudpClient implements ClientModInitializer {
             Screens.getButtons(screen).add(customRoomBtn);
             added.add(customRoomBtn);
             nextY += rowGap;
-
-            // 방이 열려 있으면 초대 코드를 다시 복사할 수 있게 바로 밑에 둔다 — 코드 자체는 안 보여준다.
-            if (activeInviteCode != null) {
-                String code = activeInviteCode;
-                ButtonWidget codeBtn = ButtonWidget.builder(
-                                Text.translatable("instant-p2p.pause.copy_invite").formatted(Formatting.YELLOW),
-                                button -> client.keyboard.setClipboard(code)
-                        ).dimensions(btnX, nextY, btnW, btnH).build();
-                Screens.getButtons(screen).add(codeBtn);
-                added.add(codeBtn);
-                nextY += rowGap;
-            }
         } else {
-            nextY += 2 * rowGap; // 접속자도 인원 표시가 방장(방 설정 변경·초대코드 복사 아래)과 같은 높이에 오게
+            // 접속자가 제작자·서포터면 방장의 "방 설정 변경" 자리에 역할을 표시한다 — 본인 화면에만 보인다.
+            java.util.UUID me = client.player == null ? null : client.player.getUuid();
+            if (me != null && DevBadge.hasBadge(me)) {
+                boolean dev = DevBadge.isDev(me);
+                net.minecraft.client.gui.widget.TextWidget roleText =
+                        new net.minecraft.client.gui.widget.TextWidget(
+                                Text.translatable(dev ? "instant-p2p.pause.role_dev" : "instant-p2p.pause.role_supporter")
+                                        .formatted(dev ? Formatting.AQUA : Formatting.GOLD),
+                                client.textRenderer);
+                roleText.setX(btnX + (btnW - roleText.getWidth()) / 2);
+                roleText.setY(nextY + (btnH - 9) / 2); // 방장의 버튼 한 줄 높이 가운데
+                // 특혜가 꺼져 있으면 설명도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
+                if (DevBadge.hasPerk(me)) roleText.setTooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
+                        Text.translatable("instant-p2p.pause.role_tooltip")));
+                Screens.getButtons(screen).add(roleText);
+                added.add(roleText);
+            }
+            nextY += rowGap; // 접속자도 인원 표시가 방장(방 설정 변경 아래)과 같은 높이에 오게
         }
 
         Integer current = null, max = null;
@@ -1323,6 +1426,23 @@ public class KfcudpClient implements ClientModInitializer {
             Screens.getButtons(screen).add(countText);
             added.add(countText);
             nextY += 12;
+        }
+
+        // 초대 코드 다시 복사 — 인원 표시 아래에 둔다(코드 자체는 안 보여준다). 접속자에겐 이 자리가 비니
+        // 같은 높이만큼만 띄워서 아래 플레이어 차단 버튼이 방장 화면과 같은 줄에 오게 한다.
+        if (isHost) {
+            if (activeInviteCode != null) {
+                String code = activeInviteCode;
+                ButtonWidget codeBtn = ButtonWidget.builder(
+                                Text.translatable("instant-p2p.pause.copy_invite").formatted(Formatting.YELLOW),
+                                button -> client.keyboard.setClipboard(code)
+                        ).dimensions(btnX, nextY, btnW, btnH).build();
+                Screens.getButtons(screen).add(codeBtn);
+                added.add(codeBtn);
+                nextY += rowGap;
+            }
+        } else {
+            nextY += rowGap;
         }
 
         // 플레이어 차단 — 방장·접속자 모두, 다른 사람이 들어올 수 있는 세션일 때만. 같은 월드에 있는 사람을 골라

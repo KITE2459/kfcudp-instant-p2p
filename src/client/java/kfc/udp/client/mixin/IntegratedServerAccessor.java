@@ -40,7 +40,12 @@ import org.spongepowered.asm.mixin.gen.Invoker;
 @Mixin(IntegratedServer.class)
 public interface IntegratedServerAccessor {
 
-    //? if >=26.2 {
+    // 26.3은 gameTypeForOtherPlayers 필드가 없어졌다 — 접속자 게임 모드는 IntegratedServerMaxPlayersMixin이 처리한다.
+    //? if >=26.3 {
+    /*@Invoker("teardownPublishedState")
+    void kfcudp$teardownPublishedState();
+    *///?}
+    //? if >=26.2 <26.3 {
     /*@Mutable
     @Accessor("gameTypeForOtherPlayers")
     void kfcudp$setForcedGameMode(GameType gameMode);
@@ -49,7 +54,8 @@ public interface IntegratedServerAccessor {
     // MultiplayerScope.OFF, 명령어 권한 재동기화까지 바닐라가 다 처리한다.
     @Invoker("teardownPublishedState")
     void kfcudp$teardownPublishedState();
-    *///?} else {
+    *///?}
+    //? if <26.2 {
     //? if >=26.1 <26.2 {
     /*@Mutable
     @Accessor("publishedGameType")

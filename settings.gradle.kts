@@ -21,7 +21,7 @@ stonecutter {
         // Loom 플러그인도 net.fabricmc.fabric-loom-remap → net.fabricmc.fabric-loom(리매핑 없음)으로
         // 교체되고, Mojang 공식 매핑을 그대로 쓴다 — 완전히 다른 빌드 로직이 필요해서 별도
         // 빌드스크립트로 분리한다(Stonecutter의 .buildscript() 기능).
-        versions("26.1", "26.1.1", "26.1.2", "26.2")
+        versions("26.1", "26.1.1", "26.1.2", "26.2", "26.3")
             .buildscript("build-26x.gradle.kts")
 
         vcsVersion = "1.21.5"

@@ -43,6 +43,30 @@ public final class DevBadge {
         return PERKS_ENABLED && hasBadge(id);
     }
 
+    public static boolean isDev(UUID id) {
+        return DEV_UUID.equals(id);
+    }
+
+    /** 접속 직후 본인에게만 띄우는 안내 문구의 번역 키 — 해당 없으면 null. */
+    public static String roleMessageKey(UUID id) {
+        if (DEV_UUID.equals(id)) return "instant-p2p.msg.you_are_dev";
+        if (SUPPORTER_UUIDS.contains(id)) return "instant-p2p.msg.you_are_supporter";
+        return null;
+    }
+
+    /**
+     * 지금 실제로 instant-p2p로 통신 중인지 — 내가 Custom Room으로 방을 열었거나(KfcudpClient.isRoomActive),
+     * webrtc로 남의 방에 접속자로 들어간 상태(WebRtcBridge.getActiveConnectionUsesRelay)일 때만 true다.
+     * <p>
+     * DevNameMixin/DevBadgeMixin이 이걸로 표시 여부를 가른다 — 이게 없으면 그냥 연 싱글플레이·LAN이나 이 모드와
+     * 무관한 일반 서버에서도 UUID만 맞으면 배지가 붙어버린다(이름표·채팅은 클라이언트가 접속한 모든 서버에서,
+     * 탭 목록은 호스팅 중인 통합 서버라면 전부 이 검사를 거치기 때문).
+     */
+    public static boolean isP2pSessionActive() {
+        return kfc.udp.client.KfcudpClient.isRoomActive()
+                || kfc.udp.client.webrtc.WebRtcBridge.getActiveConnectionUsesRelay() != null;
+    }
+
     //? if >=26.1 {
     /*public static Component decorate(UUID id, Component name) {
         if (DEV_UUID.equals(id)) return name.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
