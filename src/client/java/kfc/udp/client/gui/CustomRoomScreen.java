@@ -787,7 +787,7 @@ public class CustomRoomScreen extends Screen {
         /*assert this.minecraft != null;
         String title = this.publicRoom ? this.titleField.getValue().trim() : null;
         boolean announced = KfcudpClient.applyRoomSettings(this.minecraft, this.gameMode, this.maxPlayers,
-                this.allowCheats, this.publicRoom, title);
+                this.allowCheats, this.publicRoom, title, this.allowBroadcast);
         // 제목을 비워둔 채 공개하면 applyRoomSettings가 "Room - 코드"를 대신 지어
         // 붙인다 — 화면 입력란은 여전히 빈 채로 남으므로, 그대로 두면 입력란(빈 값)과
         // 실제 활성 제목(자동 생성값)이 영원히 안 맞아 적용 버튼이 계속 활성 상태로
@@ -796,13 +796,15 @@ public class CustomRoomScreen extends Screen {
         // 중계 강제도 다른 옵션과 마찬가지로 여기서만 실제로 반영한다. 이미 직결로
         // 붙어있는 접속자를 강제로 끊어 재접속시키는 건 하지 않는다 — 그 접속자는
         // 다음에 새로 접속할 때부터 이 값을 적용받는다.
+        // 중계 강제만 여기서 반영한다(방송 허용은 applyRoomSettings 안에서 방 설정과 함께 처리 —
+        // 방송 허용 여부도 방송 필터에 실리는 공개 정보라 다른 방 옵션들과 같은 재공지·변경 로그
+        // 경로를 타야 한다).
         kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
-        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(this.allowBroadcast);
         *///?} else {
         assert this.client != null;
         String title = this.publicRoom ? this.titleField.getText().trim() : null;
         boolean announced = KfcudpClient.applyRoomSettings(this.client, this.gameMode, this.maxPlayers,
-                this.allowCheats, this.publicRoom, title);
+                this.allowCheats, this.publicRoom, title, this.allowBroadcast);
         // 제목을 비워둔 채 공개하면 applyRoomSettings가 "Room - 코드"를 대신 지어
         // 붙인다 — 화면 입력란은 여전히 빈 채로 남으므로, 그대로 두면 입력란(빈 값)과
         // 실제 활성 제목(자동 생성값)이 영원히 안 맞아 적용 버튼이 계속 활성 상태로
@@ -811,8 +813,10 @@ public class CustomRoomScreen extends Screen {
         // 중계 강제도 다른 옵션과 마찬가지로 여기서만 실제로 반영한다. 이미 직결로
         // 붙어있는 접속자를 강제로 끊어 재접속시키는 건 하지 않는다 — 그 접속자는
         // 다음에 새로 접속할 때부터 이 값을 적용받는다.
+        // 중계 강제만 여기서 반영한다(방송 허용은 applyRoomSettings 안에서 방 설정과 함께 처리 —
+        // 방송 허용 여부도 방송 필터에 실리는 공개 정보라 다른 방 옵션들과 같은 재공지·변경 로그
+        // 경로를 타야 한다).
         kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
-        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(this.allowBroadcast);
         //?}
         // 적용 결과는 채팅으로 알리고, 초대코드 재생성처럼 곧장 게임 화면으로 돌아간다.
         // 방 전원에게 바뀐 설정을 알렸으면(applyRoomSettings) 방장에게 "적용 완료"를 또 띄우지 않는다.

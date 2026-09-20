@@ -93,6 +93,7 @@
   "instant-p2p.msg.setting.max_players": "최대 인원 %s명",
   "instant-p2p.msg.setting.allow_commands": "명령어 허용 %s",
   "instant-p2p.msg.setting.public": "방 공개 %s",
+  "instant-p2p.msg.setting.allow_broadcast": "방송 허용 %s",
   "instant-p2p.msg.blocked_player_joined": "§c차단한 유저 %s님이 접속했습니다",
   "instant-p2p.join_blocked.one": "차단된 유저 %s 가 존재하는 서버입니다",
   "instant-p2p.join_blocked.many_head": "차단된 유저 %s ",

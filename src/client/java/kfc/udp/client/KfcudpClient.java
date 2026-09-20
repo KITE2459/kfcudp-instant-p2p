@@ -999,7 +999,7 @@ public class KfcudpClient implements ClientModInitializer {
     //? if >=26.1 {
     /*public static boolean applyRoomSettings(Minecraft client,
                                        GameType gameMode, int maxPlayers, boolean allowCheats,
-                                       boolean publicRoom, String title) {
+                                       boolean publicRoom, String title, boolean allowBroadcast) {
         if (activeInviteCode == null || client.player == null) return false;
         IntegratedServer server = client.getSingleplayerServer();
         if (server == null) return false;
@@ -1015,6 +1015,9 @@ public class KfcudpClient implements ClientModInitializer {
         boolean allowCheatsChanged = allowCheats != activeAllowCheats;
         kfcudp$applyGuestCommandAccess(server, allowCheats);
         kfcudp$setGuestGameMode(server, gameMode);
+
+        boolean allowBroadcastChanged = allowBroadcast != kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
+        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(allowBroadcast);
 
         server.execute(() -> server.execute(() -> {
             P2PBanManager.reregisterToDispatcher(server);
@@ -1053,7 +1056,11 @@ public class KfcudpClient implements ClientModInitializer {
         boolean publicChanged = publicRoom != activePublicRoom
                 || (publicRoom && !title.equals(activeTitle))
                 || (publicRoom && maxPlayers != oldMaxPlayers)
-                || (publicRoom && !channel.equals(activeChannel));
+                || (publicRoom && !channel.equals(activeChannel))
+                // 방송 허용만 바뀐 경우도 여기서 같이 재공지한다 — 안 그러면 태그가 안 바뀐 옛 값 그대로
+                // 남아서, 다음 접속자 입/퇴장으로 저절로 재공지될 때까지 접속자 목록의 방송 필터가
+                // 낡은 상태를 계속 보여준다.
+                || (publicRoom && allowBroadcastChanged);
         if (publicChanged) {
             if (publicRoom) {
                 // publishPublicRoom(=PublicRoomAnnouncer.publish)이 방 코드·채널이 그대로면 재접속 없이
@@ -1086,6 +1093,10 @@ public class KfcudpClient implements ClientModInitializer {
             changes.add(Component.translatable("instant-p2p.msg.setting.public",
                     Component.translatable(publicRoom ? "options.on" : "options.off")));
         }
+        if (allowBroadcastChanged) {
+            changes.add(Component.translatable("instant-p2p.msg.setting.allow_broadcast",
+                    Component.translatable(allowBroadcast ? "options.on" : "options.off")));
+        }
         // 제목은 방을 새로 공개할 때도 알린다 — 공개하는 순간이 곧 목록에 그 제목이 처음 걸리는 때라서.
         boolean titleChanged = publicRoom && (!activePublicRoom || !title.equals(activeTitle));
         MutableComponent joined = Component.empty();
@@ -1114,7 +1125,7 @@ public class KfcudpClient implements ClientModInitializer {
     *///?} else {
     public static boolean applyRoomSettings(MinecraftClient client,
                                        GameMode gameMode, int maxPlayers, boolean allowCheats,
-                                       boolean publicRoom, String title) {
+                                       boolean publicRoom, String title, boolean allowBroadcast) {
         if (activeInviteCode == null || client.player == null) return false;
         IntegratedServer server = client.getServer();
         if (server == null) return false;
@@ -1122,6 +1133,9 @@ public class KfcudpClient implements ClientModInitializer {
         int oldMaxPlayers = activeMaxPlayers;
         activeMaxPlayers = maxPlayers;
         P2PBanManager.setRoomMaxPlayers(maxPlayers);
+
+        boolean allowBroadcastChanged = allowBroadcast != kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
+        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(allowBroadcast);
 
         server.getPlayerManager().setCheatsAllowed(allowCheats);
         ((kfc.udp.client.mixin.IntegratedServerAccessor) server)
@@ -1168,7 +1182,11 @@ public class KfcudpClient implements ClientModInitializer {
         boolean publicChanged = publicRoom != activePublicRoom
                 || (publicRoom && !title.equals(activeTitle))
                 || (publicRoom && maxPlayers != oldMaxPlayers)
-                || (publicRoom && !channel.equals(activeChannel));
+                || (publicRoom && !channel.equals(activeChannel))
+                // 방송 허용만 바뀐 경우도 여기서 같이 재공지한다 — 안 그러면 태그가 안 바뀐 옛 값 그대로
+                // 남아서, 다음 접속자 입/퇴장으로 저절로 재공지될 때까지 접속자 목록의 방송 필터가
+                // 낡은 상태를 계속 보여준다.
+                || (publicRoom && allowBroadcastChanged);
         if (publicChanged) {
             if (publicRoom) {
                 // publishPublicRoom(=PublicRoomAnnouncer.publish)이 방 코드·채널이 그대로면 재접속 없이
@@ -1200,6 +1218,10 @@ public class KfcudpClient implements ClientModInitializer {
         if (publicRoom != activePublicRoom) {
             changes.add(Text.translatable("instant-p2p.msg.setting.public",
                     Text.translatable(publicRoom ? "options.on" : "options.off")));
+        }
+        if (allowBroadcastChanged) {
+            changes.add(Text.translatable("instant-p2p.msg.setting.allow_broadcast",
+                    Text.translatable(allowBroadcast ? "options.on" : "options.off")));
         }
         // 제목은 방을 새로 공개할 때도 알린다 — 공개하는 순간이 곧 목록에 그 제목이 처음 걸리는 때라서.
         boolean titleChanged = publicRoom && (!activePublicRoom || !title.equals(activeTitle));

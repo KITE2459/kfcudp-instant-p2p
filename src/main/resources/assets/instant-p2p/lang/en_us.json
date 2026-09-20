@@ -93,6 +93,7 @@
   "instant-p2p.msg.setting.max_players": "Max players %s",
   "instant-p2p.msg.setting.allow_commands": "Allow commands %s",
   "instant-p2p.msg.setting.public": "Public room %s",
+  "instant-p2p.msg.setting.allow_broadcast": "Allow broadcast %s",
   "instant-p2p.msg.blocked_player_joined": "§cA player you blocked (%s) joined",
   "instant-p2p.join_blocked.one": "%s, a player you blocked, is on this server",
   "instant-p2p.join_blocked.many_head": "%s ",
