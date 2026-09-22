@@ -17,7 +17,8 @@
     "PlayerManagerMixin",
     "DevBadgeMixin",
     "DevNameMixin",
-    "SocialHideMixin"
+    "SocialHideMixin",
+    "FreezeCommandMixin"
   ],
   "injectors": {
     "defaultRequire": 1

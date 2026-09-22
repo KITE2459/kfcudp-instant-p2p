@@ -94,6 +94,19 @@ public class KfcudpClient implements ClientModInitializer {
     //?}
 
     public static boolean isRoomActive() { return activeInviteCode != null; }
+
+    /** 지금 이 클라이언트가 아는 방장 UUID — 내가 방장이면 내 UUID, 접속자면 JOIN 때 받아둔
+     * {@link #guestHostUuid}(둘 다 아니면 null). DevBadge의 방장 표시(📶)가 이걸로 판단한다. */
+    public static java.util.UUID currentHostUuid() {
+        if (activeInviteCode != null) {
+            //? if >=26.1 {
+            /*return net.minecraft.client.Minecraft.getInstance().getUser().getProfileId();
+            *///?} else {
+            return net.minecraft.client.MinecraftClient.getInstance().getSession().getUuidOrNull();
+            //?}
+        }
+        return guestHostUuid;
+    }
     public static int getActiveMaxPlayers() { return activeMaxPlayers; }
     public static boolean isActiveAllowCheats() { return activeAllowCheats; }
     public static boolean isActivePublicRoom() { return activePublicRoom; }
@@ -321,6 +334,7 @@ public class KfcudpClient implements ClientModInitializer {
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
         kfc.udp.client.webrtc.Roles.start();
+        kfc.udp.client.webrtc.FreezeManager.register();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -539,6 +553,7 @@ public class KfcudpClient implements ClientModInitializer {
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
         kfc.udp.client.webrtc.Roles.start();
+        kfc.udp.client.webrtc.FreezeManager.register();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -751,6 +766,29 @@ public class KfcudpClient implements ClientModInitializer {
     //?}
 
     /**
+     * 방을 여는 순간 방장 자신의 탭 목록 항목을 강제로 다시 그리게 한다 — 탭 목록 이름은 접속
+     * 시점에 딱 한 번만 계산돼 전송되는데(DevBadgeMixin 클래스 주석 참고), 방장은 이미 싱글
+     * 플레이로 로그인해 있던 상태에서 방만 여는 거라 그 최초 계산 시점엔 DevBadge.isHostPlayer가
+     * 아직 false였다 — 그래서 방장 본인의 📶 표시가 이름표·채팅엔 바로 붙어도(둘 다 매번 새로
+     * 계산됨) 탭 목록엔 안 붙고, 다른 계기로 우연히 재전송되기 전까진 그대로였다.
+     */
+    //? if >=26.1 {
+    /*private static void kfcudp$refreshHostTabList(IntegratedServer server, java.util.UUID hostUuid) {
+        net.minecraft.server.level.ServerPlayer sp = server.getPlayerList().getPlayer(hostUuid);
+        if (sp != null) server.getPlayerList().broadcastAll(
+                new net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket(
+                        net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME, sp));
+    }
+    *///?} else {
+    private static void kfcudp$refreshHostTabList(IntegratedServer server, java.util.UUID hostUuid) {
+        ServerPlayerEntity sp = server.getPlayerManager().getPlayer(hostUuid);
+        if (sp != null) server.getPlayerManager().sendToAll(
+                new net.minecraft.network.packet.s2c.play.PlayerListS2CPacket(
+                        net.minecraft.network.packet.s2c.play.PlayerListS2CPacket.Action.UPDATE_DISPLAY_NAME, sp));
+    }
+    //?}
+
+    /**
      * CustomRoomScreen에서 Start 누를 때 호출
      */
     //? if >=26.1 {
@@ -889,6 +927,7 @@ public class KfcudpClient implements ClientModInitializer {
         activePublicRoom = publicRoom;
         activeTitle = title;
         activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        kfcudp$refreshHostTabList(server, client.player.getUUID());
 
         // 초대 코드 자체는 채팅에 안 띄운다(화면 공유·방송으로 새지 않게) — 누르면 클립보드로만 복사된다.
         MutableComponent prefix   = Component.translatable("instant-p2p.msg.invite_prefix");
@@ -980,6 +1019,7 @@ public class KfcudpClient implements ClientModInitializer {
         activePublicRoom = publicRoom;
         activeTitle = title;
         activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        kfcudp$refreshHostTabList(server, client.player.getUuid());
 
         // 초대 코드 자체는 채팅에 안 띄운다(화면 공유·방송으로 새지 않게) — 누르면 클립보드로만 복사된다.
         MutableText prefix   = Text.translatable("instant-p2p.msg.invite_prefix");
@@ -1325,18 +1365,25 @@ public class KfcudpClient implements ClientModInitializer {
         } else {
             // 접속자가 제작자·서포터면 방장의 "방 설정 변경" 자리에 역할을 표시한다 — 본인 화면에만 보인다.
             java.util.UUID me = client.player == null ? null : client.player.getUUID();
-            if (me != null && DevBadge.hasBadge(me)) {
+            boolean streamer = me != null && kfc.udp.client.webrtc.Roles.isStreamer(me);
+            if (me != null && (DevBadge.hasBadge(me) || streamer)) {
                 boolean dev = DevBadge.isDev(me);
+                String roleKey = dev ? "instant-p2p.pause.role_dev" : streamer ? "instant-p2p.pause.role_streamer" : "instant-p2p.pause.role_supporter";
+                ChatFormatting roleColor = dev ? ChatFormatting.AQUA : streamer ? ChatFormatting.RED : ChatFormatting.GOLD;
                 net.minecraft.client.gui.components.StringWidget roleText =
                         new net.minecraft.client.gui.components.StringWidget(
-                                Component.translatable(dev ? "instant-p2p.pause.role_dev" : "instant-p2p.pause.role_supporter")
-                                        .withStyle(dev ? ChatFormatting.AQUA : ChatFormatting.GOLD),
+                                Component.translatable(roleKey).withStyle(roleColor),
                                 client.font);
                 roleText.setX(btnX + (btnW - roleText.getWidth()) / 2);
                 roleText.setY(nextY + (btnH - 9) / 2); // 방장의 버튼 한 줄 높이 가운데
-                // 특혜가 꺼져 있으면 설명도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
-                if (DevBadge.hasPerk(me)) roleText.setTooltip(net.minecraft.client.gui.components.Tooltip.create(
-                        Component.translatable("instant-p2p.pause.role_tooltip")));
+                // 개발자·서포터는 인원수 무시 특혜 설명까지 같이(특혜가 꺼져 있으면 그 줄은 안 붙인다 —
+                // 안내와 실제가 달라지면 안 된다), 셋 다 공통으로 동결(FreezeManager) 안내를 붙인다.
+                Component tooltipText = Component.translatable("instant-p2p.pause.freeze_tooltip");
+                if (DevBadge.hasPerk(me)) {
+                    tooltipText = Component.translatable("instant-p2p.pause.role_tooltip")
+                            .copy().append(Component.literal("\n")).append(tooltipText);
+                }
+                roleText.setTooltip(net.minecraft.client.gui.components.Tooltip.create(tooltipText));
                 Screens.getWidgets(screen).add(roleText);
                 added.add(roleText);
             }
@@ -1387,6 +1434,8 @@ public class KfcudpClient implements ClientModInitializer {
 
         // 플레이어 차단 — 방장·접속자 모두, 다른 사람이 들어올 수 있는 세션일 때만. 같은 월드에 있는 사람을 골라
         // 차단/해제한다(BlockedPlayersScreen 접속자 모드) — 채팅이 가려지고, 앞으로 내가 여는 방에도 못 들어온다.
+        // 목록엔 지금 접속한 사람 다음에 이미 차단해 나간(밴된) 사람도 이어서 나온다(BlockedPlayersScreen
+        // 클래스 주석 참고) — 버튼을 두 개로 나누는 대신 한 화면에서 다 보이게.
         if (activeInviteCode != null || isGuestSession) {
             Button blockPlayersBtn = Button.builder(
                             Component.translatable("instant-p2p.pause.block_players"),
@@ -1432,18 +1481,25 @@ public class KfcudpClient implements ClientModInitializer {
         } else {
             // 접속자가 제작자·서포터면 방장의 "방 설정 변경" 자리에 역할을 표시한다 — 본인 화면에만 보인다.
             java.util.UUID me = client.player == null ? null : client.player.getUuid();
-            if (me != null && DevBadge.hasBadge(me)) {
+            boolean streamer = me != null && kfc.udp.client.webrtc.Roles.isStreamer(me);
+            if (me != null && (DevBadge.hasBadge(me) || streamer)) {
                 boolean dev = DevBadge.isDev(me);
+                String roleKey = dev ? "instant-p2p.pause.role_dev" : streamer ? "instant-p2p.pause.role_streamer" : "instant-p2p.pause.role_supporter";
+                Formatting roleColor = dev ? Formatting.AQUA : streamer ? Formatting.RED : Formatting.GOLD;
                 net.minecraft.client.gui.widget.TextWidget roleText =
                         new net.minecraft.client.gui.widget.TextWidget(
-                                Text.translatable(dev ? "instant-p2p.pause.role_dev" : "instant-p2p.pause.role_supporter")
-                                        .formatted(dev ? Formatting.AQUA : Formatting.GOLD),
+                                Text.translatable(roleKey).formatted(roleColor),
                                 client.textRenderer);
                 roleText.setX(btnX + (btnW - roleText.getWidth()) / 2);
                 roleText.setY(nextY + (btnH - 9) / 2); // 방장의 버튼 한 줄 높이 가운데
-                // 특혜가 꺼져 있으면 설명도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
-                if (DevBadge.hasPerk(me)) roleText.setTooltip(net.minecraft.client.gui.tooltip.Tooltip.of(
-                        Text.translatable("instant-p2p.pause.role_tooltip")));
+                // 개발자·서포터는 인원수 무시 특혜 설명까지 같이(특혜가 꺼져 있으면 그 줄은 안 붙인다 —
+                // 안내와 실제가 달라지면 안 된다), 셋 다 공통으로 동결(FreezeManager) 안내를 붙인다.
+                Text tooltipText = Text.translatable("instant-p2p.pause.freeze_tooltip");
+                if (DevBadge.hasPerk(me)) {
+                    tooltipText = Text.translatable("instant-p2p.pause.role_tooltip")
+                            .copy().append(Text.literal("\n")).append(tooltipText);
+                }
+                roleText.setTooltip(net.minecraft.client.gui.tooltip.Tooltip.of(tooltipText));
                 Screens.getButtons(screen).add(roleText);
                 added.add(roleText);
             }
@@ -1492,6 +1548,8 @@ public class KfcudpClient implements ClientModInitializer {
 
         // 플레이어 차단 — 방장·접속자 모두, 다른 사람이 들어올 수 있는 세션일 때만. 같은 월드에 있는 사람을 골라
         // 차단/해제한다(BlockedPlayersScreen 접속자 모드) — 채팅이 가려지고, 앞으로 내가 여는 방에도 못 들어온다.
+        // 목록엔 지금 접속한 사람 다음에 이미 차단해 나간(밴된) 사람도 이어서 나온다(BlockedPlayersScreen
+        // 클래스 주석 참고) — 버튼을 두 개로 나누는 대신 한 화면에서 다 보이게.
         if (activeInviteCode != null || isGuestSession) {
             ButtonWidget blockPlayersBtn = ButtonWidget.builder(
                             Text.translatable("instant-p2p.pause.block_players"),

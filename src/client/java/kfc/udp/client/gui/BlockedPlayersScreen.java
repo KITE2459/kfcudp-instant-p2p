@@ -53,8 +53,10 @@ public class BlockedPlayersScreen extends Screen {
     //?}
 
     private final Screen parent;
-    /** true = 접속자 모드(ESC 메뉴 "플레이어 차단") — 같은 월드의 다른 플레이어를 나열해 x로 차단, o로 해제.
-     * false = 차단 목록 모드(방 목록의 "차단 목록") — 차단한 사람을 나열해 x로 해제. */
+    /** true = 접속자 모드(ESC 메뉴 "플레이어 차단") — 지금 접속한 다른 플레이어를 x로 차단, o로 해제.
+     * 접속한 사람 뒤로 이미 차단해서 나간 사람도 이어서 나온다(refreshGrid 참고) — 버튼을 따로 안 두고
+     * 한 화면에서 다 보이게.
+     * false = 차단 목록 모드(방 목록의 "차단 목록", 접속 전 화면 전용) — 차단한 사람을 나열해 x로 해제. */
     private final boolean online;
     private List<P2PBanManager.BannedEntry> entries = List.of();
     private int entriesVersion = -1;
@@ -139,7 +141,17 @@ public class BlockedPlayersScreen extends Screen {
     /** 밴 목록이 바뀌었을 때만 다시 읽고, 현재 스크롤 열에 맞춰 칸마다 항목과 좌표를 채운다(열 우선). */
     private void refreshGrid() {
         if (this.online) {
-            this.entries = this.onlinePlayers(); // 들고나는 사람이 바로 반영되게 매 tick — 한 방 인원이라 가볍다
+            // 지금 접속한 사람 먼저, 그다음 이미 차단해서 나간(온라인 목록엔 없는) 사람을 이어붙인다 —
+            // 버튼을 "플레이어 차단"/"차단 목록" 둘로 나누지 않고 한 화면에서 다 보이게. 매 tick 다시
+            // 계산하는데 한 방 인원 + 밴 목록 둘 다 가벼워서 문제없다.
+            List<P2PBanManager.BannedEntry> live = this.onlinePlayers();
+            java.util.Set<String> liveUuids = live.stream().map(P2PBanManager.BannedEntry::uuid)
+                    .collect(java.util.stream.Collectors.toSet());
+            List<P2PBanManager.BannedEntry> offlineBanned = P2PBanManager.listBannedPlayers().stream()
+                    .filter(e -> !liveUuids.contains(e.uuid()))
+                    .sorted(java.util.Comparator.comparing(P2PBanManager.BannedEntry::name, String.CASE_INSENSITIVE_ORDER))
+                    .toList();
+            this.entries = java.util.stream.Stream.concat(live.stream(), offlineBanned.stream()).toList();
         } else {
             int version = P2PBanManager.banListVersion();
             if (version != this.entriesVersion) {
@@ -186,10 +198,14 @@ public class BlockedPlayersScreen extends Screen {
         boolean unblock = !this.online || P2PBanManager.isPlayerBanned(e.uuid());
         // 바로 바꾸지 않고 확인 팝업부터 — 확인하면 그때 반영된다(목록은 다음 tick에 다시 읽힌다).
         this.popup.open(unblock ? "instant-p2p.confirm.unblock" : "instant-p2p.confirm.block", displayName(e), () -> {
-            if (unblock) P2PBanManager.pardonPlayerByUuid(e.uuid());
-            else {
+            java.util.UUID targetUuid = java.util.UUID.fromString(e.uuid());
+            if (unblock) {
+                P2PBanManager.pardonPlayerByUuid(e.uuid());
+                kfc.udp.client.webrtc.FreezeManager.requestUnfreeze(targetUuid);
+            } else {
                 P2PBanManager.banPlayer(e.uuid(), e.name(), "Blocked in game.");
                 kfc.udp.client.KfcudpClient.kickBlockedPlayer(e.uuid()); // 방장이면 지금 방에서도 내보낸다
+                kfc.udp.client.webrtc.FreezeManager.requestFreeze(targetUuid); // 개발자·서포터·방송인이면 즉시 동결 요청
             }
         });
         return true;

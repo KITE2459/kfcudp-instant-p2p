@@ -73,7 +73,9 @@
 
   "instant-p2p.pause.role_dev": "개발자 🛠",
   "instant-p2p.pause.role_supporter": "서포터 💬",
+  "instant-p2p.pause.role_streamer": "방송인 🎧",
   "instant-p2p.pause.role_tooltip": "이 사람은 인원수를 무시하고 접속 가능한 혜택자입니다",
+  "instant-p2p.pause.freeze_tooltip": "차단한 유저를 즉시 동결시킬 수 있습니다",
   "instant-p2p.pause.player_count": "인원 %s / %s",
   "instant-p2p.pause.close_room": "방 닫기",
   "instant-p2p.msg.room_closed": "§a방을 닫았습니다",
@@ -121,7 +123,8 @@
   "instant-p2p.msg.my_connection_relay": "§b호스트와 중계 통신 합니다",
   "instant-p2p.msg.you_are_dev": "§b당신은 instant-p2p 모드의 🛠개발자입니다",
   "instant-p2p.msg.you_are_supporter": "§6당신은 instant-p2p 모드의 💬서포터입니다",
-  "instant-p2p.msg.you_are_streamer": "§a당신은 instant-p2p 모드의 🎧방송인입니다",
+  "instant-p2p.msg.you_are_streamer": "§c당신은 instant-p2p 모드의 🎧방송인입니다",
+  "instant-p2p.msg.frozen_by": "§c%s 님이 당신을 차단해 동결되었습니다",
   "instant-p2p.msg.perk_note": " §f(인원수를 무시하고 접속 가능)",
   "instant-p2p.msg.signaling_unreachable": "§c현재 서버 점검 중으로 이용하실 수 없습니다 (시그널링 연결 실패) — 백그라운드에서 재시도 중입니다. 복구될 때까지 플레이어가 접속하지 못할 수 있습니다",
   "instant-p2p.msg.signaling_recovered": "§a시그널링 서버에 다시 연결되었습니다 — 방이 정상적으로 작동합니다."

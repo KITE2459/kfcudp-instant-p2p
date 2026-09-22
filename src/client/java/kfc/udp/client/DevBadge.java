@@ -36,9 +36,14 @@ public final class DevBadge {
         return kfc.udp.client.webrtc.Roles.hasBadge(id);
     }
 
-    /** 이름에 배지가 붙는 대상 전체 — 개발자·서포터·방송인. hasBadge와 달리 방 정원 특혜는 안 준다. */
+    /** 이름에 배지가 붙는 대상 전체 — 개발자·서포터·방송인·방장. hasBadge와 달리 방 정원 특혜는 안 준다. */
     public static boolean shouldDecorate(UUID id) {
-        return hasBadge(id) || kfc.udp.client.webrtc.Roles.isStreamer(id);
+        return hasBadge(id) || kfc.udp.client.webrtc.Roles.isStreamer(id) || isHostPlayer(id);
+    }
+
+    /** 지금 이 클라이언트 기준으로 이 UUID가 방장인지 — KfcudpClient.currentHostUuid 클래스 주석 참고. */
+    public static boolean isHostPlayer(UUID id) {
+        return id != null && id.equals(kfc.udp.client.KfcudpClient.currentHostUuid());
     }
 
     /** 방 정원을 무시하고 들어오며 인원 수에도 세지 않는다. */
@@ -73,17 +78,21 @@ public final class DevBadge {
 
     //? if >=26.1 {
     /*public static Component decorate(UUID id, Component name) {
-        if (kfc.udp.client.webrtc.Roles.isDev(id)) return name.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
-        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return name.copy().append(Component.literal(" 💬").withStyle(ChatFormatting.GOLD));
-        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return name.copy().append(Component.literal(" 🎧").withStyle(ChatFormatting.GREEN));
-        return name;
+        Component result = name;
+        if (kfc.udp.client.webrtc.Roles.isDev(id)) result = result.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
+        else if (kfc.udp.client.webrtc.Roles.isSupporter(id)) result = result.copy().append(Component.literal(" 💬").withStyle(ChatFormatting.GOLD));
+        else if (kfc.udp.client.webrtc.Roles.isStreamer(id)) result = result.copy().append(Component.literal(" 🎧").withStyle(ChatFormatting.RED));
+        if (isHostPlayer(id)) result = result.copy().append(Component.literal(" 📶").withStyle(ChatFormatting.GREEN));
+        return result;
     }
     *///?} else {
     public static Text decorate(UUID id, Text name) {
-        if (kfc.udp.client.webrtc.Roles.isDev(id)) return name.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
-        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return name.copy().append(Text.literal(" 💬").formatted(Formatting.GOLD));
-        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return name.copy().append(Text.literal(" 🎧").formatted(Formatting.GREEN));
-        return name;
+        Text result = name;
+        if (kfc.udp.client.webrtc.Roles.isDev(id)) result = result.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
+        else if (kfc.udp.client.webrtc.Roles.isSupporter(id)) result = result.copy().append(Text.literal(" 💬").formatted(Formatting.GOLD));
+        else if (kfc.udp.client.webrtc.Roles.isStreamer(id)) result = result.copy().append(Text.literal(" 🎧").formatted(Formatting.RED));
+        if (isHostPlayer(id)) result = result.copy().append(Text.literal(" 📶").formatted(Formatting.GREEN));
+        return result;
     }
     //?}
 }
