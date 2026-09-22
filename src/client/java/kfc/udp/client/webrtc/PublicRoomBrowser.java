@@ -195,7 +195,7 @@ public final class PublicRoomBrowser {
             @Override public void onMessage(String type, String json) {
                 // 이미 버려진 연결(또는 묶음)에서 늦게 온 메시지가 목록을 되살리지 않게.
                 if (!isLive(s, idx, this)) return;
-                if (VillasMsg.has(json, "peers")) updateFromControl(s, idx, json);
+                if (VillasMsg.has(json, "delta")) updateFromDelta(s, idx, json);
                 else if (VillasMsg.has(json, "room_update")) updateFromRoomUpdate(s, json);
             }
             @Override protected int readIdleTimeoutMs() {
@@ -237,12 +237,22 @@ public final class PublicRoomBrowser {
     /** control(peer 목록) 메시지 — "이 lobby에 지금 어떤 방 코드가 떠 있는지"만 갱신한다. 방의
      * 실제 정보는 여기 안 실려 있다(room_update로 따로 온다) — remote가 없으면 연결이 끊긴 채 아직
      * 세션 맵에서만 안 지워진 잔여 항목이라 방으로 치지 않는다. */
-    private void updateFromControl(Session s, int idx, String json) {
-        Set<String> codes = new java.util.HashSet<>();
-        for (String[] p : VillasMsg.peers(json)) {
+    /** delta 메시지 — mc-signaling이 공개 방 목록 lobby에 한해 control(전체 목록) 대신 이걸
+     * 보낸다(입/퇴장마다 전체를 다시 보내면 로비 인원수의 제곱만큼 비용이 커지기 때문 —
+     * VillasMsg 클래스 주석, mc-signaling의 connection.go 참고). full=true면 joined가 "지금
+     * 전원"이라 이전 집합을 버리고 통째로 갈아끼우고(최초 접속 직후·재접속 직후·서버의 주기적
+     * keyframe), 아니면 이전 집합에 joined를 더하고 left를 뺀다. */
+    private void updateFromDelta(Session s, int idx, String json) {
+        boolean full = VillasMsg.isFullDelta(json);
+        Set<String> prev = s.liveCodesByLobby.get(idx);
+        Set<String> codes = full || prev == null ? new java.util.HashSet<>() : new java.util.HashSet<>(prev);
+        for (String[] p : VillasMsg.joined(json)) {
             String name = p[0], remote = p[1];
             if (name == null || remote == null || !name.startsWith("r")) continue;
             codes.add(name.substring(1));
+        }
+        for (String name : VillasMsg.left(json)) {
+            if (name != null && name.startsWith("r")) codes.remove(name.substring(1));
         }
         s.liveCodesByLobby.set(idx, codes);
         this.recombine(s);

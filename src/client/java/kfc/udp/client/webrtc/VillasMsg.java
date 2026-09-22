@@ -9,6 +9,9 @@ import java.util.List;
  * 서버(cmd/server, pkg/msg.go) 스키마:
  * <pre>
  *   {"control":{"peer_id":N,"peers":[{"name":..,"id":..,"remote":..,..}]}}
+ *   {"delta":{"full":bool,"joined":[{"name":..,..}],"left":["name",..]}} ← mc-signaling 전용 확장,
+ *       공개 방 목록 lobby에서만 옴(control 대신). full=true면 joined가 "지금 전원"이니 기존 걸
+ *       버리고 통째로 갈아끼워야 한다 — PublicRoomBrowser 클래스 주석 참고.
  *   {"description":{"spd":"...","type":"offer|answer"}}   ← 필드명이 "spd" (서버 오타 그대로)
  *   {"candidate":{"spd":"candidate:...","mid":"0"}}
  *   {"servers":[{"url":..,"user":..,"pass":..,"realm":..,"expires":..}]}
@@ -58,8 +61,47 @@ final class VillasMsg {
 
     /** control.peers 배열 → [name, remote(연결 안 됐으면 null)] 목록 */
     static List<String[]> peers(String json) {
+        return peerObjects(json, "peers");
+    }
+
+    /** delta.joined 배열 → [name, remote] 목록 — peers()와 같은 모양(Peer 객체 배열)이라 키만 다르다. */
+    static List<String[]> joined(String json) {
+        return peerObjects(json, "joined");
+    }
+
+    /** delta.left 배열 → 이름 목록(문자열 배열, 객체가 아니다). */
+    static List<String> left(String json) {
+        List<String> out = new ArrayList<>();
+        int k = json.indexOf("\"left\"");
+        if (k < 0) return out;
+        int lb = json.indexOf('[', k);
+        if (lb < 0) return out;
+        int i = lb + 1;
+        while (i < json.length()) {
+            char ch = json.charAt(i);
+            if (ch == ']') break;
+            if (ch == '"') {
+                int start = i + 1, end = start;
+                while (end < json.length() && (json.charAt(end) != '"' || json.charAt(end - 1) == '\\')) end++;
+                out.add(json.substring(start, end).replace("\\\"", "\"").replace("\\\\", "\\"));
+                i = end + 1;
+            } else {
+                i++;
+            }
+        }
+        return out;
+    }
+
+    /** delta.full — true면 joined가 "지금 전원"(기존 걸 버리고 통째로 갈아끼워야 함)이라는 뜻. */
+    static boolean isFullDelta(String json) {
+        String delta = object(json, "delta");
+        return delta != null && "true".equals(field(delta, "full"));
+    }
+
+    /** {key: [ {..}, {..} ]} 형태의 오브젝트 배열 → [name, remote] 목록. peers/joined가 공유. */
+    private static List<String[]> peerObjects(String json, String key) {
         List<String[]> out = new ArrayList<>();
-        int k = json.indexOf("\"peers\"");
+        int k = json.indexOf("\"" + key + "\"");
         if (k < 0) return out;
         int lb = json.indexOf('[', k);
         if (lb < 0) return out;

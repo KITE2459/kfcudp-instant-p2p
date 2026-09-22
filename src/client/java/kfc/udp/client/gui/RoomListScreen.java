@@ -721,7 +721,48 @@ public class RoomListScreen extends Screen {
     private void onRowClicked(int row) {
         PublicRoomBrowser.RoomEntry r = this.rowRoom[row];
         if (r == null || this.rowRemoved[row] || !r.sameVersion()) return;
-        this.joinRoom(r.code());
+        if (!this.stillLive(r.code())) return;
+        this.confirmBroadcastThenJoin(r);
+    }
+
+    /** 방송 비허용 방(P2PConfig.isBroadcastTagged가 false)이면 — "다시 보지 않기"를 안 눌렀다면
+     * — 접속 전에 노란 확인 팝업을 한 번 띄운다. 방송 중인 사람이 실수로 그런 방에 들어가는 걸
+     * 막고, 방송 필터로 걸러 쓰라고 안내하기 위함(SafetyWarningScreen 클래스 주석 참고). */
+    private void confirmBroadcastThenJoin(PublicRoomBrowser.RoomEntry r) {
+        if (kfc.udp.client.webrtc.P2PConfig.isBroadcastTagged(r.channel())
+                || kfc.udp.client.webrtc.P2PConfig.isBroadcastJoinWarningDismissed()) {
+            this.joinRoom(r.code());
+            return;
+        }
+        String code = r.code();
+        //? if >=26.1 {
+        /*assert this.minecraft != null;
+        this.minecraft.setScreenAndShow(new SafetyWarningScreen(this,
+                "instant-p2p.join_broadcast_warning.heading", "instant-p2p.join_broadcast_warning.message",
+                0xFFFFFF55, 0xFF1A1A00, kfc.udp.client.webrtc.P2PConfig::setBroadcastJoinWarningDismissed,
+                () -> this.joinRoom(code)));
+        *///?} else {
+        assert this.client != null;
+        this.client.setScreen(new SafetyWarningScreen(this,
+                "instant-p2p.join_broadcast_warning.heading", "instant-p2p.join_broadcast_warning.message",
+                0xFFFFFF55, 0xFF1A1A00, kfc.udp.client.webrtc.P2PConfig::setBroadcastJoinWarningDismissed,
+                () -> this.joinRoom(code)));
+        //?}
+    }
+
+    /** 클릭 시점에 정말 아직 살아 있는지 한 번 더 확인한다 — rowRemoved는 깜빡임 방지용 유예
+     * (FLICKER_GRACE_MS) 때문에 방이 사라진 지 1.5초 안이면 아직 "삭제됨"으로 안 바뀐다. 그
+     * 좁은 틈에 클릭하면 호스트가 이미 없는 걸 알면서도 접속을 시도해 호스트 대기 타임아웃
+     * (WebRtcClient.HOST_ARRIVE_TIMEOUT_SEC)까지 기다리게 된다 — browser.getCurrentRooms()는
+     * 네트워크 왕복 없이 이미 로컬에 있는 최신 라이브 목록이라, 여기서 유예 없이 바로 거르면
+     * 그 대기를 대부분 건너뛸 수 있다. 걸러지면 missingSince를 강제로 만료시켜 그 자리가
+     * 바로 "삭제됨"으로 보이게 한다(다시 눌러도 또 시도하지 않도록).
+     */
+    private boolean stillLive(String code) {
+        if (this.browser.getCurrentRooms().stream().anyMatch(r -> r.code().equals(code))) return true;
+        this.missingSince.put(code, 0L);
+        this.refreshRooms();
+        return false;
     }
 
     private void joinRoom(String code) {
@@ -738,7 +779,9 @@ public class RoomListScreen extends Screen {
     private void onQuickStart() {
         List<PublicRoomBrowser.RoomEntry> rooms = this.joinableRooms();
         if (rooms.isEmpty()) return;
-        this.joinRoom(rooms.get(RANDOM.nextInt(rooms.size())).code());
+        PublicRoomBrowser.RoomEntry r = rooms.get(RANDOM.nextInt(rooms.size()));
+        if (!this.stillLive(r.code())) return; // 다시 누르면 방금 걸러진 자리 대신 다른 방이 뽑힌다.
+        this.confirmBroadcastThenJoin(r);
     }
 
     /** 접속 버튼·Enter — 입력한 초대 코드로. */

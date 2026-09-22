@@ -64,6 +64,17 @@ public class WebRtcClient {
     private static final int ACCEPT_TIMEOUT_MS = 120_000;
 
     /**
+     * 로비에 조인 알림을 보낸 뒤 호스트가 페어 세션에 나타나길 기다리는 한도. 호스트가 살아있으면
+     * 로비 알림→감지→페어 접속이 보통 1~2초 안에 끝나므로(WS 왕복 몇 번), 여기서 다 채우는 경우는
+     * 사실상 "호스트가 이미 없음"(방 목록의 유령 방 등)뿐이다 — 예전엔 15초였는데, 그 실패 케이스에서
+     * 사용자가 매번 15초를 그냥 날려야 해서 줄였다. 방 목록에서 클릭할 때 이미 한 번 더 라이브 여부를
+     * 확인하므로(RoomListScreen 참고) 대부분의 유령 방은 이 타임아웃까지 가지도 않고 걸러진다 — 이
+     * 값은 그 필터를 통과한 뒤 남는 좁은 경쟁(클릭 직후 방금 닫힌 경우)이나 초대 코드 직접 입력
+     * 케이스를 위한 안전망이다.
+     */
+    private static final int HOST_ARRIVE_TIMEOUT_SEC = 5;
+
+    /**
      * 1차(직결 전용) 시도 한도. 시그널링/coturn이 전부 가까이(수십 ms 이내) 있는
      * 배포 환경 기준 — 홀펀칭이 되는 조합이면 이 안에 거의 항상 판명난다.
      * 안 되면(양쪽 다 대칭형 NAT 등) 더 기다려도 대개 소용없으므로 바로
@@ -86,6 +97,10 @@ public class WebRtcClient {
     private ServerSocketChannel     serverChannel;
     private volatile SocketChannel  mcChannel;
     private volatile BatchPipe.Writer mcWriter; // DC→MC 배칭 writer
+    /** 호스트를 기다리는 동안(awaitHostOrMcCancel) MC가 먼저 보낸 바이트(핸드셰이크·로그인 패킷) —
+     * 그 시점엔 아직 DataChannel이 없어 forwardMcToWebRtc가 시작 전이라, 잃어버리지 않게 여기
+     * 모아뒀다가 forwardMcToWebRtc가 자기 read 루프를 돌기 전에 먼저 흘려보낸다. */
+    private java.io.ByteArrayOutputStream earlyMcBytes;
 
     private final AtomicBoolean  running         = new AtomicBoolean(false);
     /** 백프레셔 대기/웨이크업 (onBufferedAmountChange 이벤트 기반) */
@@ -151,13 +166,7 @@ public class WebRtcClient {
             // 로비에 조인 알림 → 호스트가 페어 세션으로 들어옴
             announceJoin();
 
-            if (!hostArrivedLatch.await(15, TimeUnit.SECONDS)) {
-                LOG.warn("[webrtc] host did not arrive in pair session (room={})", roomId);
-                //? if >=26.1 {
-                /*notifyFailure(Component.translatable("instant-p2p.msg.host_not_found"));
-                *///?} else {
-                notifyFailure(Text.translatable("instant-p2p.msg.host_not_found"));
-                //?}
+            if (!awaitHostOrMcCancel(sock)) {
                 close(); return;
             }
 
@@ -176,11 +185,11 @@ public class WebRtcClient {
             // 허용으로 응답하도록(PairSignal.handlePair) 만들어 뒀다 — 그래서 어느
             // 쪽이 강제든 대칭으로 맞아떨어져 1차를 건너뛰어도 안전하다.
             boolean skipToRelayOnly = hostRelayOnly || P2PConfig.isRelayOnly();
-            boolean connected = attemptConnection(skipToRelayOnly, skipToRelayOnly ? RELAY_ATTEMPT_TIMEOUT_MS : DIRECT_ATTEMPT_TIMEOUT_MS);
+            boolean connected = attemptConnection(sock, skipToRelayOnly, skipToRelayOnly ? RELAY_ATTEMPT_TIMEOUT_MS : DIRECT_ATTEMPT_TIMEOUT_MS);
             if (!connected && running.get() && !skipToRelayOnly) {
                 LOG.info("[webrtc] direct-only attempt did not complete within {}ms, retrying with relay allowed",
                         DIRECT_ATTEMPT_TIMEOUT_MS);
-                connected = attemptConnection(true, RELAY_ATTEMPT_TIMEOUT_MS);
+                connected = attemptConnection(sock, true, RELAY_ATTEMPT_TIMEOUT_MS);
             }
 
             if (!connected) {
@@ -213,6 +222,75 @@ public class WebRtcClient {
                 //?}
             }
             close();
+        }
+    }
+
+    /**
+     * hostArrivedLatch가 풀리길 기다리되, 그동안 MC가 로컬 소켓을 먼저 닫으면(바닐라 "Connecting..."
+     * 화면의 취소 버튼) {@link #awaitOrMcCancel}이 곧장 close()까지 불러 조용히 정리한다 — 그러면
+     * running이 false가 되니 여기선 그냥 notifyFailure를 건너뛰면 된다. 이게 없으면 취소를 눌러도
+     * 이 스레드는 그걸 모른 채 HOST_ARRIVE_TIMEOUT_SEC까지 계속 기다리다가, 사용자가 이미 다른 걸
+     * 하고 있을 시점에 뒤늦게 "호스트를 찾을 수 없습니다"를 띄우며 화면을 강제로 바꿔버린다.
+     *
+     * @return 호스트가 진짜로 나타났으면 true, 취소됐거나 타임아웃이면 false — false를 반환하기
+     *         전에 필요하면(취소가 아니라 진짜 타임아웃이면) 이미 notifyFailure를 호출해 뒀다.
+     */
+    private boolean awaitHostOrMcCancel(SocketChannel sock) throws Exception {
+        awaitOrMcCancel(hostArrivedLatch, HOST_ARRIVE_TIMEOUT_SEC * 1000L, sock);
+        if (!running.get()) return false; // close()가 이미 불렸다(MC 취소 등) — notifyFailure 없이 조용히 종료
+        if (hostArrivedLatch.getCount() == 0) return true; // 진짜로 호스트가 나타났다
+        LOG.warn("[webrtc] host did not arrive in pair session (room={})", roomId);
+        //? if >=26.1 {
+        /*notifyFailure(Component.translatable("instant-p2p.msg.host_not_found"));
+        *///?} else {
+        notifyFailure(Text.translatable("instant-p2p.msg.host_not_found"));
+        //?}
+        return false;
+    }
+
+    /**
+     * latch가 풀리거나, timeoutMs가 다 되거나, MC가 로컬 소켓을 먼저 닫을 때까지(바닐라 "Connecting..."
+     * 화면의 취소 버튼 — ConnectScreen이 자기 쪽 연결을 disconnect()한다) 기다린다. 호스트 대기
+     * (awaitHostOrMcCancel)와 ICE/DataChannel 연결 시도(attemptConnection) 양쪽에서 같이 쓴다 —
+     * forwardMcToWebRtc(DataChannel가 열린 뒤에야 시작하는 진짜 읽기 루프)가 시작하기 전까지는
+     * 아무도 sock을 안 읽어서, 그 사이 MC가 취소해도 아무도 모른 채 남은 타임아웃을 그대로
+     * 기다리다가 사용자가 이미 다른 화면으로 넘어간 뒤에야 에러 화면이 뜨는 버그가 있었다.
+     * <p>
+     * 그 사이 sock으로 들어오는 바이트(MC의 핸드셰이크·로그인 패킷)는 논블로킹으로 읽어
+     * {@link #earlyMcBytes}에 모아 둔다 — 취소가 아니라 정상적으로 연결된 경우, 그 바이트를
+     * 잃어버리면 접속이 깨지므로 forwardMcToWebRtc가 자기 루프를 돌기 전에 먼저 흘려보낸다.
+     * <p>
+     * MC의 취소를 감지하면 이 메서드가 곧장 {@link #close()}까지 부른다 — 그러면 호출한 쪽의
+     * 기존 {@code running.get()} 분기들이 알아서 notifyFailure·재시도를 건너뛴다(둘 다 이미
+     * 그 패턴으로 짜여 있었다).
+     */
+    private void awaitOrMcCancel(CountDownLatch latch, long timeoutMs, SocketChannel sock) throws Exception {
+        sock.configureBlocking(false);
+        try {
+            ByteBuffer peek = ByteBuffer.allocateDirect(4096);
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            while (running.get()) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) return;
+                if (latch.await(Math.min(remaining, 100), TimeUnit.MILLISECONDS)) return;
+
+                peek.clear();
+                int n = sock.read(peek);
+                if (n < 0) {
+                    LOG.info("[webrtc] MC client closed the local socket — likely cancelled");
+                    close();
+                    return;
+                }
+                if (n > 0) {
+                    if (this.earlyMcBytes == null) this.earlyMcBytes = new java.io.ByteArrayOutputStream();
+                    peek.flip();
+                    byte[] chunk = new byte[peek.remaining()];
+                    peek.get(chunk);
+                    this.earlyMcBytes.write(chunk);
+                }
+            }
+        } finally {
+            sock.configureBlocking(true);
         }
     }
 
@@ -471,6 +549,20 @@ public class WebRtcClient {
         // 별도의 coalesce(available 기반 추가 흡수)도 필요 없다.
         ByteBuffer buf = ByteBuffer.allocateDirect(BatchPipe.BATCH_MAX);
         try {
+            // awaitHostOrMcCancel이 호스트를 기다리는 동안 미리 읽어 둔 바이트(MC의 핸드셰이크·
+            // 로그인 패킷)가 있으면 이 루프를 돌기 전에 먼저 보낸다 — 순서가 어긋나면 안 된다.
+            if (this.earlyMcBytes != null) {
+                byte[] early = this.earlyMcBytes.toByteArray();
+                this.earlyMcBytes = null;
+                RTCDataChannel ch0 = dataChannel;
+                if (early.length > 0 && ch0 != null && ch0.getState() == RTCDataChannelState.OPEN) {
+                    // RTCDataChannelBuffer는 JNI GetDirectBufferAddress로 넘어가서 direct 버퍼가
+                    // 아니면 안 된다(위 buf.slice()와 같은 이유) — ByteBuffer.wrap()은 힙 버퍼라 안 됨.
+                    ByteBuffer directEarly = ByteBuffer.allocateDirect(early.length);
+                    directEarly.put(early).flip();
+                    ch0.send(new RTCDataChannelBuffer(directEarly, true));
+                }
+            }
             while (true) {
                 buf.clear();
                 int n = sock.read(buf);
@@ -552,7 +644,7 @@ public class WebRtcClient {
      * 실패/타임아웃이면 이번 시도의 PeerConnection/DataChannel을 정리해서
      * (시그널링 웹소켓은 유지한 채로) 다음 시도가 깨끗한 상태에서 시작하게 한다.
      */
-    private boolean attemptConnection(boolean allowRelay, long timeoutMs) throws InterruptedException {
+    private boolean attemptConnection(SocketChannel sock, boolean allowRelay, long timeoutMs) throws Exception {
         // 이전 시도에서 남은 버퍼링된 answer/candidate는 이번 시도의 SDP와 안 맞으므로 버린다.
         pendingAnswer = null;
         synchronized (pendingIce) {
@@ -565,9 +657,12 @@ public class WebRtcClient {
         initPeerConnection(allowRelay, settled, succeeded);
         createOffer();
 
-        settled.await(timeoutMs, TimeUnit.MILLISECONDS);
+        // MC가 이 사이(최대 timeoutMs, relay 포함 시도면 30초) 취소하면 awaitOrMcCancel이 곧장
+        // close()까지 불러 정리한다 — 그러면 succeeded는 당연히 false로 남고, 아래 running.get()
+        // 체크가 teardownPeerConnection의 중복 정리(close()가 이미 다 치웠음)를 막아 준다.
+        awaitOrMcCancel(settled, timeoutMs, sock);
         if (succeeded.get()) return true;
-        teardownPeerConnection();
+        if (running.get()) teardownPeerConnection();
         return false;
     }
 

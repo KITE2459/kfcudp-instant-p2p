@@ -1,11 +1,13 @@
 {
   "instant-p2p.invite": "Invite",
 
-  "instant-p2p.safety_warning.title": "⚠ Warning ⚠",
   "instant-p2p.safety_warning.heading": "§lWarning!",
-  "instant-p2p.safety_warning.message": "This instant-p2p mod only helps you connect - you're responsible for anything that happens\nYour IP may be exposed over P2P. Enable 'Force Relay' to prevent that\nBe careful of untrusted servers asking for info, links, or program installs!",
+  "instant-p2p.safety_warning.message": "This instant-p2p mod only helps you connect to a LAN server.\nWe take no responsibility for problems between users, whether during or after connecting.\nYour IP may be exposed over P2P - enable 'Force Relay' to prevent that.\nBe careful of untrusted servers asking for personal info, external links, or program installs!",
   "instant-p2p.safety_warning.dont_show_again": "Don't show this again",
   "instant-p2p.safety_warning.continue": "Continue",
+
+  "instant-p2p.join_broadcast_warning.heading": "§lNote!",
+  "instant-p2p.join_broadcast_warning.message": "This room has broadcasting disallowed! Still want to join?\nIf you're currently streaming, please switch the broadcast filter to 'Broadcast-allowed only'!",
 
   "instant-p2p.custom_room.title": "Create Room",
   "instant-p2p.custom_room.edit_title": "Edit Room Settings",

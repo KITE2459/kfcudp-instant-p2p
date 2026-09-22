@@ -114,6 +114,25 @@ public final class P2PConfig {
         return o != null && o.has("safetyWarningDismissed") && o.get("safetyWarningDismissed").getAsBoolean();
     }
 
+    /** 방송 비허용 방에 접속하려 할 때 뜨는 확인 팝업의 "다시 보지 않기" — 기본은 매번 뜬다.
+     * safetyWarningDismissed와는 별개(하나를 껐다고 다른 하나까지 같이 안 뜨면 안 된다). */
+    private static volatile boolean broadcastJoinWarningDismissed = loadBroadcastJoinWarningDismissed();
+
+    public static boolean isBroadcastJoinWarningDismissed() {
+        return broadcastJoinWarningDismissed;
+    }
+
+    public static void setBroadcastJoinWarningDismissed(boolean value) {
+        if (broadcastJoinWarningDismissed == value) return;
+        broadcastJoinWarningDismissed = value;
+        updateSettingsFile(o -> o.addProperty("broadcastJoinWarningDismissed", value));
+    }
+
+    private static boolean loadBroadcastJoinWarningDismissed() {
+        JsonObject o = readSettingsFile();
+        return o != null && o.has("broadcastJoinWarningDismissed") && o.get("broadcastJoinWarningDismissed").getAsBoolean();
+    }
+
     /** 방 목록에서 내 마인크래프트 버전과 다른 방을 숨길지 — 기본은 보여준다(회색으로). */
     private static volatile boolean hideOtherVersions = loadHideOtherVersions();
 

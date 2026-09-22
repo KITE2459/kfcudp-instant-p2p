@@ -1,11 +1,13 @@
 {
   "instant-p2p.invite": "초대하기",
 
-  "instant-p2p.safety_warning.title": "⚠ 경고 ⚠",
   "instant-p2p.safety_warning.heading": "§l경고!",
-  "instant-p2p.safety_warning.message": "이 instant-p2p 모드는 LAN 서버 접속만 도와줄 뿐 접속, 운영 중 문제는 본인 책임입니다\nP2P 특성상 IP가 노출될 수 있습니다. 막으려면 '중계 통신 강제'를 켜세요\n신뢰할 수 없는 서버의 개인정보 요구, 외부 링크, 프로그램 설치는 주의하세요!",
+  "instant-p2p.safety_warning.message": "이 instant-p2p 모드는 LAN 서버 접속만 도와줄 뿐 입니다.\n접속 이후 또는 운영 중 유저간에 발생하는 문제는 책임지지 않습니다.\nP2P 특성상 IP가 노출될 수 있습니다. 막으려면 '중계 통신 강제'를 켜세요.\n신뢰할 수 없는 서버의 개인정보 요구, 외부 링크, 프로그램 설치는 주의하세요!",
   "instant-p2p.safety_warning.dont_show_again": "다시 보지 않기",
   "instant-p2p.safety_warning.continue": "계속하기",
+
+  "instant-p2p.join_broadcast_warning.heading": "§l주의!",
+  "instant-p2p.join_broadcast_warning.message": "방송 비허용 방입니다! 접속하시겠습니까?\n방송 중인 플레이어라면 방송 필터를 '방송 허용만'으로 바꿔주세요!",
 
   "instant-p2p.custom_room.title": "커스텀 방 만들기",
   "instant-p2p.custom_room.edit_title": "방 설정 변경",

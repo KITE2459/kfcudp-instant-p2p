@@ -13,18 +13,22 @@ import net.minecraft.text.Text;
 //?}
 
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
- * 커스텀 방 생성("Custom Room")·접속("Join Room") 버튼을 누르면 실제 화면(CustomRoomScreen/RoomListScreen)으로
- * 넘어가기 전에 뜨는 안전 경고 — 화면을 완전히 바꾸는 대신, RoomListScreen의 "차단하시겠습니까?" 확인창
- * (ConfirmPopup)과 똑같은 스타일(어둡게 깔고 그 위에 테두리 있는 빨간 박스 하나)로 그려서 "화면이 전환됐다"는
- * 느낌 없이 팝업처럼 보이게 한다 — 다만 ConfirmPopup은 이미 열려 있는 화면 위에 얹는 보조 클래스라 이 용도
- * (아직 어떤 화면도 열기 전, 버튼을 누른 시점)에는 못 쓴다. 그래서 화면 자체이면서도 위젯을 하나도 안 쓰고
- * ConfirmPopup처럼 손으로 다 그리고 클릭·키 판정도 직접 한다 — 배경이 화면 전체 위젯 목록이 아니라 딱 이
- * 박스 하나뿐이라 진짜 팝업처럼 보인다.
+ * 화면을 완전히 바꾸는 대신, RoomListScreen의 "차단하시겠습니까?" 확인창(ConfirmPopup)과 똑같은
+ * 스타일(어둡게 깔고 그 위에 테두리 있는 박스 하나)로 그려서 "화면이 전환됐다"는 느낌 없이
+ * 팝업처럼 보이게 하는 범용 경고/확인 화면 — 커스텀 방 기능 진입 경고(빨강), 방송 비허용 방
+ * 접속 확인(노랑)이 이 클래스 하나를 색만 바꿔 재사용한다. ConfirmPopup은 이미 열려 있는 화면
+ * 위에 얹는 보조 클래스라 "아직 어떤 화면도 열기 전(버튼을 누른 시점)"에는 못 쓴다 — 그래서
+ * 화면 자체이면서도 위젯을 하나도 안 쓰고 ConfirmPopup처럼 손으로 다 그리고 클릭·키 판정도
+ * 직접 한다.
  * <p>
- * "다시 보지 않기"를 체크한 채로 계속하기를 눌러야만 {@link kfc.udp.client.webrtc.P2PConfig#setSafetyWarningDismissed}가
- * 저장된다 — 체크만 하고 취소를 누르면(즉 실제로 기능을 쓰지 않았으면) 저장하지 않는다.
+ * "다시 보지 않기"를 체크한 채로 계속하기를 눌러야만 {@code setDismissed}가 불린다 — 체크만
+ * 하고 취소를 누르면(즉 실제로 그 액션을 하지 않았으면) 저장하지 않는다. 계속하기를 누르면
+ * {@code onAccept} 실행 *전에* 먼저 부모 화면으로 돌아간다 — 예를 들어 방 접속은 그 시점의
+ * "현재 화면"이 RoomListScreen이어야만 차단 유저 확인 팝업이 뜨는데(KfcudpClient.joinRoomByCode
+ * 참고), 이 화면이 떠 있는 채로 접속을 시작하면 그 확인이 깨진다.
  */
 public class SafetyWarningScreen extends Screen {
 
@@ -35,8 +39,7 @@ public class SafetyWarningScreen extends Screen {
     private static final int BOX_SIZE = 17, BOX_LABEL_GAP = 4;
     /** 라벨 텍스트(9px 높이)를 박스 안에서 세로로 가운데 맞추는 오프셋. */
     private static final int BOX_LABEL_Y_OFFSET = (BOX_SIZE - 9) / 2;
-    private static final int DIM_COLOR = 0xC0000000, BG_COLOR = 0xFF1A0000, BORDER_COLOR = 0xFFFF5555;
-    private static final int TEXT_COLOR = 0xFFFF5555;
+    private static final int DIM_COLOR = 0xC0000000;
     // 손으로 테두리·체크를 그려서는 CustomRoomScreen 등에서 이미 보던 진짜 바닐라 체크박스와
     // 눈에 띄게 달라 보였다(CheckboxWidget 정적 초기화 블록에서 확인한 실제 스프라이트 이름) —
     // 버튼(widget/button)처럼 이것도 RoomListScreen.drawSprite로 바닐라 텍스처를 그대로 쓴다.
@@ -51,7 +54,10 @@ public class SafetyWarningScreen extends Screen {
     //?}
 
     private final Screen parent;
-    private final Screen target;
+    private final Runnable onAccept;
+    private final Consumer<Boolean> setDismissed;
+    private final int accentColor;
+    private final int bgColor;
     /** "§l"이 박혀 있는 원문 그대로("경고!") — 굵게는 이 §l 코드가 렌더 시점에 알아서 처리해 준다,
      * 코드에서 따로 스타일을 입힐 필요가 없다. 2배로 그려서 본문보다 눈에 띄게 한다(draw* 쪽 참고). */
     private final String heading;
@@ -63,29 +69,39 @@ public class SafetyWarningScreen extends Screen {
     private int okX = -1, cancelX = -1, btnY = -1;
     private int checkboxX = -1, checkboxY = -1;
 
-    public SafetyWarningScreen(Screen parent, Screen target) {
+    /**
+     * @param parent       취소 시(또는 계속하기 실행 직전) 돌아갈 화면
+     * @param headingKey   굵고 2배 크게 그릴 첫 줄의 번역 키(예: "§l경고!")
+     * @param messageKey   본문 번역 키 — "\n"으로 줄바꿈
+     * @param accentColor  테두리·글자색(빨강/노랑 등)
+     * @param bgColor      패널 배경색(accentColor와 어울리는 어두운 톤)
+     * @param setDismissed "다시 보지 않기"를 체크한 채 계속하기를 눌렀을 때만 호출된다
+     * @param onAccept     계속하기 실행 — parent로 먼저 돌아간 *다음에* 실행된다
+     */
+    public SafetyWarningScreen(Screen parent, String headingKey, String messageKey, int accentColor, int bgColor,
+                                Consumer<Boolean> setDismissed, Runnable onAccept) {
         //? if >=26.1 {
-        /*super(Component.translatable("instant-p2p.safety_warning.title"));
-        this.heading = Component.translatable("instant-p2p.safety_warning.heading").getString();
-        this.lines = Component.translatable("instant-p2p.safety_warning.message").getString().split("\n");
+        /*super(Component.translatable(headingKey));
+        this.heading = Component.translatable(headingKey).getString();
+        this.lines = Component.translatable(messageKey).getString().split("\n");
         this.checkboxLabel = Component.translatable("instant-p2p.safety_warning.dont_show_again").getString();
         *///?} else {
-        super(Text.translatable("instant-p2p.safety_warning.title"));
-        this.heading = Text.translatable("instant-p2p.safety_warning.heading").getString();
-        this.lines = Text.translatable("instant-p2p.safety_warning.message").getString().split("\n");
+        super(Text.translatable(headingKey));
+        this.heading = Text.translatable(headingKey).getString();
+        this.lines = Text.translatable(messageKey).getString().split("\n");
         this.checkboxLabel = Text.translatable("instant-p2p.safety_warning.dont_show_again").getString();
         //?}
         this.parent = parent;
-        this.target = target;
+        this.accentColor = accentColor;
+        this.bgColor = bgColor;
+        this.setDismissed = setDismissed;
+        this.onAccept = onAccept;
     }
 
-    private void onAccept() {
-        if (this.dontShowAgain) kfc.udp.client.webrtc.P2PConfig.setSafetyWarningDismissed(true);
-        //? if >=26.1 {
-        /*Objects.requireNonNull(this.minecraft).setScreenAndShow(this.target);
-        *///?} else {
-        Objects.requireNonNull(this.client).setScreen(this.target);
-        //?}
+    private void onAcceptClicked() {
+        if (this.dontShowAgain) this.setDismissed.accept(true);
+        this.onCancel(); // parent로 먼저 돌아간 뒤에(클래스 주석 참고)
+        this.onAccept.run();
     }
 
     private void onCancel() {
@@ -111,7 +127,7 @@ public class SafetyWarningScreen extends Screen {
             RoomListScreen.playClick();
         } else if (this.hitButton(this.okX, mouseX, mouseY)) {
             RoomListScreen.playClick();
-            this.onAccept();
+            this.onAcceptClicked();
         } else if (this.hitButton(this.cancelX, mouseX, mouseY)) {
             RoomListScreen.playClick();
             this.onCancel();
@@ -119,7 +135,7 @@ public class SafetyWarningScreen extends Screen {
     }
 
     private boolean handleKey(int keyCode) {
-        if (keyCode == KEY_ENTER || keyCode == KEY_KP_ENTER) { this.onAccept(); return true; }
+        if (keyCode == KEY_ENTER || keyCode == KEY_KP_ENTER) { this.onAcceptClicked(); return true; }
         if (keyCode == KEY_ESCAPE) { this.onCancel(); return true; }
         return false;
     }
@@ -180,19 +196,19 @@ public class SafetyWarningScreen extends Screen {
         int px = cx - panelW / 2, py = (this.height - panelH) / 2;
 
         context.fill(0, 0, this.width, this.height, DIM_COLOR);
-        context.fill(px, py, px + panelW, py + panelH, BORDER_COLOR);
-        context.fill(px + 1, py + 1, px + panelW - 1, py + panelH - 1, BG_COLOR);
+        context.fill(px, py, px + panelW, py + panelH, this.accentColor);
+        context.fill(px + 1, py + 1, px + panelW - 1, py + panelH - 1, this.bgColor);
 
-        // "경고!"는 2배 크기로 — §l(굵게)은 문자열에 이미 박혀 있어 렌더러가 알아서 처리한다.
+        // 헤딩은 2배 크기로 — §l(굵게)은 문자열에 이미 박혀 있어 렌더러가 알아서 처리한다.
         int headingY = py + PAD;
         context.pose().pushMatrix();
         context.pose().scale(2f, 2f);
-        context.centeredText(font, net.minecraft.network.chat.Component.literal(this.heading), cx / 2, headingY / 2, TEXT_COLOR);
+        context.centeredText(font, net.minecraft.network.chat.Component.literal(this.heading), cx / 2, headingY / 2, this.accentColor);
         context.pose().popMatrix();
 
         int y = headingY + LINE_H * 2 + GAP;
         for (String line : this.lines) {
-            context.centeredText(font, net.minecraft.network.chat.Component.literal(line), cx, y, TEXT_COLOR);
+            context.centeredText(font, net.minecraft.network.chat.Component.literal(line), cx, y, this.accentColor);
             y += LINE_H;
         }
 
@@ -248,10 +264,10 @@ public class SafetyWarningScreen extends Screen {
         context.getMatrices().translate(0f, 0f, 400f);
         //?}
         context.fill(0, 0, this.width, this.height, DIM_COLOR);
-        context.fill(px, py, px + panelW, py + panelH, BORDER_COLOR);
-        context.fill(px + 1, py + 1, px + panelW - 1, py + panelH - 1, BG_COLOR);
+        context.fill(px, py, px + panelW, py + panelH, this.accentColor);
+        context.fill(px + 1, py + 1, px + panelW - 1, py + panelH - 1, this.bgColor);
 
-        // "경고!"는 2배 크기로 — §l(굵게)은 문자열에 이미 박혀 있어 렌더러가 알아서 처리한다.
+        // 헤딩은 2배 크기로 — §l(굵게)은 문자열에 이미 박혀 있어 렌더러가 알아서 처리한다.
         int headingY = py + PAD;
         //? if >=1.21.6 {
         /*context.getMatrices().pushMatrix();
@@ -260,7 +276,7 @@ public class SafetyWarningScreen extends Screen {
         context.getMatrices().push();
         context.getMatrices().scale(2f, 2f, 1f);
         //?}
-        context.drawCenteredTextWithShadow(font, Text.literal(this.heading), cx / 2, headingY / 2, TEXT_COLOR);
+        context.drawCenteredTextWithShadow(font, Text.literal(this.heading), cx / 2, headingY / 2, this.accentColor);
         //? if >=1.21.6 {
         /*context.getMatrices().popMatrix();
         *///?} else {
@@ -269,7 +285,7 @@ public class SafetyWarningScreen extends Screen {
 
         int y = headingY + LINE_H * 2 + GAP;
         for (String line : this.lines) {
-            context.drawCenteredTextWithShadow(font, Text.literal(line), cx, y, TEXT_COLOR);
+            context.drawCenteredTextWithShadow(font, Text.literal(line), cx, y, this.accentColor);
             y += LINE_H;
         }
 

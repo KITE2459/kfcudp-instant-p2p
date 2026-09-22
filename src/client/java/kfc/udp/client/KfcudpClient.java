@@ -210,12 +210,18 @@ public class KfcudpClient implements ClientModInitializer {
     //? if >=26.1 {
     /*private static void kfcudp$openWithSafetyWarning(net.minecraft.client.Minecraft client, Screen parent, Screen target) {
         if (kfc.udp.client.webrtc.P2PConfig.isSafetyWarningDismissed()) client.setScreenAndShow(target);
-        else client.setScreenAndShow(new kfc.udp.client.gui.SafetyWarningScreen(parent, target));
+        else client.setScreenAndShow(new kfc.udp.client.gui.SafetyWarningScreen(parent,
+                "instant-p2p.safety_warning.heading", "instant-p2p.safety_warning.message",
+                0xFFFF5555, 0xFF1A0000, kfc.udp.client.webrtc.P2PConfig::setSafetyWarningDismissed,
+                () -> client.setScreenAndShow(target)));
     }
     *///?} else {
     private static void kfcudp$openWithSafetyWarning(MinecraftClient client, Screen parent, Screen target) {
         if (kfc.udp.client.webrtc.P2PConfig.isSafetyWarningDismissed()) client.setScreen(target);
-        else client.setScreen(new kfc.udp.client.gui.SafetyWarningScreen(parent, target));
+        else client.setScreen(new kfc.udp.client.gui.SafetyWarningScreen(parent,
+                "instant-p2p.safety_warning.heading", "instant-p2p.safety_warning.message",
+                0xFFFF5555, 0xFF1A0000, kfc.udp.client.webrtc.P2PConfig::setSafetyWarningDismissed,
+                () -> client.setScreen(target)));
     }
     //?}
 

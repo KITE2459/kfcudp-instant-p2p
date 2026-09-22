@@ -201,10 +201,15 @@ final class PublicRoomAnnouncer {
                 send(VillasMsg.hello());
             }
             @Override public void onMessage(String type, String json) {
-                // control(=이 로비의 peer 구성이 바뀜) 말고는 받을 게 없다. 누가 새로 들어왔을 수
-                // 있으니(그쪽은 아직 내 방 정보를 못 받았음) 마지막 값을 다시 보낸다 — 나가는
-                // 경우에도 걸리지만 그냥 한 번 더 보내는 것뿐이라 해될 게 없다.
-                if (isCurrent(gen) && VillasMsg.has(json, "peers")) sendUpdate();
+                // 공개 방 목록 lobby는 control 대신 delta로 온다(mc-signaling, VillasMsg 클래스
+                // 주석 참고). joined가 비어있지 않으면(=새로 들어온 사람이 있으면) 그쪽이 아직
+                // 내 정보를 못 받았을 수 있으니 다시 보낸다 — full(키프레임)도 joined에 항상
+                // 자기 자신이 실려 있어서 자연히 여기 걸린다. left만 있는 델타(나가기만 함)는
+                // 캐치업할 사람이 없으므로 재전송하지 않는다 — 방장 여럿이 같은 로비에 있으면
+                // 나가는 이벤트마다 방장 수만큼 곱해지던 중복 트래픽이 이걸로 절반 가까이 준다.
+                if (isCurrent(gen) && VillasMsg.has(json, "delta") && !VillasMsg.joined(json).isEmpty()) {
+                    sendUpdate();
+                }
             }
             @Override protected int readIdleTimeoutMs() {
                 return LIVENESS_TIMEOUT_MS;
