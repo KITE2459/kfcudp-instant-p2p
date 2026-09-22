@@ -320,6 +320,7 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
+        kfc.udp.client.webrtc.Roles.start();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -537,6 +538,7 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
+        kfc.udp.client.webrtc.Roles.start();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —

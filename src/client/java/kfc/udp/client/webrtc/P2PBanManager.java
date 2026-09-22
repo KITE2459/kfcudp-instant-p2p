@@ -225,8 +225,8 @@ public class P2PBanManager {
         //? if >=1.21.9 <26.1 {
         /*return server.getApiServices().nameToIdCache().findByName(name)
                 .map(e -> new ProfileLookup(e.id(), e.name()))
-                .orElse(null);*/
-        //?}
+                .orElse(null);
+        *///?}
         //? if <1.21.9 {
         return server.getUserCache().findByName(name)
                 .map(p -> new ProfileLookup(profileId(p), profileName(p)))
@@ -264,8 +264,8 @@ public class P2PBanManager {
     // -------------------------------------------------------------------------
 
     //? if >=26.1 {
-    /*
-    private static final SuggestionProvider<CommandSourceStack> ONLINE_PLAYERS =
+    
+    /*private static final SuggestionProvider<CommandSourceStack> ONLINE_PLAYERS =
             (ctx, builder) -> {
                 List<String> names = new ArrayList<>();
                 for (ServerPlayer sp : ctx.getSource().getServer().getPlayerList().getPlayers()) {

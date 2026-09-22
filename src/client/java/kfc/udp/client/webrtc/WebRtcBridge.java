@@ -57,6 +57,7 @@ public class WebRtcBridge {
      */
     public static int start(String roomId) throws Exception {
         stop();
+        Roles.refreshAsync();
 
         activeLocalPort = findFreePort();
         LOG.info("[WebRTC] Starting native WebRTC, room={} port={}", roomId, activeLocalPort);
@@ -105,6 +106,7 @@ public class WebRtcBridge {
 
     public static void startHost(String roomId, String target) {
         stopHost();
+        Roles.refreshAsync();
 
         LOG.info("[WebRTC] Starting native host: room={} target={}", roomId, target);
         WebRtcHost host = new WebRtcHost(roomId, target);

@@ -50,6 +50,14 @@ public final class P2PConfig {
     public static final String SIGNALING_URL =
             System.getProperty("kfcudp.signaling", "ws://kite-private-cloud.kro.kr:8090");
 
+    /** SIGNALING_URL의 HTTP 버전 — mc-signaling의 REST API(/api/v1/roles 등, WS 업그레이드가
+     * 아닌 일반 GET)를 부를 때 쓴다. ws→http, wss→https만 바꾸고 호스트:포트는 그대로다(같은
+     * 서버가 같은 포트에서 WS 업그레이드와 일반 HTTP 요청을 같이 받는다). */
+    public static final String SIGNALING_HTTP_URL =
+            SIGNALING_URL.startsWith("wss://") ? "https://" + SIGNALING_URL.substring(6)
+                    : SIGNALING_URL.startsWith("ws://") ? "http://" + SIGNALING_URL.substring(5)
+                    : SIGNALING_URL;
+
     /** coturn STUN (무인증) */
     public static final String STUN_URL =
             System.getProperty("kfcudp.stun", "stun:kite-private-cloud.kro.kr:3478");

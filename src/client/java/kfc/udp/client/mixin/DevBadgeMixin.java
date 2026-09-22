@@ -31,7 +31,7 @@ public abstract class DevBadgeMixin {
     private void kfcudp$devBadge(CallbackInfoReturnable<Component> cir) {
         ServerPlayer self = (ServerPlayer) (Object) this;
         // 배지 대상이어도 실제로 내가 instant-p2p 방을 호스팅 중일 때만 붙인다 — DevBadge.isP2pSessionActive 참고.
-        if (cir.getReturnValue() == null && DevBadge.hasBadge(self.getUUID()) && DevBadge.isP2pSessionActive()) {
+        if (cir.getReturnValue() == null && DevBadge.shouldDecorate(self.getUUID()) && DevBadge.isP2pSessionActive()) {
             cir.setReturnValue(self.getDisplayName());
         }
     }
@@ -40,7 +40,7 @@ public abstract class DevBadgeMixin {
     private void kfcudp$devBadge(CallbackInfoReturnable<Text> cir) {
         ServerPlayerEntity self = (ServerPlayerEntity) (Object) this;
         // 배지 대상이어도 실제로 내가 instant-p2p 방을 호스팅 중일 때만 붙인다 — DevBadge.isP2pSessionActive 참고.
-        if (cir.getReturnValue() == null && DevBadge.hasBadge(self.getUuid()) && DevBadge.isP2pSessionActive()) {
+        if (cir.getReturnValue() == null && DevBadge.shouldDecorate(self.getUuid()) && DevBadge.isP2pSessionActive()) {
             cir.setReturnValue(self.getDisplayName());
         }
     }

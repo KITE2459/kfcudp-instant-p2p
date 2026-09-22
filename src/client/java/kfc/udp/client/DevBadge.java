@@ -8,7 +8,6 @@ import net.minecraft.text.Text;
 import net.minecraft.util.Formatting;
 //?}
 
-import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -21,21 +20,25 @@ import java.util.UUID;
  * <p>
  * UUID는 Mojang 인증 값이라 온라인 모드 방에선 흉내 낼 수 없다. 이 클래스는 mixin 패키지 밖에 둔다 — mixin 패키지
  * 안의 클래스는 일반 클래스처럼 불러 쓸 수 없다.
+ * <p>
+ * 실제 UUID 목록은 더 이상 여기 하드코딩돼 있지 않다 — {@link kfc.udp.client.webrtc.Roles}가
+ * mc-signaling에서 받아온다(그쪽 클래스 주석 참고). 이 클래스는 그 목록을 이름 표시용으로
+ * 소비하는 자리만 그대로 유지한다.
  */
 public final class DevBadge {
 
     /** 특혜(방 정원 무시 + 인원 수에서 빠짐) 스위치 — false면 표시만 남고 특혜는 전부 꺼진다. */
     public static final boolean PERKS_ENABLED = true;
 
-    private static final UUID DEV_UUID = UUID.fromString("163ca181-ebe6-4e4a-85d9-2c651a52d059");
-    private static final Set<UUID> SUPPORTER_UUIDS = Set.of(
-            UUID.fromString("773e9c04-fe2d-4193-8911-6887a28d1757"),
-            UUID.fromString("eb614533-1e04-47df-88d1-ad68e8859022"));
-
     private DevBadge() {}
 
     public static boolean hasBadge(UUID id) {
-        return DEV_UUID.equals(id) || SUPPORTER_UUIDS.contains(id);
+        return kfc.udp.client.webrtc.Roles.hasBadge(id);
+    }
+
+    /** 이름에 배지가 붙는 대상 전체 — 개발자·서포터·방송인. hasBadge와 달리 방 정원 특혜는 안 준다. */
+    public static boolean shouldDecorate(UUID id) {
+        return hasBadge(id) || kfc.udp.client.webrtc.Roles.isStreamer(id);
     }
 
     /** 방 정원을 무시하고 들어오며 인원 수에도 세지 않는다. */
@@ -44,13 +47,14 @@ public final class DevBadge {
     }
 
     public static boolean isDev(UUID id) {
-        return DEV_UUID.equals(id);
+        return kfc.udp.client.webrtc.Roles.isDev(id);
     }
 
     /** 접속 직후 본인에게만 띄우는 안내 문구의 번역 키 — 해당 없으면 null. */
     public static String roleMessageKey(UUID id) {
-        if (DEV_UUID.equals(id)) return "instant-p2p.msg.you_are_dev";
-        if (SUPPORTER_UUIDS.contains(id)) return "instant-p2p.msg.you_are_supporter";
+        if (kfc.udp.client.webrtc.Roles.isDev(id)) return "instant-p2p.msg.you_are_dev";
+        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return "instant-p2p.msg.you_are_supporter";
+        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return "instant-p2p.msg.you_are_streamer";
         return null;
     }
 
@@ -69,14 +73,16 @@ public final class DevBadge {
 
     //? if >=26.1 {
     /*public static Component decorate(UUID id, Component name) {
-        if (DEV_UUID.equals(id)) return name.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
-        if (SUPPORTER_UUIDS.contains(id)) return name.copy().append(Component.literal(" 💬").withStyle(ChatFormatting.GOLD));
+        if (kfc.udp.client.webrtc.Roles.isDev(id)) return name.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
+        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return name.copy().append(Component.literal(" 💬").withStyle(ChatFormatting.GOLD));
+        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return name.copy().append(Component.literal(" 🎧").withStyle(ChatFormatting.GREEN));
         return name;
     }
     *///?} else {
     public static Text decorate(UUID id, Text name) {
-        if (DEV_UUID.equals(id)) return name.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
-        if (SUPPORTER_UUIDS.contains(id)) return name.copy().append(Text.literal(" 💬").formatted(Formatting.GOLD));
+        if (kfc.udp.client.webrtc.Roles.isDev(id)) return name.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
+        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return name.copy().append(Text.literal(" 💬").formatted(Formatting.GOLD));
+        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return name.copy().append(Text.literal(" 🎧").formatted(Formatting.GREEN));
         return name;
     }
     //?}

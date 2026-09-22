@@ -121,6 +121,7 @@
   "instant-p2p.msg.my_connection_relay": "§bYou are connected via the relay",
   "instant-p2p.msg.you_are_dev": "§bYou are the 🛠developer of instant-p2p mod",
   "instant-p2p.msg.you_are_supporter": "§6You are a 💬supporter of instant-p2p mod",
+  "instant-p2p.msg.you_are_streamer": "§aYou are a 🎧streamer of instant-p2p mod",
   "instant-p2p.msg.perk_note": " §f(You can join even when the room is full)",
   "instant-p2p.msg.signaling_unreachable": "§cThe signaling service is currently unavailable — retrying in the background. Players may not be able to join until this recovers",
   "instant-p2p.msg.signaling_recovered": "§aReconnected to the signaling service — the room is working normally again"
