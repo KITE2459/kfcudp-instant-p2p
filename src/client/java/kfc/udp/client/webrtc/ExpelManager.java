@@ -180,13 +180,17 @@ public final class ExpelManager {
      * (방장을 내보낼 방법이 없다 — 클래스 주석 참고). */
     public static final int HOST_PRIORITY = 4;
 
-    /** 개발자 3 &gt; 서포터 2 &gt; 방송인 1 &gt; 무등급 0. */
+    /** 개발자 3 &gt; 서포터 2 &gt; 방송인 1 &gt; 무등급 0. 역할 판정·우선순위는 DevBadge.roleSuffix
+     * 하나만 쓴다 — 순서를 여기 한 벌 더 적어두면 또 어긋난다(그쪽 주석 참고). */
     public static int priority(UUID id) {
         if (id == null) return 0;
-        if (Roles.isDev(id)) return 3;
-        if (Roles.isSupporter(id)) return 2;
-        if (Roles.isStreamer(id)) return 1;
-        return 0;
+        String suffix = kfc.udp.client.DevBadge.roleSuffix(id);
+        if (suffix == null) return 0;
+        return switch (suffix) {
+            case "dev" -> 3;
+            case "supporter" -> 2;
+            default -> 1;
+        };
     }
 
     /**

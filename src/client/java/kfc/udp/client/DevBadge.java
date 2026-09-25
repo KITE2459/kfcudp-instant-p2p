@@ -38,7 +38,7 @@ public final class DevBadge {
 
     /** 이름에 배지가 붙는 대상 전체 — 개발자·서포터·방송인·방장. hasBadge와 달리 방 정원 특혜는 안 준다. */
     public static boolean shouldDecorate(UUID id) {
-        return hasBadge(id) || kfc.udp.client.webrtc.Roles.isStreamer(id) || isHostPlayer(id);
+        return roleSuffix(id) != null || isHostPlayer(id);
     }
 
     /** 지금 이 클라이언트 기준으로 이 UUID가 방장인지 — KfcudpClient.currentHostUuid 클래스 주석 참고. */
@@ -51,16 +51,42 @@ public final class DevBadge {
         return PERKS_ENABLED && hasBadge(id);
     }
 
-    public static boolean isDev(UUID id) {
-        return kfc.udp.client.webrtc.Roles.isDev(id);
+    /**
+     * 역할 번역 키 접미사 — {@code "dev"}/{@code "supporter"}/{@code "streamer"}, 셋 다 아니면 null.
+     * <p>
+     * <b>역할 우선순위(개발자 &gt; 서포터 &gt; 방송인)를 정하는 곳은 여기 하나뿐이다.</b> 한 사람이
+     * 여러 역할을 동시에 가질 수 있어서(서포터이면서 방송인 등) 이 순서가 화면마다 어긋나면 같은
+     * 사람이 화면마다 다른 역할로 보인다 — 실제로 ESC 일시정지 화면만 개발자 → 방송인 → 서포터
+     * 순으로 복붙돼 있어서, 서포터 겸 방송인에게 "스트리머"라고 떴다. 새로 역할을 쓰는 곳이
+     * 생기면 직접 isDev/isSupporter/isStreamer를 늘어놓지 말고 이걸 쓸 것.
+     * {@code ExpelManager.priority}(3/2/1)도 같은 순서다.
+     */
+    public static String roleSuffix(UUID id) {
+        if (kfc.udp.client.webrtc.Roles.isDev(id)) return "dev";
+        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return "supporter";
+        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return "streamer";
+        return null;
     }
 
     /** 접속 직후 본인에게만 띄우는 안내 문구의 번역 키 — 해당 없으면 null. */
     public static String roleMessageKey(UUID id) {
-        if (kfc.udp.client.webrtc.Roles.isDev(id)) return "instant-p2p.msg.you_are_dev";
-        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return "instant-p2p.msg.you_are_supporter";
-        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return "instant-p2p.msg.you_are_streamer";
-        return null;
+        String suffix = roleSuffix(id);
+        return suffix == null ? null : "instant-p2p.msg.you_are_" + suffix;
+    }
+
+    /** ESC 일시정지 화면의 역할 표기 번역 키 — 해당 없으면 null(=표기 안 함). */
+    public static String rolePauseKey(UUID id) {
+        String suffix = roleSuffix(id);
+        return suffix == null ? null : "instant-p2p.pause.role_" + suffix;
+    }
+
+    /** 이름 뒤에 붙는 역할 이모지 — {@link #roleSuffix} 기준. */
+    private static String roleEmoji(String suffix) {
+        return switch (suffix) {
+            case "dev" -> "🛠";
+            case "supporter" -> "💬";
+            default -> "🎧";
+        };
     }
 
     /**
@@ -77,26 +103,44 @@ public final class DevBadge {
     }
 
     //? if >=26.1 {
-    /*public static Component decorate(UUID id, Component name) {
+    /*// 역할 색 — 이름 뒤 배지와 ESC 화면 표기가 같은 색을 쓰게 한다.
+    public static ChatFormatting roleColor(UUID id) {
+        String suffix = roleSuffix(id);
+        if (suffix == null) return ChatFormatting.WHITE;
+        return switch (suffix) {
+            case "dev" -> ChatFormatting.AQUA;
+            case "supporter" -> ChatFormatting.GOLD;
+            default -> ChatFormatting.RED;
+        };
+    }
+
+    public static Component decorate(UUID id, Component name) {
         // 방장이면 등급 배지 대신 방장 표시 하나만 — 등급자가 자기 방을 열었을 때 둘 다 붙어
         // 지저분해 보이는 걸 막는다(예: 개발자가 방장이면 "🛠 📶"가 아니라 "📶"만).
         if (isHostPlayer(id)) return name.copy().append(Component.literal(" 📶").withStyle(ChatFormatting.GREEN));
-        Component result = name;
-        if (kfc.udp.client.webrtc.Roles.isDev(id)) result = result.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
-        else if (kfc.udp.client.webrtc.Roles.isSupporter(id)) result = result.copy().append(Component.literal(" 💬").withStyle(ChatFormatting.GOLD));
-        else if (kfc.udp.client.webrtc.Roles.isStreamer(id)) result = result.copy().append(Component.literal(" 🎧").withStyle(ChatFormatting.RED));
-        return result;
+        String suffix = roleSuffix(id);
+        if (suffix == null) return name;
+        return name.copy().append(Component.literal(" " + roleEmoji(suffix)).withStyle(roleColor(id)));
     }
     *///?} else {
+    /** 역할 색 — 이름 뒤 배지와 ESC 화면 표기가 같은 색을 쓰게 한다. */
+    public static Formatting roleColor(UUID id) {
+        String suffix = roleSuffix(id);
+        if (suffix == null) return Formatting.WHITE;
+        return switch (suffix) {
+            case "dev" -> Formatting.AQUA;
+            case "supporter" -> Formatting.GOLD;
+            default -> Formatting.RED;
+        };
+    }
+
     public static Text decorate(UUID id, Text name) {
         // 방장이면 등급 배지 대신 방장 표시 하나만 — 등급자가 자기 방을 열었을 때 둘 다 붙어
         // 지저분해 보이는 걸 막는다(예: 개발자가 방장이면 "🛠 📶"가 아니라 "📶"만).
         if (isHostPlayer(id)) return name.copy().append(Text.literal(" 📶").formatted(Formatting.GREEN));
-        Text result = name;
-        if (kfc.udp.client.webrtc.Roles.isDev(id)) result = result.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
-        else if (kfc.udp.client.webrtc.Roles.isSupporter(id)) result = result.copy().append(Text.literal(" 💬").formatted(Formatting.GOLD));
-        else if (kfc.udp.client.webrtc.Roles.isStreamer(id)) result = result.copy().append(Text.literal(" 🎧").formatted(Formatting.RED));
-        return result;
+        String suffix = roleSuffix(id);
+        if (suffix == null) return name;
+        return name.copy().append(Text.literal(" " + roleEmoji(suffix)).formatted(roleColor(id)));
     }
     //?}
 }

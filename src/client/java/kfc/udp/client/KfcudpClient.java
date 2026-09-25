@@ -1498,11 +1498,12 @@ public class KfcudpClient implements ClientModInitializer {
         } else {
             // 접속자가 제작자·서포터면 방장의 "방 설정 변경" 자리에 역할을 표시한다 — 본인 화면에만 보인다.
             java.util.UUID me = client.player == null ? null : client.player.getUUID();
-            boolean streamer = me != null && kfc.udp.client.webrtc.Roles.isStreamer(me);
-            if (me != null && (DevBadge.hasBadge(me) || streamer)) {
-                boolean dev = DevBadge.isDev(me);
-                String roleKey = dev ? "instant-p2p.pause.role_dev" : streamer ? "instant-p2p.pause.role_streamer" : "instant-p2p.pause.role_supporter";
-                ChatFormatting roleColor = dev ? ChatFormatting.AQUA : streamer ? ChatFormatting.RED : ChatFormatting.GOLD;
+            // 역할 판정·순서·색은 전부 DevBadge에 맡긴다 — 여기서 직접 3분기를 늘어놓았다가
+            // 개발자 → 방송인 → 서포터 순이 되어, 서포터 겸 방송인에게 "스트리머"라고 떴다
+            // (DevBadge.roleSuffix 주석 참고).
+            String roleKey = me == null ? null : DevBadge.rolePauseKey(me);
+            if (roleKey != null) {
+                ChatFormatting roleColor = DevBadge.roleColor(me);
                 net.minecraft.client.gui.components.StringWidget roleText =
                         new net.minecraft.client.gui.components.StringWidget(
                                 Component.translatable(roleKey).withStyle(roleColor),
@@ -1615,11 +1616,12 @@ public class KfcudpClient implements ClientModInitializer {
         } else {
             // 접속자가 제작자·서포터면 방장의 "방 설정 변경" 자리에 역할을 표시한다 — 본인 화면에만 보인다.
             java.util.UUID me = client.player == null ? null : client.player.getUuid();
-            boolean streamer = me != null && kfc.udp.client.webrtc.Roles.isStreamer(me);
-            if (me != null && (DevBadge.hasBadge(me) || streamer)) {
-                boolean dev = DevBadge.isDev(me);
-                String roleKey = dev ? "instant-p2p.pause.role_dev" : streamer ? "instant-p2p.pause.role_streamer" : "instant-p2p.pause.role_supporter";
-                Formatting roleColor = dev ? Formatting.AQUA : streamer ? Formatting.RED : Formatting.GOLD;
+            // 역할 판정·순서·색은 전부 DevBadge에 맡긴다 — 여기서 직접 3분기를 늘어놓았다가
+            // 개발자 → 방송인 → 서포터 순이 되어, 서포터 겸 방송인에게 "스트리머"라고 떴다
+            // (DevBadge.roleSuffix 주석 참고).
+            String roleKey = me == null ? null : DevBadge.rolePauseKey(me);
+            if (roleKey != null) {
+                Formatting roleColor = DevBadge.roleColor(me);
                 net.minecraft.client.gui.widget.TextWidget roleText =
                         new net.minecraft.client.gui.widget.TextWidget(
                                 Text.translatable(roleKey).formatted(roleColor),
