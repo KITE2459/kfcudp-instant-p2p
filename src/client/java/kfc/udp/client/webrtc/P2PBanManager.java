@@ -125,13 +125,14 @@ public class P2PBanManager {
     // checkCanJoin과 명령어 실행부(executeBan 등)를 에라별로 복붙하지 않고 한 벌만 둘 수 있다
     // (본문은 공용, 시그니처 줄만 분기 — registerBanCommands와 같은 방식).
 
-    /** 채팅 컴포넌트 생성 — Text(Yarn)/Component(Mojang). 브리가디어 {@code literal}과 이름이 겹쳐 msg로 둔다. */
+    /** 채팅 컴포넌트 생성 — Text(Yarn)/Component(Mojang). 브리가디어 {@code literal}과 이름이 겹쳐 msg로 둔다.
+     * KfcudpClient도 같은 이유로 이걸 쓴다(에라별 본문 복붙을 피하려면 이 한 줄이 필요하다). */
     //? if >=26.1 {
-    /*static Component msg(String text) {
+    /*public static Component msg(String text) {
         return Component.literal(text);
     }
 
-    static Component msgKey(String key, Object... args) {
+    public static Component msgKey(String key, Object... args) {
         return Component.translatable(key, args);
     }
 
@@ -161,11 +162,11 @@ public class P2PBanManager {
         player.connection.disconnect(msg(reason));
     }
     *///?} else {
-    static Text msg(String text) {
+    public static Text msg(String text) {
         return Text.literal(text);
     }
 
-    static Text msgKey(String key, Object... args) {
+    public static Text msgKey(String key, Object... args) {
         return Text.translatable(key, args);
     }
 
