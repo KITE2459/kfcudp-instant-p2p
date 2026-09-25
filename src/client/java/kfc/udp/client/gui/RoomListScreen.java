@@ -1191,9 +1191,7 @@ public class RoomListScreen extends Screen {
             context.text(this.font, version, bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
             if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
             // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
-            context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBlock == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-            context.outline(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBlock == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.text(this.font, "❌", glyphX(this.font, "❌", bx) + glyphNudgeX("❌"), by + BLOCK_X_DY + glyphNudgeY("❌"), 0xFFFF5555);
+            glyphButton(context, this.font, "❌", bx, by, 0xFFFF5555, hoveredBlock == i);
         }
         if (this.hasScrollbar()) {
             int trackX = this.listX();
@@ -1262,9 +1260,7 @@ public class RoomListScreen extends Screen {
             context.drawTextWithShadow(this.textRenderer, Text.literal(version), bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
             if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
             // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
-            context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBlock == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-            context.drawStrokedRectangle(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBlock == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.drawTextWithShadow(this.textRenderer, Text.literal("❌"), glyphX(this.textRenderer, "❌", bx) + glyphNudgeX("❌"), by + BLOCK_X_DY + glyphNudgeY("❌"), 0xFFFF5555);
+            glyphButton(context, this.textRenderer, "❌", bx, by, 0xFFFF5555, hoveredBlock == i);
         }
         if (this.hasScrollbar()) {
             int trackX = this.listX();
@@ -1332,9 +1328,7 @@ public class RoomListScreen extends Screen {
             context.drawTextWithShadow(this.textRenderer, Text.literal(version), bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
             if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
             // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
-            context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBlock == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-            context.drawBorder(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBlock == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.drawTextWithShadow(this.textRenderer, Text.literal("❌"), glyphX(this.textRenderer, "❌", bx) + glyphNudgeX("❌"), by + BLOCK_X_DY + glyphNudgeY("❌"), 0xFFFF5555);
+            glyphButton(context, this.textRenderer, "❌", bx, by, 0xFFFF5555, hoveredBlock == i);
         }
         if (this.hasScrollbar()) {
             int trackX = this.listX();
@@ -1421,6 +1415,36 @@ public class RoomListScreen extends Screen {
     static int glyphNudgeY(String glyph) {
         return glyph.equals("❌") || glyph.equals("⚡") || glyph.equals("♻") ? 1 : 0;
     }
+
+    // 아이콘 버튼 한 칸(회색 바탕 + 테두리 + 가운데 정렬 아이콘) — 방 목록의 ❌와 차단 목록의
+    // ❌/♻/⚡/📶가 전부 같은 모양이어야 하므로 그리는 곳을 여기 하나로 모았다. 예전엔 화면마다
+    // 이 세 줄을 각자 그려서 같은 동작인데 아이콘·색이 어긋나는 버그가 났다
+    // (BlockedPlayersScreen 클래스 주석 참고). 방장 표시(📶)는 클릭이 안 되니 hovered=false로 부른다.
+    // 테두리 메서드 이름이 1.21.9(drawStrokedRectangle)·26.1(outline)에서 바뀌어 셋으로 나눈다.
+    //? if >=26.1 {
+    /*static void glyphButton(GuiGraphicsExtractor ctx, net.minecraft.client.gui.Font font, String glyph,
+                            int x, int y, int color, boolean hovered) {
+        ctx.fill(x, y, x + BLOCK_BTN, y + BLOCK_BTN, hovered ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
+        ctx.outline(x, y, BLOCK_BTN, BLOCK_BTN, hovered ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
+        ctx.text(font, glyph, glyphX(font, glyph, x) + glyphNudgeX(glyph), y + BLOCK_X_DY + glyphNudgeY(glyph), color);
+    }
+    *///?}
+    //? if >=1.21.9 <26.1 {
+    /*static void glyphButton(DrawContext ctx, net.minecraft.client.font.TextRenderer font, String glyph,
+                            int x, int y, int color, boolean hovered) {
+        ctx.fill(x, y, x + BLOCK_BTN, y + BLOCK_BTN, hovered ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
+        ctx.drawStrokedRectangle(x, y, BLOCK_BTN, BLOCK_BTN, hovered ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
+        ctx.drawTextWithShadow(font, Text.literal(glyph), glyphX(font, glyph, x) + glyphNudgeX(glyph), y + BLOCK_X_DY + glyphNudgeY(glyph), color);
+    }
+    *///?}
+    //? if <1.21.9 {
+    static void glyphButton(DrawContext ctx, net.minecraft.client.font.TextRenderer font, String glyph,
+                            int x, int y, int color, boolean hovered) {
+        ctx.fill(x, y, x + BLOCK_BTN, y + BLOCK_BTN, hovered ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
+        ctx.drawBorder(x, y, BLOCK_BTN, BLOCK_BTN, hovered ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
+        ctx.drawTextWithShadow(font, Text.literal(glyph), glyphX(font, glyph, x) + glyphNudgeX(glyph), y + BLOCK_X_DY + glyphNudgeY(glyph), color);
+    }
+    //?}
 
     // 바닐라 버튼 클릭음 — 위젯이 아니라 직접 그린 버튼(차단 x, 팝업 확인/취소 등)은 소리를 안 내서 따로 튼다.
     // 정적 도우미가 1.21.2(ClickableWidget.playClickSound)·26.x(AbstractWidget.playButtonClickSound)에서 생겼고,

@@ -217,24 +217,21 @@ public class BlockedPlayersScreen extends Screen {
     /** 강퇴 버튼은 ❌/♻ 버튼 바로 왼쪽 — 등급자인 나한테만, 그리고 지금 온라인이면서 방장이 아닌
      * 대상에만 뜬다(방장은 강퇴 대상이 될 수 없다, ExpelManager 클래스 주석 참고). */
     private int kickButtonAt(double mouseX, double mouseY) {
-        if (!this.showKickColumn) return -1;
-        for (int i = 0; i < this.cellEntry.length; i++) {
-            P2PBanManager.BannedEntry e = this.cellEntry[i];
-            if (e == null || !this.onlineUuids.contains(e.uuid()) || isHostEntry(e)) continue;
-            int bx = this.cellX[i] + CELL_W - 6 - 2 * BLOCK_BTN;
-            int by = this.cellY[i] + (CELL_H - BLOCK_BTN) / 2;
-            if (mouseX >= bx && mouseX < bx + BLOCK_BTN && mouseY >= by && mouseY < by + BLOCK_BTN) return i;
-        }
-        return -1;
+        return this.secondColumnAt(mouseX, mouseY, false);
     }
 
     /** 강퇴 버튼 대신 방장 표시가 뜨는 자리 — 클릭은 안 되고 호버 툴팁("호스트는 강퇴할 수
-     * 없습니다")만 있다. kickButtonAt과 같은 자리, 조건만 방장이어야 한다는 것만 반대. */
+     * 없습니다")만 있다. 강퇴 버튼과 같은 자리라 판정도 같은 걸 쓴다(host만 반대). */
     private int hostBadgeAt(double mouseX, double mouseY) {
+        return this.secondColumnAt(mouseX, mouseY, true);
+    }
+
+    /** 둘째 열(강퇴 ⚡ 또는 방장 📶)의 호버 칸 — 좌표가 같으니 대상이 방장인지로만 갈린다. */
+    private int secondColumnAt(double mouseX, double mouseY, boolean host) {
         if (!this.showKickColumn) return -1;
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
-            if (e == null || !this.onlineUuids.contains(e.uuid()) || !isHostEntry(e)) continue;
+            if (e == null || !this.onlineUuids.contains(e.uuid()) || isHostEntry(e) != host) continue;
             int bx = this.cellX[i] + CELL_W - 6 - 2 * BLOCK_BTN;
             int by = this.cellY[i] + (CELL_H - BLOCK_BTN) / 2;
             if (mouseX >= bx && mouseX < bx + BLOCK_BTN && mouseY >= by && mouseY < by + BLOCK_BTN) return i;
@@ -661,21 +658,15 @@ public class BlockedPlayersScreen extends Screen {
             context.outline(x, y, CELL_W, CELL_H, ROW_BORDER_COLOR);
             this.drawHead(context, e, x + 6, y + (CELL_H - HEAD_SIZE) / 2);
             context.text(this.font, this.font.plainSubstrByWidth(displayName(e), this.nameW), x + 6 + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
-            context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBtn == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-            context.outline(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBtn == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.text(this.font, this.glyph(e), glyphX(this.font, this.glyph(e), bx) + glyphNudgeX(this.glyph(e)), by + BLOCK_X_DY + glyphNudgeY(this.glyph(e)), this.glyphColor(e));
+            glyphButton(context, this.font, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
                 if (isHostEntry(e)) {
                     // 방장은 강퇴 대상이 될 수 없다(ExpelManager 클래스 주석 참고) — 빈 칸 대신
                     // 방장 표시를 박아서 왜 강퇴 버튼이 없는지 바로 보이게 한다.
-                    context.fill(kx, by, kx + BLOCK_BTN, by + BLOCK_BTN, BLOCK_BTN_COLOR);
-                    context.outline(kx, by, BLOCK_BTN, BLOCK_BTN, ROW_BORDER_COLOR);
-                    context.text(this.font, "📶", glyphX(this.font, "📶", kx) + glyphNudgeX("📶"), by + BLOCK_X_DY + glyphNudgeY("📶"), 0xFF55FF55);
+                    glyphButton(context, this.font, "📶", kx, by, 0xFF55FF55, false);
                 } else {
-                    context.fill(kx, by, kx + BLOCK_BTN, by + BLOCK_BTN, hoveredKick == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-                    context.outline(kx, by, BLOCK_BTN, BLOCK_BTN, hoveredKick == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-                    context.text(this.font, "⚡", glyphX(this.font, "⚡", kx) + glyphNudgeX("⚡"), by + BLOCK_X_DY + glyphNudgeY("⚡"), 0xFFFFFF55);
+                    glyphButton(context, this.font, "⚡", kx, by, 0xFFFFFF55, hoveredKick == i);
                 }
             }
         }
@@ -726,19 +717,13 @@ public class BlockedPlayersScreen extends Screen {
             context.drawStrokedRectangle(x, y, CELL_W, CELL_H, ROW_BORDER_COLOR);
             this.drawHead(context, e, x + 6, y + (CELL_H - HEAD_SIZE) / 2);
             context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(displayName(e), this.nameW)), x + 6 + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
-            context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBtn == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-            context.drawStrokedRectangle(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBtn == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(this.glyph(e)), glyphX(this.textRenderer, this.glyph(e), bx) + glyphNudgeX(this.glyph(e)), by + BLOCK_X_DY + glyphNudgeY(this.glyph(e)), this.glyphColor(e));
+            glyphButton(context, this.textRenderer, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
                 if (isHostEntry(e)) {
-                    context.fill(kx, by, kx + BLOCK_BTN, by + BLOCK_BTN, BLOCK_BTN_COLOR);
-                    context.drawStrokedRectangle(kx, by, BLOCK_BTN, BLOCK_BTN, ROW_BORDER_COLOR);
-                    context.drawTextWithShadow(this.textRenderer, Text.literal("📶"), glyphX(this.textRenderer, "📶", kx) + glyphNudgeX("📶"), by + BLOCK_X_DY + glyphNudgeY("📶"), 0xFF55FF55);
+                    glyphButton(context, this.textRenderer, "📶", kx, by, 0xFF55FF55, false);
                 } else {
-                    context.fill(kx, by, kx + BLOCK_BTN, by + BLOCK_BTN, hoveredKick == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-                    context.drawStrokedRectangle(kx, by, BLOCK_BTN, BLOCK_BTN, hoveredKick == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-                    context.drawTextWithShadow(this.textRenderer, Text.literal("⚡"), glyphX(this.textRenderer, "⚡", kx) + glyphNudgeX("⚡"), by + BLOCK_X_DY + glyphNudgeY("⚡"), 0xFFFFFF55);
+                    glyphButton(context, this.textRenderer, "⚡", kx, by, 0xFFFFFF55, hoveredKick == i);
                 }
             }
         }
@@ -787,19 +772,13 @@ public class BlockedPlayersScreen extends Screen {
             context.drawBorder(x, y, CELL_W, CELL_H, ROW_BORDER_COLOR);
             this.drawHead(context, e, x + 6, y + (CELL_H - HEAD_SIZE) / 2);
             context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(displayName(e), this.nameW)), x + 6 + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
-            context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBtn == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-            context.drawBorder(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBtn == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(this.glyph(e)), glyphX(this.textRenderer, this.glyph(e), bx) + glyphNudgeX(this.glyph(e)), by + BLOCK_X_DY + glyphNudgeY(this.glyph(e)), this.glyphColor(e));
+            glyphButton(context, this.textRenderer, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
                 if (isHostEntry(e)) {
-                    context.fill(kx, by, kx + BLOCK_BTN, by + BLOCK_BTN, BLOCK_BTN_COLOR);
-                    context.drawBorder(kx, by, BLOCK_BTN, BLOCK_BTN, ROW_BORDER_COLOR);
-                    context.drawTextWithShadow(this.textRenderer, Text.literal("📶"), glyphX(this.textRenderer, "📶", kx) + glyphNudgeX("📶"), by + BLOCK_X_DY + glyphNudgeY("📶"), 0xFF55FF55);
+                    glyphButton(context, this.textRenderer, "📶", kx, by, 0xFF55FF55, false);
                 } else {
-                    context.fill(kx, by, kx + BLOCK_BTN, by + BLOCK_BTN, hoveredKick == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
-                    context.drawBorder(kx, by, BLOCK_BTN, BLOCK_BTN, hoveredKick == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-                    context.drawTextWithShadow(this.textRenderer, Text.literal("⚡"), glyphX(this.textRenderer, "⚡", kx) + glyphNudgeX("⚡"), by + BLOCK_X_DY + glyphNudgeY("⚡"), 0xFFFFFF55);
+                    glyphButton(context, this.textRenderer, "⚡", kx, by, 0xFFFFFF55, hoveredKick == i);
                 }
             }
         }
