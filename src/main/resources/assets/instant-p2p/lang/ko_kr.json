@@ -1,13 +1,10 @@
 {
-  "instant-p2p.invite": "초대하기",
-
   "instant-p2p.safety_warning.heading": "§l경고!",
   "instant-p2p.safety_warning.message": "이 instant-p2p 모드는 LAN 서버 접속만 도와줄 뿐 입니다.\n접속 이후 또는 운영 중 유저간에 발생하는 문제는 책임지지 않습니다.\nP2P 특성상 IP가 노출될 수 있습니다. 막으려면 '중계 통신 강제'를 켜세요.\n신뢰할 수 없는 서버의 개인정보 요구, 외부 링크, 프로그램 설치는 주의하세요!",
   "instant-p2p.safety_warning.dont_show_again": "다시 보지 않기",
   "instant-p2p.safety_warning.continue": "계속하기",
   "instant-p2p.streamer_protection.heading": "§l주의!",
   "instant-p2p.streamer_protection.message": "스트리머 보호 기능이 활성화됩니다\n계정이 연동된 방송 중인 스트리머가 원활한 방송 진행을 위해\n유저를 강퇴하거나 임시로 밴하는 권한이 주어집니다",
-  "instant-p2p.streamer_protection.settings_title": "스트리머 보호 설정",
 
   "instant-p2p.join_broadcast_warning.heading": "§l주의!",
   "instant-p2p.join_broadcast_warning.message": "방송 비허용 방입니다! 접속하시겠습니까?\n방송 중인 플레이어라면 방송 필터를 '방송 허용만'으로 바꿔주세요!",
@@ -132,8 +129,8 @@
   "instant-p2p.join_blocked.many_others": "그 외 %s명",
   "instant-p2p.join_blocked.many_tail": "의 차단된 유저가 존재하는 서버입니다",
   "instant-p2p.join_blocked.message": "접속하시겠습니까?",
-  "instant-p2p.join_blocked.yes_countdown": "네(%s)",
-  "instant-p2p.join_blocked.no": "아니오",
+  "instant-p2p.join_blocked.yes": "네",
+  "instant-p2p.join_blocked.no": "아니오(%s)",
   "instant-p2p.msg.invite_expired": "§c초대장이 만료되었습니다",
   "instant-p2p.msg.room_full": "§c방이 가득 찼습니다 (최대 %s명)",
   "instant-p2p.msg.not_whitelisted": "§c이 서버에 화이트리스트로 등록되지 않았습니다",

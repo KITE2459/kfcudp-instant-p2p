@@ -144,16 +144,8 @@ public class P2PWhitelistManager {
         return removed;
     }
 
-    public static boolean isWhitelisted(String uuid) {
-        return whitelist.containsKey(uuid);
-    }
-
     public static void setEnabled(boolean value) {
         enabled = value;
-    }
-
-    public static boolean isEnabled() {
-        return enabled;
     }
 
     /** {@link P2PBanManager#checkCanJoin}에서 호출 — 화이트리스트가 꺼져 있으면 항상 통과. */

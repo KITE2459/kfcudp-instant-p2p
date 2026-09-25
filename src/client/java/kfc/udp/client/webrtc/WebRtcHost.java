@@ -57,7 +57,6 @@ public class WebRtcHost {
     private static final int    HANDSHAKE_TIMEOUT_MS = 10_000; // DataChannel open 한도
     private static final int    OFFER_TIMEOUT_MS     = 20_000; // 페어 세션에서 OFFER 대기 한도
     private static final int    DIAL_TIMEOUT_MS      = 5_000;
-    private static final int    BUFFER_SIZE          = 65536;
     // 버퍼 한도는 P2PConfig에서 관리 — 지연/처리량 트레이드오프 근거와
     // -Dkfcudp.pipe.* 되돌리기 방법은 그쪽 주석 참고.
     private static final long   DC_BUF_HIGH          = P2PConfig.DC_BUF_HIGH;

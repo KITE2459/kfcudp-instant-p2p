@@ -180,11 +180,13 @@ final class ConfirmPopup {
         }
         ctx.text(font, hint, cx - font.width(hint) / 2, y, 0xFFA0A0A0);
 
-        this.button(ctx, font, this.okX, names != null
-                ? Component.translatable("instant-p2p.join_blocked.yes_countdown", this.secondsLeft()).getString()
-                : Component.translatable("gui.ok").getString(), mouseX, mouseY);
-        this.button(ctx, font, this.cancelX, Component.translatable(names != null ? "instant-p2p.join_blocked.no" : "gui.cancel").getString(),
-                mouseX, mouseY);
+        // 카운트는 "아니오" 쪽에 붙인다 — 다 세면 expired()가 "아니오"로 닫으므로, 그 시간을
+        // 세는 건 접속이 아니라 취소다(예전엔 "네"에 붙어 있어서 반대로 읽혔다).
+        this.button(ctx, font, this.okX, Component.translatable(names != null
+                ? "instant-p2p.join_blocked.yes" : "gui.ok").getString(), mouseX, mouseY);
+        this.button(ctx, font, this.cancelX, names != null
+                ? Component.translatable("instant-p2p.join_blocked.no", this.secondsLeft()).getString()
+                : Component.translatable("gui.cancel").getString(), mouseX, mouseY);
 
         if (names != null && this.overOthers(mouseX, mouseY)) {
             ctx.setComponentTooltipForNextFrame(font,
@@ -249,11 +251,13 @@ final class ConfirmPopup {
         }
         ctx.drawTextWithShadow(font, hint, cx - font.getWidth(hint) / 2, y, 0xFFA0A0A0);
 
-        this.button(ctx, font, this.okX, names != null
-                ? Text.translatable("instant-p2p.join_blocked.yes_countdown", this.secondsLeft()).getString()
-                : Text.translatable("gui.ok").getString(), mouseX, mouseY);
-        this.button(ctx, font, this.cancelX, Text.translatable(names != null ? "instant-p2p.join_blocked.no" : "gui.cancel").getString(),
-                mouseX, mouseY);
+        // 카운트는 "아니오" 쪽에 붙인다 — 다 세면 expired()가 "아니오"로 닫으므로, 그 시간을
+        // 세는 건 접속이 아니라 취소다(예전엔 "네"에 붙어 있어서 반대로 읽혔다).
+        this.button(ctx, font, this.okX, Text.translatable(names != null
+                ? "instant-p2p.join_blocked.yes" : "gui.ok").getString(), mouseX, mouseY);
+        this.button(ctx, font, this.cancelX, names != null
+                ? Text.translatable("instant-p2p.join_blocked.no", this.secondsLeft()).getString()
+                : Text.translatable("gui.cancel").getString(), mouseX, mouseY);
 
         if (names != null && this.overOthers(mouseX, mouseY)) {
             ctx.drawTooltip(font, names.subList(1, names.size()).stream().<Text>map(Text::literal).toList(), mouseX, mouseY);

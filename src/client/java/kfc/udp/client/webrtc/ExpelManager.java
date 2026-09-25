@@ -41,11 +41,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * 없다 — 등급이 충분하면 1명의 판단만으로 즉시 무력화된다(요구사항: "가해자가 즉시 그곳에서
  * 쫓겨나는게 최선").
  * <p>
- * <b>예전엔 "동결"(관전 모드 고정·위치 고정·명령어 차단)이었다</b> — 접속은 유지한 채 그 자리에
- * 묶어두는 방식이라, 명령어 실행을 전부 막는 별도 믹스인(FreezeCommandMixin)과 매 틱 위치 강제가
- * 필요했고, 그래도 순수 GUI 동작(예: 방장의 CustomRoomScreen)이나 명령어 권한 우회(예: 방장이
- * 자기 대신 공범에게 /op) 같은 구멍이 계속 나왔다. 그냥 서버에서 내보내 버리면(추방) 그 사람은
- * 애초에 접속해 있지 않으니 그런 구멍 자체가 성립하지 않는다 — 그래서 통째로 이 방식으로 바꿨다.
+ * <b>이 방식을 다시 "접속은 유지하고 묶어두는" 쪽으로 되돌리지 말 것</b> — 예전엔 관전 모드·위치
+ * 고정·명령어 차단으로 묶어뒀는데, 명령어를 전부 막는 전용 믹스인과 매 틱 위치 강제가 필요했고
+ * 그래도 순수 GUI 동작(예: 방장의 CustomRoomScreen)이나 권한 우회(예: 방장이 자기 대신 공범에게
+ * /op) 같은 구멍이 계속 나왔다. 서버에서 내보내 버리면 그 사람은 애초에 접속해 있지 않으니 그런
+ * 구멍 자체가 성립하지 않는다.
  * <p>
  * <b>등급</b> — 개발자(3) &gt; 서포터(2) &gt; 방송인(1) &gt; 무등급(0). 내 등급이 상대 등급보다 "엄격히"
  * 높아야만 내 차단이 추방을 건다 — 낮으면 당연히 안 통하고, 같아도(방송인이 방송인을 차단하는 등)
@@ -152,20 +152,17 @@ public final class ExpelManager {
         if (myExpelledTargets.remove(target.toString()) != null) saveExpelledTargets();
     }
 
-    /** UUID → 마지막으로 알려진 이름(P2PBanManager.BannedEntry와 같은 모양). */
-    public record ExpelledTarget(UUID uuid, String name) {}
+    /** UUID → 마지막으로 알려진 이름(P2PBanManager.BannedEntry와 같은 모양). 재접속 때 목록을
+     * 다시 흘려보내는 register()의 ALLOW_GAME 핸들러만 쓰는 내부용이다 — 예전엔 별도 추방 목록
+     * 화면이 이걸 읽었지만 그 화면은 BlockedPlayersScreen으로 합쳐지며 없어졌다. */
+    private record ExpelledTarget(UUID uuid, String name) {}
 
-    public static synchronized java.util.List<ExpelledTarget> myExpelledTargets() {
+    private static synchronized java.util.List<ExpelledTarget> myExpelledTargets() {
         return myExpelledTargets.values().stream()
                 .map(o -> new ExpelledTarget(UUID.fromString(o.get("uuid").getAsString()),
                         o.has("name") ? o.get("name").getAsString() : ""))
                 .sorted(java.util.Comparator.comparing(ExpelledTarget::name, String.CASE_INSENSITIVE_ORDER))
                 .toList();
-    }
-
-    /** BlockedPlayersScreen이 칸마다 x(추방)/o(해제) 글자를 고를 때 쓴다. */
-    public static synchronized boolean isMyExpelledTarget(UUID id) {
-        return myExpelledTargets.containsKey(id.toString());
     }
 
     /** 추방 대상 UUID → 그 추방을 건 사람들(등급자) UUID 집합. 비어있으면(또는 키가 없으면) 추방

@@ -1,13 +1,10 @@
 {
-  "instant-p2p.invite": "Invite",
-
   "instant-p2p.safety_warning.heading": "§lWarning!",
   "instant-p2p.safety_warning.message": "This instant-p2p mod only helps you connect to a LAN server.\nWe take no responsibility for problems between users, whether during or after connecting.\nYour IP may be exposed over P2P - enable 'Force Relay' to prevent that.\nBe careful of untrusted servers asking for personal info, external links, or program installs!",
   "instant-p2p.safety_warning.dont_show_again": "Don't show this again",
   "instant-p2p.safety_warning.continue": "Continue",
   "instant-p2p.streamer_protection.heading": "§lNotice!",
   "instant-p2p.streamer_protection.message": "Streamer protection is now active.\nA streamer whose account is linked and currently broadcasting is granted\nthe authority to kick or temp-ban users, to keep their broadcast running smoothly.",
-  "instant-p2p.streamer_protection.settings_title": "Streamer Protection Settings",
 
   "instant-p2p.join_broadcast_warning.heading": "§lNote!",
   "instant-p2p.join_broadcast_warning.message": "This room has broadcasting disallowed! Still want to join?\nIf you're currently streaming, please switch the broadcast filter to 'Broadcast-allowed only'!",
@@ -132,8 +129,8 @@
   "instant-p2p.join_blocked.many_others": "and %s other blocked player(s)",
   "instant-p2p.join_blocked.many_tail": " are on this server",
   "instant-p2p.join_blocked.message": "Do you still want to join?",
-  "instant-p2p.join_blocked.yes_countdown": "Yes (%s)",
-  "instant-p2p.join_blocked.no": "No",
+  "instant-p2p.join_blocked.yes": "Yes",
+  "instant-p2p.join_blocked.no": "No (%s)",
   "instant-p2p.msg.invite_expired": "§cThe invite has expired",
   "instant-p2p.msg.room_full": "§cThe room is full (Max %s players)",
   "instant-p2p.msg.not_whitelisted": "§cYou are not whitelisted on this server",
