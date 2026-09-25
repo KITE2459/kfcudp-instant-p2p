@@ -174,6 +174,12 @@ public final class ExpelManager {
 
     private ExpelManager() {}
 
+    /** 방장은 등급과 무관하게 최상위다 — 자기 방이라 개발자·서포터·방송인 누구든 강퇴·차단할 수
+     * 있어야 한다. 등급 최고치(개발자 3)보다 커야 {@code senderPriority <= priority(target)}를
+     * 항상 통과한다. 반대로 <b>방장이 대상일 때</b>는 이 값과 무관하게 expel/kick이 먼저 거른다
+     * (방장을 내보낼 방법이 없다 — 클래스 주석 참고). */
+    public static final int HOST_PRIORITY = 4;
+
     /** 개발자 3 &gt; 서포터 2 &gt; 방송인 1 &gt; 무등급 0. */
     public static int priority(UUID id) {
         if (id == null) return 0;
@@ -193,6 +199,8 @@ public final class ExpelManager {
      * 개발자·서포터는 방송 허용과 무관하다.
      */
     public static int effectivePriority(UUID id) {
+        // 방장은 등급이 없어도 최상위 — 화면에도 강퇴 열이 뜨고 아무도 면역이 아니게 된다.
+        if (kfc.udp.client.DevBadge.isHostPlayer(id)) return HOST_PRIORITY;
         int p = priority(id);
         return p == 1 && !kfc.udp.client.KfcudpClient.isBroadcastAllowedHere() ? 0 : p;
     }
@@ -210,7 +218,40 @@ public final class ExpelManager {
     public static void requestExpel(UUID target, String name) { rememberExpelledTarget(target, name); sendMarker(EXPEL_MARKER, target); }
     public static void requestReadmit(UUID target) { forgetExpelledTarget(target); sendMarker(READMIT_MARKER, target); }
     /** 1회성 강퇴 — 추방과 달리 아무 것도 기록하지 않는다(재접속 제한 없음, 재접속 시 다시 보낼 것도 없음). */
-    public static void requestKick(UUID target) { sendMarker(KICK_MARKER, target); }
+    public static void requestKick(UUID target) {
+        if (kickAsHost(target)) return;
+        sendMarker(KICK_MARKER, target);
+    }
+
+    /**
+     * 내가 방장이면 채팅 마커를 거치지 않고 내 서버에서 바로 강퇴한다 — {@link #sendMarker}는
+     * 방장이면 일부러 아무 것도 안 보내므로(그쪽 주석 참고) 이 경로가 없으면 방장의 강퇴 버튼은
+     * 눌러도 아무 일이 안 난다. 방장이 아니면 false를 돌려주고 원래 마커 경로를 타게 한다.
+     * <p>
+     * 추방(EXPEL)은 이런 경로를 두지 않는다 — 방장의 차단은 이미 P2PBanManager.banPlayer(영구)
+     * + KfcudpClient.kickBlockedPlayer로 임시밴보다 강하게 처리되고, 그쪽이 내보내는 것과
+     * holders 등록이 겹치면 "온라인이 아닌데 holders에만 남는" 유령 추방이 생긴다.
+     */
+    private static boolean kickAsHost(UUID target) {
+        if (!kfc.udp.client.KfcudpClient.isRoomActive()) return false;
+        MinecraftServer server = activeServer;
+        UUID me = myUuid();
+        if (server == null || me == null) return true; // 방장인 건 맞으니 마커로 새지 않게 true
+        server.execute(() -> kick(me, target, server));
+        return true;
+    }
+
+    //? if >=26.1 {
+    /*private static UUID myUuid() {
+        net.minecraft.client.player.LocalPlayer p = net.minecraft.client.Minecraft.getInstance().player;
+        return p == null ? null : p.getUUID();
+    }
+    *///?} else {
+    private static UUID myUuid() {
+        net.minecraft.client.network.ClientPlayerEntity p = net.minecraft.client.MinecraftClient.getInstance().player;
+        return p == null ? null : p.getUuid();
+    }
+    //?}
 
     //? if >=26.1 {
     /*private static void sendMarker(String prefix, UUID target) {
@@ -327,7 +368,7 @@ public final class ExpelManager {
         // 내 등급이 상대보다 "엄격히" 높아야만 통과 — <=로 걸어서 동급끼리(둘 다 방송인끼리 등)
         // 서로 추방하는 것도 막는다. 등급 0(무등급)은 상대가 몇 등급이든 항상 0<=priority(target)이라
         // 자동으로 걸러진다(따로 0 체크를 안 해도 됨).
-        int senderPriority = priority(sender.getUUID());
+        int senderPriority = P2PBanManager.isHost(server, sender) ? HOST_PRIORITY : priority(sender.getUUID());
         if (senderPriority <= priority(target)) return;
         // 스트리머 등급(1)의 추방·강퇴 권한은 방송 허용 방에서만 유효 — 방송 중인 스트리머 보호가
         // 목적이다(CustomRoomScreen.onStart의 스트리머 보호 안내 팝업 참고). 해제는 막지 않는다 —
@@ -379,7 +420,7 @@ public final class ExpelManager {
         // 내 등급이 상대보다 "엄격히" 높아야만 통과 — <=로 걸어서 동급끼리(둘 다 방송인끼리 등)
         // 서로 추방하는 것도 막는다. 등급 0(무등급)은 상대가 몇 등급이든 항상 0<=priority(target)이라
         // 자동으로 걸러진다(따로 0 체크를 안 해도 됨).
-        int senderPriority = priority(sender.getUuid());
+        int senderPriority = P2PBanManager.isHost(server, sender) ? HOST_PRIORITY : priority(sender.getUuid());
         if (senderPriority <= priority(target)) return;
         // 스트리머 등급(1)의 추방·강퇴 권한은 방송 허용 방에서만 유효 — 방송 중인 스트리머 보호가
         // 목적이다(CustomRoomScreen.onStart의 스트리머 보호 안내 팝업 참고). 해제는 막지 않는다 —

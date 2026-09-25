@@ -41,6 +41,9 @@ import static kfc.udp.client.gui.RoomListScreen.*;
 public class BlockedPlayersScreen extends Screen {
 
     private static final int HINT_Y = SEARCH_Y + (20 - 9) / 2;
+    /** "(스트리머 보호 활성)" 줄 — 제목과 아이콘 설명 딱 중간(세 줄이 같은 간격으로 놓인다).
+     * 안 뜨는 경우엔 그 자리가 그냥 비고, 제목·설명 위치는 그대로다. */
+    private static final int PROTECTION_Y = (TITLE_Y + HINT_Y) / 2;
     private static final int BACK_W = 200;
     private static final int CELL_H = ROW_H - 2;
     /** 탭 목록처럼 닉네임 왼쪽에 얼굴을 띄운다 — 크기·이름과의 간격. */
@@ -52,9 +55,9 @@ public class BlockedPlayersScreen extends Screen {
     private static final Component EMPTY_TEXT = Component.translatable("instant-p2p.blocked_players.empty");
     private static final Component HINT_TEXT  = Component.translatable("instant-p2p.blocked_players.hint");
     private static final Component ONLINE_TITLE_TEXT = Component.translatable("instant-p2p.online_players.title");
-    // "(스트리머 보호 활성)" 부분만 빨갛게 — 앞쪽 "플레이어 차단"은 기본 흰색 그대로 이어붙인다.
-    private static final Component ONLINE_TITLE_PRIVILEGED_TEXT = Component.translatable("instant-p2p.online_players.title")
-            .copy().append(Component.translatable("instant-p2p.online_players.title_privileged_suffix").withStyle(net.minecraft.ChatFormatting.RED));
+    // 제목에 붙였다가 제목 아래 독립된 줄로 옮겼다 — 제목 오른쪽엔 내 등급 이모지가 붙으므로(myTitle)
+    // 거기에 이 문구까지 이어붙이면 한 줄이 너무 길어진다.
+    private static final Component PROTECTION_TEXT = Component.translatable("instant-p2p.online_players.protection_active");
     private static final Component ONLINE_EMPTY_TEXT = Component.translatable("instant-p2p.online_players.empty");
     private static final Component ONLINE_HINT_TEXT  = Component.translatable("instant-p2p.online_players.hint");
     private static final Component ONLINE_HINT_PRIVILEGED_TEXT = Component.translatable("instant-p2p.online_players.hint_privileged");
@@ -63,9 +66,9 @@ public class BlockedPlayersScreen extends Screen {
     private static final Text EMPTY_TEXT = Text.translatable("instant-p2p.blocked_players.empty");
     private static final Text HINT_TEXT  = Text.translatable("instant-p2p.blocked_players.hint");
     private static final Text ONLINE_TITLE_TEXT = Text.translatable("instant-p2p.online_players.title");
-    // "(스트리머 보호 활성)" 부분만 빨갛게 — 앞쪽 "플레이어 차단"은 기본 흰색 그대로 이어붙인다.
-    private static final Text ONLINE_TITLE_PRIVILEGED_TEXT = Text.translatable("instant-p2p.online_players.title")
-            .copy().append(Text.translatable("instant-p2p.online_players.title_privileged_suffix").formatted(net.minecraft.util.Formatting.RED));
+    // 제목에 붙였다가 제목 아래 독립된 줄로 옮겼다 — 제목 오른쪽엔 내 등급 이모지가 붙으므로(myTitle)
+    // 거기에 이 문구까지 이어붙이면 한 줄이 너무 길어진다.
+    private static final Text PROTECTION_TEXT = Text.translatable("instant-p2p.online_players.protection_active");
     private static final Text ONLINE_EMPTY_TEXT = Text.translatable("instant-p2p.online_players.empty");
     private static final Text ONLINE_HINT_TEXT  = Text.translatable("instant-p2p.online_players.hint");
     private static final Text ONLINE_HINT_PRIVILEGED_TEXT = Text.translatable("instant-p2p.online_players.hint_privileged");
@@ -104,9 +107,53 @@ public class BlockedPlayersScreen extends Screen {
     }
 
     public BlockedPlayersScreen(Screen parent, boolean online) {
-        super(online ? (myPriority() > 0 ? ONLINE_TITLE_PRIVILEGED_TEXT : ONLINE_TITLE_TEXT) : TITLE_TEXT);
+        super(online ? myTitle() : TITLE_TEXT);
         this.parent = parent;
         this.online = online;
+    }
+
+    /**
+     * 접속자 모드 제목 — "플레이어 차단" 뒤에 내 신분 이모지를 붙인다. 붙이는 규칙은 이름 뒤 배지와
+     * 똑같이 {@link kfc.udp.client.DevBadge#decorate}에 맡긴다: 방장 📶 &gt; 개발자 🛠 &gt; 서포터 💬
+     * &gt; 방송인 🎧 순으로 하나만, 등급도 방장도 아니면 아무 것도 안 붙는다. 여기서 직접 분기하면
+     * 이름 뒤 배지와 규칙이 어긋날 여지가 생긴다.
+     */
+    //? if >=26.1 {
+    /*private static Component myTitle() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc.player == null) return ONLINE_TITLE_TEXT;
+        return kfc.udp.client.DevBadge.decorate(mc.player.getUUID(), ONLINE_TITLE_TEXT);
+    }
+    *///?} else {
+    private static Text myTitle() {
+        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+        if (mc.player == null) return ONLINE_TITLE_TEXT;
+        return kfc.udp.client.DevBadge.decorate(mc.player.getUuid(), ONLINE_TITLE_TEXT);
+    }
+    //?}
+
+    /**
+     * "(스트리머 보호 활성)" 줄을 띄울지 — <b>방송 허용 방에 접속한 등급 보유자</b>에게만.
+     * <ul>
+     *   <li>방장은 제외 — 방장은 스트리머 보호와 무관하게 원래 자기 방 전권이다(이 문구가 뜨면
+     *       권한의 출처를 잘못 알려주는 셈).</li>
+     *   <li>방송 비허용 방이면 안 뜬다 — 개발자·서포터는 그래도 강퇴가 되지만(방송 허용과 무관),
+     *       그건 "스트리머 보호"가 준 권한이 아니라서 이 문구와는 상관없다.</li>
+     * </ul>
+     */
+    private boolean showProtectionLine() {
+        if (!this.online) return false;
+        //? if >=26.1 {
+        /*net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        java.util.UUID me = mc.player == null ? null : mc.player.getUUID();
+        *///?} else {
+        net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
+        java.util.UUID me = mc.player == null ? null : mc.player.getUuid();
+        //?}
+        return me != null
+                && !kfc.udp.client.DevBadge.isHostPlayer(me)
+                && kfc.udp.client.KfcudpClient.isBroadcastAllowedHere()
+                && kfc.udp.client.webrtc.ExpelManager.priority(me) > 0;
     }
 
     //? if >=26.1 {
@@ -698,6 +745,9 @@ public class BlockedPlayersScreen extends Screen {
         super.extractRenderState(context, mouseX, mouseY, deltaTicks);
         int cx = this.width / 2;
         context.centeredText(this.font, this.title, cx, TITLE_Y, 0xFFFFFFFF);
+        if (this.showProtectionLine()) {
+            context.centeredText(this.font, PROTECTION_TEXT, cx, PROTECTION_Y, 0xFFFF5555);
+        }
         context.centeredText(this.font, this.hintText(), cx, HINT_Y, 0xFFA0A0A0);
         context.fill(0, DIVIDER1_Y, this.width, DIVIDER1_Y + 1, DIVIDER_COLOR);
         context.fill(0, DIVIDER1_Y + 1, this.width, this.divider2Y, MIDDLE_SECTION_BG);
@@ -757,6 +807,9 @@ public class BlockedPlayersScreen extends Screen {
         super.render(context, mouseX, mouseY, deltaTicks);
         int cx = this.width / 2;
         context.drawCenteredTextWithShadow(this.textRenderer, this.title, cx, TITLE_Y, 0xFFFFFFFF);
+        if (this.showProtectionLine()) {
+            context.drawCenteredTextWithShadow(this.textRenderer, PROTECTION_TEXT, cx, PROTECTION_Y, 0xFFFF5555);
+        }
         context.drawCenteredTextWithShadow(this.textRenderer, this.hintText(), cx, HINT_Y, 0xFFA0A0A0);
         context.fill(0, DIVIDER1_Y, this.width, DIVIDER1_Y + 1, DIVIDER_COLOR);
         context.fill(0, DIVIDER1_Y + 1, this.width, this.divider2Y, MIDDLE_SECTION_BG);
@@ -812,6 +865,9 @@ public class BlockedPlayersScreen extends Screen {
         super.render(context, mouseX, mouseY, deltaTicks);
         int cx = this.width / 2;
         context.drawCenteredTextWithShadow(this.textRenderer, this.title, cx, TITLE_Y, 0xFFFFFFFF);
+        if (this.showProtectionLine()) {
+            context.drawCenteredTextWithShadow(this.textRenderer, PROTECTION_TEXT, cx, PROTECTION_Y, 0xFFFF5555);
+        }
         context.drawCenteredTextWithShadow(this.textRenderer, this.hintText(), cx, HINT_Y, 0xFFA0A0A0);
         context.fill(0, DIVIDER1_Y, this.width, DIVIDER1_Y + 1, DIVIDER_COLOR);
         context.fill(0, DIVIDER1_Y + 1, this.width, this.divider2Y, MIDDLE_SECTION_BG);

@@ -83,7 +83,7 @@
   "instant-p2p.pause.block_players": "플레이어 차단",
   "instant-p2p.msg.kicked_blocked": "§c방장이 당신을 차단했습니다",
   "instant-p2p.online_players.title": "플레이어 차단",
-  "instant-p2p.online_players.title_privileged_suffix": " (스트리머 보호 활성)",
+  "instant-p2p.online_players.protection_active": "(스트리머 보호 활성)",
   "instant-p2p.online_players.empty": "같이 있는 다른 플레이어가 없습니다",
   "instant-p2p.online_players.hint": "§c❌§r를 누르면 차단, §a♻§r를 누르면 차단 해제",
   "instant-p2p.online_players.hint_privileged": "§c❌§r를 누르면 차단 및 임시밴, §a♻§r를 누르면 차단 해제, §e⚡§r를 누르면 강퇴",

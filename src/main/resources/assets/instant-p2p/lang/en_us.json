@@ -83,7 +83,7 @@
   "instant-p2p.pause.block_players": "Block Players",
   "instant-p2p.msg.kicked_blocked": "§cThe host has blocked you",
   "instant-p2p.online_players.title": "Block Players",
-  "instant-p2p.online_players.title_privileged_suffix": " (Streamer Protection Active)",
+  "instant-p2p.online_players.protection_active": "(Streamer protection active)",
   "instant-p2p.online_players.empty": "No other players here",
   "instant-p2p.online_players.hint": "Click §c❌§r to block, §a♻§r to unblock",
   "instant-p2p.online_players.hint_privileged": "§c❌§r to block + temp-ban, §a♻§r to unblock, §e⚡§r to kick",
