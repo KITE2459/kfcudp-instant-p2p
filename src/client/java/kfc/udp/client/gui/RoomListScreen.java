@@ -115,6 +115,9 @@ public class RoomListScreen extends Screen {
      * 두 줄처럼 보이게, 버전의 오른쪽 끝도 이 핑 막대의 오른쪽 끝(bx-3)에 맞춘다. */
     private static final int PING_W = 10;
     private static final int PING_H = 8;
+    /** 둘째 줄의 인원 표기(N/M)와 버전 표기 사이 간격 — 공백 한 칸(바닐라 폰트에서 4px).
+     * 인원은 버전의 왼쪽 끝에 맞춰 우측 정렬하고, 닉네임은 그 앞까지만 잘린다. */
+    private static final int COUNT_GAP = 4;
     /** 방 제목이 차지할 수 있는 폭 = 칸에서 핑 막대·차단 버튼 앞 글자 영역. 글자 수가 아니라 폭으로 막아서
      * 한글(9px)은 12자, 영문(대부분 6px)은 18자 안팎까지 들어간다 — CustomRoomScreen 제목 입력란이 이 폭으로 막는다. */
     public static final int TITLE_TEXT_W = CELL_W - 6 - (3 + BLOCK_BTN + 3 + PING_W + 2);
@@ -1181,13 +1184,15 @@ public class RoomListScreen extends Screen {
             context.outline(x, y, CELL_W, CELL_H, hovered ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
             // 제목은 MAX_TITLE_LENGTH로 막지만 다른 클라이언트가 보낸 값이라 폭으로도 한 번 더 자른다.
             context.text(this.font, this.font.plainSubstrByWidth(r.title(), textW), x + 6, y + 3, closed || otherVersion ? 0xFF707070 : 0xFFFFFFFF);
-            // 둘째 줄: 닉네임 (인원) … 버전(오른쪽 끝). 버전이 다르면 버전을 빨갛게.
+            // 둘째 줄: 닉네임 … (인원) 버전(오른쪽 끝). 버전이 다르면 버전을 빨갛게.
             String version = r.version();
             int versionW = this.font.width(version);
-            String count = "  (" + r.currentPlayers() + "/" + r.maxPlayers() + ")";
+            String count = "(" + r.currentPlayers() + "/" + r.maxPlayers() + ")";
+            int countX = bx - 3 - versionW - COUNT_GAP - this.font.width(count);
             context.text(this.font, closed ? REMOVED_TEXT.getString()
-                            : this.font.plainSubstrByWidth(r.hostNickname(), textW - versionW - 4 - this.font.width(count)) + count,
+                            : this.font.plainSubstrByWidth(r.hostNickname(), Math.max(0, countX - 3 - (x + 6))),
                     x + 6, y + 13, closed ? 0xFFFF5555 : 0xFFA0A0A0);
+            if (!closed) context.text(this.font, count, countX, y + 13, 0xFFA0A0A0);
             context.text(this.font, version, bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
             if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
             // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
@@ -1250,13 +1255,15 @@ public class RoomListScreen extends Screen {
             context.drawStrokedRectangle(x, y, CELL_W, CELL_H, hovered ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
             // 제목은 MAX_TITLE_LENGTH로 막지만 다른 클라이언트가 보낸 값이라 폭으로도 한 번 더 자른다.
             context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(r.title(), textW)), x + 6, y + 3, closed || otherVersion ? 0xFF707070 : 0xFFFFFFFF);
-            // 둘째 줄: 닉네임 (인원) … 버전(오른쪽 끝). 버전이 다르면 버전을 빨갛게.
+            // 둘째 줄: 닉네임 … (인원) 버전(오른쪽 끝). 버전이 다르면 버전을 빨갛게.
             String version = r.version();
             int versionW = this.textRenderer.getWidth(version);
-            String count = "  (" + r.currentPlayers() + "/" + r.maxPlayers() + ")";
+            String count = "(" + r.currentPlayers() + "/" + r.maxPlayers() + ")";
+            int countX = bx - 3 - versionW - COUNT_GAP - this.textRenderer.getWidth(count);
             context.drawTextWithShadow(this.textRenderer, Text.literal(closed ? REMOVED_TEXT.getString()
-                            : this.textRenderer.trimToWidth(r.hostNickname(), textW - versionW - 4 - this.textRenderer.getWidth(count)) + count),
+                            : this.textRenderer.trimToWidth(r.hostNickname(), Math.max(0, countX - 3 - (x + 6)))),
                     x + 6, y + 13, closed ? 0xFFFF5555 : 0xFFA0A0A0);
+            if (!closed) context.drawTextWithShadow(this.textRenderer, Text.literal(count), countX, y + 13, 0xFFA0A0A0);
             context.drawTextWithShadow(this.textRenderer, Text.literal(version), bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
             if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
             // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
@@ -1318,13 +1325,15 @@ public class RoomListScreen extends Screen {
             context.drawBorder(x, y, CELL_W, CELL_H, hovered ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
             // 제목은 MAX_TITLE_LENGTH로 막지만 다른 클라이언트가 보낸 값이라 폭으로도 한 번 더 자른다.
             context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(r.title(), textW)), x + 6, y + 3, closed || otherVersion ? 0xFF707070 : 0xFFFFFFFF);
-            // 둘째 줄: 닉네임 (인원) … 버전(오른쪽 끝). 버전이 다르면 버전을 빨갛게.
+            // 둘째 줄: 닉네임 … (인원) 버전(오른쪽 끝). 버전이 다르면 버전을 빨갛게.
             String version = r.version();
             int versionW = this.textRenderer.getWidth(version);
-            String count = "  (" + r.currentPlayers() + "/" + r.maxPlayers() + ")";
+            String count = "(" + r.currentPlayers() + "/" + r.maxPlayers() + ")";
+            int countX = bx - 3 - versionW - COUNT_GAP - this.textRenderer.getWidth(count);
             context.drawTextWithShadow(this.textRenderer, Text.literal(closed ? REMOVED_TEXT.getString()
-                            : this.textRenderer.trimToWidth(r.hostNickname(), textW - versionW - 4 - this.textRenderer.getWidth(count)) + count),
+                            : this.textRenderer.trimToWidth(r.hostNickname(), Math.max(0, countX - 3 - (x + 6)))),
                     x + 6, y + 13, closed ? 0xFFFF5555 : 0xFFA0A0A0);
+            if (!closed) context.drawTextWithShadow(this.textRenderer, Text.literal(count), countX, y + 13, 0xFFA0A0A0);
             context.drawTextWithShadow(this.textRenderer, Text.literal(version), bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
             if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
             // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
