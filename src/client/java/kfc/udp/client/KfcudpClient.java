@@ -65,7 +65,11 @@ public class KfcudpClient implements ClientModInitializer {
     private static String activeInviteCode = null;
     private static int activeMaxPlayers = 8;
     /** 지금 접속해 있는 게스트 수(방장 제외) — 공개 방 목록의 인원 표기용으로 JOIN/
-     * DISCONNECT 리스너에서 직접 증감시켜 둔다. {@code server.getPlayerList().size()}를
+     * DISCONNECT 리스너에서 직접 증감시켜 둔다. <b>등급(개발자·서포터·방송인)과 무관하게
+     * 전부 센다</b> — P2PBanManager.countedPlayers(정원 게이트)와 ESC 인원 표기가 이미 전원을
+     * 세므로 여기만 특혜자를 빼면 목록엔 자리가 남아 보이는데 눌러도 "방이 꽉 찼습니다"가 뜬다.
+     * 정원을 무시하고 들어가는 건 특혜를 가진 본인뿐이고(checkCanJoin의 !hasPerk), 들어간 뒤엔
+     * 그 사람도 한 자리를 실제로 차지한다. {@code server.getPlayerList().size()}를
      * 그 자리에서 스냅샷하지 않는 이유: (1) DISCONNECT 이벤트가 실제 플레이어 목록
      * 제거보다 먼저/나중에 발생하는지가 마인크래프트 버전/이벤트마다 보장되지 않아
      * 방금 나간 사람이 카운트에 남거나 빠지는 게 일관되지 않았고, (2) applyRoomSettings는
@@ -669,14 +673,14 @@ public class KfcudpClient implements ClientModInitializer {
         // 직접 증감시키는 이유는 그 필드 선언부 주석 참고 — 인원 변경 시 목록이 간헐적으로
         // 잘못 갱신되던 문제의 원인이었다.
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUUID())) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount++;
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUUID())) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount = Math.max(0, activeGuestCount - 1);
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
@@ -893,14 +897,14 @@ public class KfcudpClient implements ClientModInitializer {
         // 않고 activeGuestCount를 직접 증감시키는 이유는 그 필드 선언부 주석 참고 —
         // 인원 변경 시 목록이 간헐적으로 잘못 갱신되던 문제의 원인이었다.
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUuid())) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount++;
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
-            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player) || DevBadge.hasPerk(handler.player.getUuid())) return;
+            if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount = Math.max(0, activeGuestCount - 1);
             if (activePublicRoom) {
                 WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
