@@ -164,14 +164,31 @@ public class KfcudpClient implements ClientModInitializer {
     private static volatile int guestRoomMaxPlayers = 0;
     /** 마커로 같이 받은 방장 UUID — 접속자 화면 인원 표시에서 방장은 특혜자여도 세기 위해. */
     private static volatile java.util.UUID guestHostUuid = null;
+    /** 마커로 같이 받은 방장의 "방송 허용" 설정 — 접속자는 방장의 P2PConfig를 직접 못 읽는데,
+     * 방송인(등급 1)의 강퇴·임시밴 권한이 이 값에 달려 있어서(ExpelManager.handleRequest) 화면이
+     * 권한을 실제와 맞게 보여주려면 알아야 한다({@link #isBroadcastAllowedHere}). */
+    private static volatile boolean guestAllowBroadcast = false;
 
-    /** 정원 마커 본문: "정원:방장UUID". */
+    /** 정원 마커 본문: "정원:방장UUID:방송허용(1/0)". */
     private static String capacityMarker(int max) {
+        String broadcast = ":" + (kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast() ? "1" : "0");
         //? if >=26.1 {
-        /*return CAPACITY_MARKER + max + ":" + Minecraft.getInstance().getUser().getProfileId();
+        /*return CAPACITY_MARKER + max + ":" + Minecraft.getInstance().getUser().getProfileId() + broadcast;
         *///?} else {
-        return CAPACITY_MARKER + max + ":" + MinecraftClient.getInstance().getSession().getUuidOrNull();
+        return CAPACITY_MARKER + max + ":" + MinecraftClient.getInstance().getSession().getUuidOrNull() + broadcast;
         //?}
+    }
+
+    /**
+     * 지금 붙어 있는 방이 "방송 허용" 방인지 — 방장이면 내 설정 그대로, 접속자면 방장이 정원 마커에
+     * 실어 보낸 값({@link #guestAllowBroadcast}). 방송인 등급의 추방·강퇴 권한이 여기 달려 있다.
+     * <p>
+     * 실제 권한 판정은 어차피 방장(서버) 쪽 {@code ExpelManager.handleRequest}가 자기 설정으로 다시
+     * 하므로 이 값은 어디까지나 화면 표시용이다 — 이게 없으면 비허용 방에 들어간 방송인에게 강퇴
+     * 버튼이 뻔히 보이는데 눌러도 아무 일도 안 일어난다.
+     */
+    public static boolean isBroadcastAllowedHere() {
+        return isRoomActive() ? kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast() : guestAllowBroadcast;
     }
 
     /**
@@ -508,6 +525,7 @@ public class KfcudpClient implements ClientModInitializer {
                 String[] v = s.substring(CAPACITY_MARKER.length()).split(":");
                 guestRoomMaxPlayers = Integer.parseInt(v[0]);
                 guestHostUuid = java.util.UUID.fromString(v[1]);
+                guestAllowBroadcast = "1".equals(v[2]);
             } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ignored) {}
             return false;
         });
@@ -524,6 +542,7 @@ public class KfcudpClient implements ClientModInitializer {
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             guestRoomMaxPlayers = 0;
             guestHostUuid = null;
+            guestAllowBroadcast = false;
             warnedBlockedPlayers.clear();
             // 커스텀 방 접속자 세션이었으면, 다음에 뜰 바닐라 멀티플레이 화면을
             // RoomListScreen으로 바꿔치기하도록 표시해 둔다(AFTER_INIT에서 소비).
@@ -730,6 +749,7 @@ public class KfcudpClient implements ClientModInitializer {
                 String[] v = s.substring(CAPACITY_MARKER.length()).split(":");
                 guestRoomMaxPlayers = Integer.parseInt(v[0]);
                 guestHostUuid = java.util.UUID.fromString(v[1]);
+                guestAllowBroadcast = "1".equals(v[2]);
             } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ignored) {}
             return false;
         });
@@ -746,6 +766,7 @@ public class KfcudpClient implements ClientModInitializer {
         ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
             guestRoomMaxPlayers = 0;
             guestHostUuid = null;
+            guestAllowBroadcast = false;
             warnedBlockedPlayers.clear();
             // 커스텀 방 접속자 세션이었으면, 다음에 뜰 바닐라 멀티플레이 화면을
             // RoomListScreen으로 바꿔치기하도록 표시해 둔다(AFTER_INIT에서 소비).
@@ -1086,7 +1107,9 @@ public class KfcudpClient implements ClientModInitializer {
                     // 정원(N/M) 마커는 원래 JOIN 시점에만 보냈다 — 이미 접속 중인
                     // 게스트는 방장이 정원을 바꿔도 그 사실을 알 방법이 없어서, ESC
                     // 화면 인원 표시가 재접속해야만 바뀌었다. 바뀌었을 때만 다시 보낸다.
-                    if (maxPlayers != oldMaxPlayers) {
+                    // 방송 허용도 같은 마커에 실려 가므로(capacityMarker) 그게 바뀌어도 다시 보낸다 —
+                    // 안 그러면 방송인 접속자의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
+                    if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
                         sp.sendSystemMessage(Component.literal(capacityMarker(maxPlayers)), false);
                     }
                 }
@@ -1212,7 +1235,9 @@ public class KfcudpClient implements ClientModInitializer {
                     // 정원(N/M) 마커는 원래 JOIN 시점에만 보냈다 — 이미 접속 중인
                     // 게스트는 방장이 정원을 바꿔도 그 사실을 알 방법이 없어서, ESC
                     // 화면 인원 표시가 재접속해야만 바뀌었다. 바뀌었을 때만 다시 보낸다.
-                    if (maxPlayers != oldMaxPlayers) {
+                    // 방송 허용도 같은 마커에 실려 가므로(capacityMarker) 그게 바뀌어도 다시 보낸다 —
+                    // 안 그러면 방송인 접속자의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
+                    if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
                         sp.sendMessage(Text.literal(capacityMarker(maxPlayers)), false);
                     }
                 }

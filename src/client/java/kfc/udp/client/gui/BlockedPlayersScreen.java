@@ -214,24 +214,24 @@ public class BlockedPlayersScreen extends Screen {
         return -1;
     }
 
-    /** 강퇴 버튼은 ❌/♻ 버튼 바로 왼쪽 — 등급자인 나한테만, 그리고 지금 온라인이면서 방장이 아닌
-     * 대상에만 뜬다(방장은 강퇴 대상이 될 수 없다, ExpelManager 클래스 주석 참고). */
+    /** 강퇴 버튼은 ❌/♻ 버튼 바로 왼쪽 — 등급자인 나한테만, 그리고 지금 온라인이면서 내가 실제로
+     * 강퇴할 수 있는 대상에만 뜬다({@link #isImmune}). */
     private int kickButtonAt(double mouseX, double mouseY) {
         return this.secondColumnAt(mouseX, mouseY, false);
     }
 
-    /** 강퇴 버튼 대신 방장 표시가 뜨는 자리 — 클릭은 안 되고 호버 툴팁("호스트는 강퇴할 수
-     * 없습니다")만 있다. 강퇴 버튼과 같은 자리라 판정도 같은 걸 쓴다(host만 반대). */
-    private int hostBadgeAt(double mouseX, double mouseY) {
+    /** 강퇴 버튼 대신 "못 내보내는 이유" 표시가 뜨는 자리 — 클릭은 안 되고 호버 툴팁만 있다.
+     * 강퇴 버튼과 같은 자리라 판정도 같은 걸 쓴다(immune만 반대). */
+    private int immuneBadgeAt(double mouseX, double mouseY) {
         return this.secondColumnAt(mouseX, mouseY, true);
     }
 
-    /** 둘째 열(강퇴 ⚡ 또는 방장 📶)의 호버 칸 — 좌표가 같으니 대상이 방장인지로만 갈린다. */
-    private int secondColumnAt(double mouseX, double mouseY, boolean host) {
+    /** 둘째 열(강퇴 ⚡ 또는 면역 표시)의 호버 칸 — 좌표가 같으니 대상이 면역인지로만 갈린다. */
+    private int secondColumnAt(double mouseX, double mouseY, boolean immune) {
         if (!this.showKickColumn) return -1;
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
-            if (e == null || !this.onlineUuids.contains(e.uuid()) || isHostEntry(e) != host) continue;
+            if (e == null || !this.onlineUuids.contains(e.uuid()) || this.isImmune(e) != immune) continue;
             int bx = this.cellX[i] + CELL_W - 6 - 2 * BLOCK_BTN;
             int by = this.cellY[i] + (CELL_H - BLOCK_BTN) / 2;
             if (mouseX >= bx && mouseX < bx + BLOCK_BTN && mouseY >= by && mouseY < by + BLOCK_BTN) return i;
@@ -239,21 +239,81 @@ public class BlockedPlayersScreen extends Screen {
         return -1;
     }
 
+    private static java.util.UUID entryUuid(P2PBanManager.BannedEntry e) {
+        return java.util.UUID.fromString(e.uuid());
+    }
+
     private static boolean isHostEntry(P2PBanManager.BannedEntry e) {
-        return kfc.udp.client.DevBadge.isHostPlayer(java.util.UUID.fromString(e.uuid()));
+        return kfc.udp.client.DevBadge.isHostPlayer(entryUuid(e));
+    }
+
+    /**
+     * 이 대상은 내가 강퇴할 수 없는지 — 방장이거나(방장은 그 방의 서버 자체라 누구도 못 내보낸다),
+     * 상대 등급이 내 등급 이상일 때. 뒤쪽은 서버(방장)의 {@code ExpelManager.handleRequest}가 쓰는
+     * {@code senderPriority <= priority(target)}와 같은 기준이다 — 화면과 실제가 어긋나면 눌러도
+     * 아무 일이 안 일어나는 버튼이 생긴다. 이런 대상엔 강퇴 버튼 대신 이유를 알려주는 표시를 박는다.
+     */
+    private boolean isImmune(P2PBanManager.BannedEntry e) {
+        return isHostEntry(e)
+                || myPriority() <= kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e));
+    }
+
+    /** 면역 표시의 아이콘 — 방장은 📶, 등급자는 이름 뒤에 붙는 것과 같은 배지(DevBadge.decorate). */
+    private static String immuneGlyph(P2PBanManager.BannedEntry e) {
+        if (isHostEntry(e)) return "📶";
+        return switch (kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e))) {
+            case 3 -> "🛠";
+            case 2 -> "💬";
+            default -> "🎧";
+        };
+    }
+
+    /** 면역 표시의 색 — DevBadge.decorate의 역할별 색(초록/하늘/금/빨강)과 똑같이 맞춘다. */
+    private static int immuneColor(P2PBanManager.BannedEntry e) {
+        if (isHostEntry(e)) return 0xFF55FF55;
+        return switch (kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e))) {
+            case 3 -> 0xFF55FFFF;
+            case 2 -> 0xFFFFAA00;
+            default -> 0xFFFF5555;
+        };
+    }
+
+    /** 면역 표시 툴팁 — "호스트는/개발자는/… 강퇴할 수 없습니다". */
+    //? if >=26.1 {
+    /*private static java.util.List<Component> immuneTooltip(P2PBanManager.BannedEntry e) {
+        if (isHostEntry(e)) return tooltipLines("instant-p2p.online_players.host_tooltip");
+        return tooltipLines("instant-p2p.online_players.immune_tooltip",
+                Component.translatable(roleNameKey(e)));
+    }
+    *///?} else {
+    private static java.util.List<Text> immuneTooltip(P2PBanManager.BannedEntry e) {
+        if (isHostEntry(e)) return tooltipLines("instant-p2p.online_players.host_tooltip");
+        return tooltipLines("instant-p2p.online_players.immune_tooltip",
+                Text.translatable(roleNameKey(e)));
+    }
+    //?}
+
+    private static String roleNameKey(P2PBanManager.BannedEntry e) {
+        return switch (kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e))) {
+            case 3 -> "instant-p2p.role.dev";
+            case 2 -> "instant-p2p.role.supporter";
+            default -> "instant-p2p.role.streamer";
+        };
     }
 
     /** 내 등급 — 0이면(무등급) 강퇴 버튼도, 제목·안내 문구의 "스트리머 보호 활성" 표시도 안 뜬다.
-     * ExpelManager.priority와 같은 기준. static — 생성자의 super() 호출(제목 결정)에서도 써야 한다. */
+     * ExpelManager.effectivePriority와 같은 기준이라 <b>방송 비허용 방에 들어간 방송인은 여기서
+     * 0이 되어</b> 화면이 통째로 일반 유저와 똑같아진다(제목 접미사·강퇴 열 전부 사라짐).
+     * static — 생성자의 super() 호출(제목 결정)에서도 써야 한다. */
     //? if >=26.1 {
     /*private static int myPriority() {
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-        return mc.player != null ? kfc.udp.client.webrtc.ExpelManager.priority(mc.player.getUUID()) : 0;
+        return mc.player != null ? kfc.udp.client.webrtc.ExpelManager.effectivePriority(mc.player.getUUID()) : 0;
     }
     *///?} else {
     private static int myPriority() {
         net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-        return mc.player != null ? kfc.udp.client.webrtc.ExpelManager.priority(mc.player.getUuid()) : 0;
+        return mc.player != null ? kfc.udp.client.webrtc.ExpelManager.effectivePriority(mc.player.getUuid()) : 0;
     }
     //?}
 
@@ -279,13 +339,13 @@ public class BlockedPlayersScreen extends Screen {
     // 손으로 그린 버튼이라 위젯 툴팁이 아니라 직접 그려야 한다 — ConfirmPopup의 "그 외 n명" 호버
     // 툴팁과 같은 API. "\n"으로 줄바꿈된 번역문을 줄 단위로 쪼개 그대로 넘긴다(자동 줄바꿈 없음).
     //? if >=26.1 {
-    /*private static java.util.List<Component> tooltipLines(String key) {
-        return java.util.Arrays.stream(Component.translatable(key).getString().split("\n"))
+    /*private static java.util.List<Component> tooltipLines(String key, Object... args) {
+        return java.util.Arrays.stream(Component.translatable(key, args).getString().split("\n"))
                 .<Component>map(Component::literal).toList();
     }
     *///?} else {
-    private static java.util.List<Text> tooltipLines(String key) {
-        return java.util.Arrays.stream(Text.translatable(key).getString().split("\n"))
+    private static java.util.List<Text> tooltipLines(String key, Object... args) {
+        return java.util.Arrays.stream(Text.translatable(key, args).getString().split("\n"))
                 .<Text>map(Text::literal).toList();
     }
     //?}
@@ -648,7 +708,7 @@ public class BlockedPlayersScreen extends Screen {
 
         int hoveredBtn = this.unblockButtonAt(mouseX, mouseY);
         int hoveredKick = this.kickButtonAt(mouseX, mouseY);
-        int hoveredHost = this.hostBadgeAt(mouseX, mouseY);
+        int hoveredImmune = this.immuneBadgeAt(mouseX, mouseY);
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
             if (e == null) continue;
@@ -661,10 +721,10 @@ public class BlockedPlayersScreen extends Screen {
             glyphButton(context, this.font, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
-                if (isHostEntry(e)) {
-                    // 방장은 강퇴 대상이 될 수 없다(ExpelManager 클래스 주석 참고) — 빈 칸 대신
-                    // 방장 표시를 박아서 왜 강퇴 버튼이 없는지 바로 보이게 한다.
-                    glyphButton(context, this.font, "📶", kx, by, 0xFF55FF55, false);
+                if (this.isImmune(e)) {
+                    // 방장이거나 나보다 등급이 낮지 않아 못 내보내는 대상 — 빈 칸 대신 그 이유를
+                    // 드러내는 표시(방장 📶 / 등급 배지)를 박아서 왜 강퇴 버튼이 없는지 바로 보이게 한다.
+                    glyphButton(context, this.font, immuneGlyph(e), kx, by, immuneColor(e), false);
                 } else {
                     glyphButton(context, this.font, "⚡", kx, by, 0xFFFFFF55, hoveredKick == i);
                 }
@@ -683,8 +743,8 @@ public class BlockedPlayersScreen extends Screen {
             context.setComponentTooltipForNextFrame(this.font, tooltipLines(this.toggleTooltipKey(this.cellEntry[hoveredBtn])), mouseX, mouseY);
         } else if (hoveredKick >= 0) {
             context.setComponentTooltipForNextFrame(this.font, tooltipLines("instant-p2p.online_players.kick_tooltip"), mouseX, mouseY);
-        } else if (hoveredHost >= 0) {
-            context.setComponentTooltipForNextFrame(this.font, tooltipLines("instant-p2p.online_players.host_tooltip"), mouseX, mouseY);
+        } else if (hoveredImmune >= 0) {
+            context.setComponentTooltipForNextFrame(this.font, immuneTooltip(this.cellEntry[hoveredImmune]), mouseX, mouseY);
         }
         this.popup.render(context, this.width, this.height, realX, realY);
     }
@@ -707,7 +767,7 @@ public class BlockedPlayersScreen extends Screen {
 
         int hoveredBtn = this.unblockButtonAt(mouseX, mouseY);
         int hoveredKick = this.kickButtonAt(mouseX, mouseY);
-        int hoveredHost = this.hostBadgeAt(mouseX, mouseY);
+        int hoveredImmune = this.immuneBadgeAt(mouseX, mouseY);
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
             if (e == null) continue;
@@ -720,8 +780,8 @@ public class BlockedPlayersScreen extends Screen {
             glyphButton(context, this.textRenderer, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
-                if (isHostEntry(e)) {
-                    glyphButton(context, this.textRenderer, "📶", kx, by, 0xFF55FF55, false);
+                if (this.isImmune(e)) {
+                    glyphButton(context, this.textRenderer, immuneGlyph(e), kx, by, immuneColor(e), false);
                 } else {
                     glyphButton(context, this.textRenderer, "⚡", kx, by, 0xFFFFFF55, hoveredKick == i);
                 }
@@ -738,8 +798,8 @@ public class BlockedPlayersScreen extends Screen {
             context.drawTooltip(this.textRenderer, tooltipLines(this.toggleTooltipKey(this.cellEntry[hoveredBtn])), mouseX, mouseY);
         } else if (hoveredKick >= 0) {
             context.drawTooltip(this.textRenderer, tooltipLines("instant-p2p.online_players.kick_tooltip"), mouseX, mouseY);
-        } else if (hoveredHost >= 0) {
-            context.drawTooltip(this.textRenderer, tooltipLines("instant-p2p.online_players.host_tooltip"), mouseX, mouseY);
+        } else if (hoveredImmune >= 0) {
+            context.drawTooltip(this.textRenderer, immuneTooltip(this.cellEntry[hoveredImmune]), mouseX, mouseY);
         }
         this.popup.render(context, this.width, this.height, realX, realY);
     }
@@ -762,7 +822,7 @@ public class BlockedPlayersScreen extends Screen {
 
         int hoveredBtn = this.unblockButtonAt(mouseX, mouseY);
         int hoveredKick = this.kickButtonAt(mouseX, mouseY);
-        int hoveredHost = this.hostBadgeAt(mouseX, mouseY);
+        int hoveredImmune = this.immuneBadgeAt(mouseX, mouseY);
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
             if (e == null) continue;
@@ -775,8 +835,8 @@ public class BlockedPlayersScreen extends Screen {
             glyphButton(context, this.textRenderer, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
-                if (isHostEntry(e)) {
-                    glyphButton(context, this.textRenderer, "📶", kx, by, 0xFF55FF55, false);
+                if (this.isImmune(e)) {
+                    glyphButton(context, this.textRenderer, immuneGlyph(e), kx, by, immuneColor(e), false);
                 } else {
                     glyphButton(context, this.textRenderer, "⚡", kx, by, 0xFFFFFF55, hoveredKick == i);
                 }
@@ -793,8 +853,8 @@ public class BlockedPlayersScreen extends Screen {
             context.drawTooltip(this.textRenderer, tooltipLines(this.toggleTooltipKey(this.cellEntry[hoveredBtn])), mouseX, mouseY);
         } else if (hoveredKick >= 0) {
             context.drawTooltip(this.textRenderer, tooltipLines("instant-p2p.online_players.kick_tooltip"), mouseX, mouseY);
-        } else if (hoveredHost >= 0) {
-            context.drawTooltip(this.textRenderer, tooltipLines("instant-p2p.online_players.host_tooltip"), mouseX, mouseY);
+        } else if (hoveredImmune >= 0) {
+            context.drawTooltip(this.textRenderer, immuneTooltip(this.cellEntry[hoveredImmune]), mouseX, mouseY);
         }
         this.popup.render(context, this.width, this.height, realX, realY);
     }

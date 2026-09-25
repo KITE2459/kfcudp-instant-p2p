@@ -183,6 +183,20 @@ public final class ExpelManager {
         return 0;
     }
 
+    /**
+     * 지금 붙어 있는 방에서 실제로 먹히는 등급 — 방송인(1)의 추방·강퇴 권한은 "방송 허용" 방에서만
+     * 산다(스트리머 보호가 목적이니 방송을 안 하는 방에선 줄 이유가 없다). 비허용 방에 들어간
+     * 방송인은 무등급(0)과 똑같이 취급되어 화면에도 강퇴 버튼이 안 뜬다.
+     * <p>
+     * <b>화면 표시 전용이다</b> — 실제 차단은 아래 handleRequest가 방장(서버) 자신의 설정으로 다시
+     * 한다. 이게 없으면 비허용 방의 방송인에게 강퇴 버튼이 뻔히 보이는데 눌러도 아무 일도 안 난다.
+     * 개발자·서포터는 방송 허용과 무관하다.
+     */
+    public static int effectivePriority(UUID id) {
+        int p = priority(id);
+        return p == 1 && !kfc.udp.client.KfcudpClient.isBroadcastAllowedHere() ? 0 : p;
+    }
+
     /** 지금 이 UUID가 추방 상태라 재입장이 막혀야 하는지 — P2PBanManager.checkCanJoin에서 부른다. */
     public static boolean isExpelled(UUID id) {
         Set<UUID> h = holders.get(id);

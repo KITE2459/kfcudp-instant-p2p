@@ -5,12 +5,10 @@
   "instant-p2p.safety_warning.continue": "계속하기",
   "instant-p2p.streamer_protection.heading": "§l주의!",
   "instant-p2p.streamer_protection.message": "스트리머 보호 기능이 활성화됩니다\n계정이 연동된 방송 중인 스트리머가 원활한 방송 진행을 위해\n유저를 강퇴하거나 임시로 밴하는 권한이 주어집니다",
-
   "instant-p2p.join_broadcast_warning.heading": "§l주의!",
   "instant-p2p.join_broadcast_warning.message": "방송 비허용 방입니다! 접속하시겠습니까?\n방송 중인 플레이어라면 방송 필터를 '방송 허용만'으로 바꿔주세요!",
   "instant-p2p.join_capacity_warning.heading": "§l안내",
   "instant-p2p.join_capacity_warning.message": "정원이 가득 찬 방입니다\n개발자·서포터 특권으로 정원을 무시하고 입장합니다",
-
   "instant-p2p.custom_room.title": "커스텀 방 만들기",
   "instant-p2p.custom_room.edit_title": "방 설정 변경",
   "instant-p2p.custom_room.game_mode": "게임 모드",
@@ -40,7 +38,6 @@
   "instant-p2p.custom_room.title_placeholder": "방 제목 (비워두면 Room - 닉네임)",
   "instant-p2p.custom_room.apply_title": "방 변경사항 적용",
   "instant-p2p.custom_room.back": "돌아가기",
-
   "instant-p2p.room_list.title": "방 목록",
   "instant-p2p.room_list.empty": "표시할 공개 방이 없습니다",
   "instant-p2p.room_list.search_label": "방 검색",
@@ -76,7 +73,6 @@
   "instant-p2p.room_list.broadcast_filter_tooltip.disallowed_only": "방송 비허용 방만 보여줍니다",
   "instant-p2p.room_list.removed": "삭제됨",
   "instant-p2p.room_list.block_tooltip": "클릭하면 이 방장을 차단합니다 (방 목록에서 서로 안 보이게 됨)",
-
   "instant-p2p.blocked_players.title": "차단 목록",
   "instant-p2p.blocked_players.empty": "차단한 플레이어가 없습니다",
   "instant-p2p.blocked_players.hint": "§a♻§r를 누르면 차단이 해제됩니다",
@@ -95,7 +91,10 @@
   "instant-p2p.online_players.unblock_tooltip": "차단을 해제합니다.",
   "instant-p2p.online_players.kick_tooltip": "서버에서 강퇴시킵니다 — 다시 입장할 수 있습니다.",
   "instant-p2p.online_players.host_tooltip": "호스트는 강퇴할 수 없습니다.",
-
+  "instant-p2p.role.dev": "개발자",
+  "instant-p2p.role.supporter": "서포터",
+  "instant-p2p.role.streamer": "스트리머",
+  "instant-p2p.online_players.immune_tooltip": "%s는 강퇴할 수 없습니다.",
   "instant-p2p.pause.role_dev": "개발자 🛠",
   "instant-p2p.pause.role_supporter": "서포터 💬",
   "instant-p2p.pause.role_streamer": "스트리머 🎧",
@@ -103,14 +102,12 @@
   "instant-p2p.pause.expel_tooltip": "• 플레이어 차단(§c❌§r): 채팅이 안 보이게 되고, 서로의 방이 방 목록에서 숨겨지며, 즉시 강퇴되어 내가 있는 동안 재입장이 막힙니다\n• 강퇴(§e⚡§r): 1회성으로 즉시 내보낼 뿐, 재입장은 막지 않습니다",
   "instant-p2p.pause.player_count": "인원 %s / %s",
   "instant-p2p.pause.close_room": "방 닫기",
-  "instant-p2p.msg.room_closed": "§a방을 닫았습니다",
-
+  "instant-p2p.msg.room_closed": "§e호스트가 방을 닫았습니다",
   "instant-p2p.join_room.title": "커스텀 방 입장하기",
   "instant-p2p.join_room.code_label": "초대 코드",
   "instant-p2p.join_room.join": "접속",
   "instant-p2p.join_room.code_placeholder": "초대코드 입력...",
   "instant-p2p.join_room.server_name": "커스텀 방",
-
   "instant-p2p.msg.invite_prefix": "§b[초대코드] §f",
   "instant-p2p.msg.invite_copy": "여기를 클릭하여 복사",
   "instant-p2p.pause.copy_invite": "초대코드 복사",
@@ -137,7 +134,6 @@
   "instant-p2p.msg.singleplay_only": "§c싱글플레이에서만 사용 가능합니다",
   "instant-p2p.msg.prev_invite_expired": "§c이전 초대장이 만료되었습니다",
   "instant-p2p.msg.host_failed": "§c호스트 실행에 실패했습니다",
-  "instant-p2p.msg.room_closed": "§e호스트가 방을 닫았습니다",
   "instant-p2p.msg.connect_failed": "§c접속에 실패했습니다: %s",
   "instant-p2p.msg.host_not_found": "§c호스트를 찾을 수 없습니다. 초대 코드를 다시 확인해주세요 (호스트가 접속 중이 아닐 수 있습니다)",
   "instant-p2p.msg.ice_failed": "§c현재 서버 점검 중으로 이용하실 수 없습니다 (STUN/TURN 연결 실패)",

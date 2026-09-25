@@ -5,12 +5,10 @@
   "instant-p2p.safety_warning.continue": "Continue",
   "instant-p2p.streamer_protection.heading": "§lNotice!",
   "instant-p2p.streamer_protection.message": "Streamer protection is now active.\nA streamer whose account is linked and currently broadcasting is granted\nthe authority to kick or temp-ban users, to keep their broadcast running smoothly.",
-
   "instant-p2p.join_broadcast_warning.heading": "§lNote!",
   "instant-p2p.join_broadcast_warning.message": "This room has broadcasting disallowed! Still want to join?\nIf you're currently streaming, please switch the broadcast filter to 'Broadcast-allowed only'!",
   "instant-p2p.join_capacity_warning.heading": "§lNotice",
   "instant-p2p.join_capacity_warning.message": "This room is full.\nYou are entering anyway using your developer/supporter privilege.",
-
   "instant-p2p.custom_room.title": "Create Room",
   "instant-p2p.custom_room.edit_title": "Edit Room Settings",
   "instant-p2p.custom_room.game_mode": "Game Mode",
@@ -40,7 +38,6 @@
   "instant-p2p.custom_room.title_placeholder": "Room title (Room - name if empty)",
   "instant-p2p.custom_room.apply_title": "Apply Changes",
   "instant-p2p.custom_room.back": "Back",
-
   "instant-p2p.room_list.title": "Room List",
   "instant-p2p.room_list.empty": "No public rooms available",
   "instant-p2p.room_list.search_label": "Search Rooms",
@@ -76,7 +73,6 @@
   "instant-p2p.room_list.broadcast_filter_tooltip.disallowed_only": "Only shows rooms with broadcast disallowed",
   "instant-p2p.room_list.removed": "Closed",
   "instant-p2p.room_list.block_tooltip": "Click to block this host (hides each other's rooms from the list)",
-
   "instant-p2p.blocked_players.title": "Blocked Players",
   "instant-p2p.blocked_players.empty": "No blocked players",
   "instant-p2p.blocked_players.hint": "Click §a♻§r to unblock a player",
@@ -95,7 +91,10 @@
   "instant-p2p.online_players.unblock_tooltip": "Removes the block.",
   "instant-p2p.online_players.kick_tooltip": "Kicks the user from the server - they can rejoin.",
   "instant-p2p.online_players.host_tooltip": "The host can't be kicked.",
-
+  "instant-p2p.role.dev": "Developer",
+  "instant-p2p.role.supporter": "Supporter",
+  "instant-p2p.role.streamer": "Streamer",
+  "instant-p2p.online_players.immune_tooltip": "%s cannot be kicked.",
   "instant-p2p.pause.role_dev": "Developer 🛠",
   "instant-p2p.pause.role_supporter": "Supporter 💬",
   "instant-p2p.pause.role_streamer": "Streamer 🎧",
@@ -103,14 +102,12 @@
   "instant-p2p.pause.expel_tooltip": "• Block (§c❌§r): hides chat, hides each other's rooms from the room list, and kicks instantly with rejoining blocked while you're present\n• Kick (§e⚡§r): removes them once, but doesn't block rejoining",
   "instant-p2p.pause.player_count": "Players %s / %s",
   "instant-p2p.pause.close_room": "Close Room",
-  "instant-p2p.msg.room_closed": "§aThe room has been closed",
-
+  "instant-p2p.msg.room_closed": "§eThe host has closed the room",
   "instant-p2p.join_room.title": "Join Custom Room",
   "instant-p2p.join_room.code_label": "Invite Code",
   "instant-p2p.join_room.join": "Join",
   "instant-p2p.join_room.code_placeholder": "Enter invite code...",
   "instant-p2p.join_room.server_name": "Custom Room",
-
   "instant-p2p.msg.invite_prefix": "§b[Invite Code] §f",
   "instant-p2p.msg.invite_copy": "Click here to copy",
   "instant-p2p.pause.copy_invite": "Copy Invite Code",
@@ -137,7 +134,6 @@
   "instant-p2p.msg.singleplay_only": "§cOnly available in singleplayer",
   "instant-p2p.msg.prev_invite_expired": "§cThe previous invite has expired",
   "instant-p2p.msg.host_failed": "§cFailed to start host",
-  "instant-p2p.msg.room_closed": "§eThe host has closed the room",
   "instant-p2p.msg.connect_failed": "§cFailed to connect: %s",
   "instant-p2p.msg.host_not_found": "§cCould not find the host. Double-check the invite code, or the host may not be online",
   "instant-p2p.msg.ice_failed": "§cThe relay service is currently unavailable (STUN/TURN connection failed)",
