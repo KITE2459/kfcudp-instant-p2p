@@ -150,8 +150,8 @@ final class PublicRoomAnnouncer {
             long rtt = SignalingRtt.currentMs();
             announcedRttMs = rtt;
             String msg = VillasMsg.roomUpdate(roomCode, title, hostNickname, P2PConfig.announcedChannel(),
-                    P2PConfig.isChannelAnd(), currentPlayers, maxPlayers, P2PConfig.MC_VERSION, hostUuid,
-                    P2PBanManager.encodeBannedPlayerHashes(roomCode), rtt, openedAtMs);
+                    P2PConfig.isChannelAnd(), currentPlayers, maxPlayers, P2PConfig.MC_VERSION,
+                    hostUuid, P2PBanManager.encodeBannedPlayerHashes(roomCode), rtt, openedAtMs);
             for (WebSocketClient client : ws) client.send(msg);
         });
     }

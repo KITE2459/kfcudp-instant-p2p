@@ -45,6 +45,16 @@ public final class P2PConfig {
             .map(c -> c.getMetadata().getVersion().getFriendlyString())
             .orElse("unknown");
 
+    /** 지금 실행 중인 모드(instant-p2p) 버전 문자열(예: "1.2.1", stonecutter.properties.toml의
+     * mod.version) — MC_VERSION만으로는 같은 마인크래프트 버전에서 모드 버전이 다른(=프로토콜이
+     * 다를 수 있는) 방끼리도 서로 보였다. 마인크래프트 버전과 별개로 이것도 정확히 같아야만
+     * 접속 가능한 방으로 친다(RoomEntry.sameVersion) — 패치 하나 차이라도 다르면 회색 처리.
+     */
+    public static final String MOD_VERSION = net.fabricmc.loader.api.FabricLoader.getInstance()
+            .getModContainer("instant-p2p")
+            .map(c -> c.getMetadata().getVersion().getFriendlyString())
+            .orElse("unknown");
+
     /** mc-signaling WebSocket 주소 — room_update 델타 메시지 최적화가 여기(8090)에만 있고
      * 8088의 villas-signaling은 옛 프로토콜 그대로다(클래스 주석 참고). */
     public static final String SIGNALING_URL =
@@ -139,6 +149,61 @@ public final class P2PConfig {
     private static boolean loadBroadcastJoinWarningDismissed() {
         JsonObject o = readSettingsFile();
         return o != null && o.has("broadcastJoinWarningDismissed") && o.get("broadcastJoinWarningDismissed").getAsBoolean();
+    }
+
+    /** 방송 허용을 켠 채로 방을 열 때 뜨는 "스트리머 보호 기능 활성화" 안내 팝업의 "다시 보지 않기"
+     * — 기본은 매번 뜬다. 다른 경고 dismissed 값들과 완전히 독립적이다. */
+    private static volatile boolean streamerProtectionWarningDismissed = loadStreamerProtectionWarningDismissed();
+
+    public static boolean isStreamerProtectionWarningDismissed() {
+        return streamerProtectionWarningDismissed;
+    }
+
+    public static void setStreamerProtectionWarningDismissed(boolean value) {
+        if (streamerProtectionWarningDismissed == value) return;
+        streamerProtectionWarningDismissed = value;
+        updateSettingsFile(o -> o.addProperty("streamerProtectionWarningDismissed", value));
+    }
+
+    private static boolean loadStreamerProtectionWarningDismissed() {
+        JsonObject o = readSettingsFile();
+        return o != null && o.has("streamerProtectionWarningDismissed") && o.get("streamerProtectionWarningDismissed").getAsBoolean();
+    }
+
+    /** 정원이 찬 방에 개발자·서포터 특권으로 밀고 들어갈 때 뜨는 확인 팝업의 "다시 보지 않기" —
+     * 기본은 매번 뜬다. 개발자·서포터도 이제 정원에 그대로 세이므로(countedPlayers), 특권은
+     * "정원이 차도 들어갈 수 있다"는 뜻이 됐다 — 조용히 들어가는 대신 한 번은 스스로 확인하게 한다. */
+    private static volatile boolean capacityBypassWarningDismissed = loadCapacityBypassWarningDismissed();
+
+    public static boolean isCapacityBypassWarningDismissed() {
+        return capacityBypassWarningDismissed;
+    }
+
+    public static void setCapacityBypassWarningDismissed(boolean value) {
+        if (capacityBypassWarningDismissed == value) return;
+        capacityBypassWarningDismissed = value;
+        updateSettingsFile(o -> o.addProperty("capacityBypassWarningDismissed", value));
+    }
+
+    private static boolean loadCapacityBypassWarningDismissed() {
+        JsonObject o = readSettingsFile();
+        return o != null && o.has("capacityBypassWarningDismissed") && o.get("capacityBypassWarningDismissed").getAsBoolean();
+    }
+
+    /** 치지직 연동 조회(link/status) 인증용 — 이 설치본이 한 번 만들어서 계속 재사용하는 무작위
+     * 값. mc-signaling이 link/start 때 같이 받아 그 연동(ChzzkLink)에 저장해두고, 나중에
+     * link/status에서 똑같은 값을 요구한다 — 아니면 남의 UUID로 아무나 "이 사람이 어떤 치지직
+     * 채널과 연동됐는지" 조회할 수 있었다(mc-signaling chzzk.go의 ChzzkLink 주석 참고). 처음
+     * 쓰일 때 없으면 그때 만들어서 저장한다(굳이 모드 설치 시점에 미리 만들 필요 없음). */
+    private static volatile String chzzkViewToken;
+
+    public static synchronized String getOrCreateChzzkViewToken() {
+        if (chzzkViewToken != null) return chzzkViewToken;
+        JsonObject o = readSettingsFile();
+        String loaded = o != null && o.has("chzzkViewToken") ? o.get("chzzkViewToken").getAsString() : null;
+        chzzkViewToken = loaded != null && !loaded.isEmpty() ? loaded : java.util.UUID.randomUUID().toString();
+        if (!chzzkViewToken.equals(loaded)) updateSettingsFile(obj -> obj.addProperty("chzzkViewToken", chzzkViewToken));
+        return chzzkViewToken;
     }
 
     /** 방 목록에서 내 마인크래프트 버전과 다른 방을 숨길지 — 기본은 보여준다(회색으로). */
@@ -421,21 +486,34 @@ public final class P2PConfig {
         return Math.floorMod(roomCode.hashCode(), PUBLIC_ROOM_SHARD_COUNT);
     }
 
-    /** 채널 하나의 shard(0..{@link #PUBLIC_ROOM_SHARD_COUNT}-1)번 공개 방 목록 lobby의 실제 경로. 마인크래프트
-     * 버전마다 로비가 따로라, 서로 접속도 못 하는 다른 버전의 방 공지·목록 갱신은 아예 오가지 않는다
-     * (예전엔 전 버전이 로비 4개에 섞여 서로의 브로드캐스트를 받아 놓고 화면에서 버렸다). */
+    /** 채널 하나의 shard(0..{@link #PUBLIC_ROOM_SHARD_COUNT}-1)번 공개 방 목록 lobby의 실제 경로.
+     * 모드 버전(MOD_VERSION)까지 해시에 같이 섞는다 — 모드 버전이 다르면(프로토콜이 다를 수 있음)
+     * 그 방 공지·목록 갱신은 애초에 이 lobby로 안 온다. 마인크래프트 버전은 일부러 안 섞는다 —
+     * 마인크래프트 버전이 달라도 방 자체는(회색으로) 보여야 하고, 실제 차단은 RoomEntry.
+     * sameVersion()이 접속 시도만 막는 걸로 충분하다(다른 마인크래프트 버전끼리도 친구 방이
+     * 열려있다는 사실 자체는 알 수 있게). 반면 모드 버전이 다른 방은 애초에 안 보여야 한다는
+     * 요구라 lobby 자체를 모드 버전별로 나눴다 — "다른 버전 숨기기" 체크박스·회색 표시는
+     * 이제 마인크래프트 버전 불일치에만 걸린다(모드 버전 불일치는 항상 lobby 단에서 걸러짐). */
     public static String publicRoomsLobbyId(String channel, int shard) {
-        // lobby는 채널마다 따로다 — 내 채널의 방만 받으니 서버가 보내는 명단이 채널 단위로 작아진다. 채널 이름은
-        // 해시로만 나간다(서버 로그·URL에 채널 이름이 안 남게). 버전은 lobby 이름에 넣지 않는다 — 다른 버전의 방도
-        // 목록에 보이게(회색 표시) 하고, 버전은 방 정보로 판단한다.
-        return PUBLIC_ROOMS_LOBBY_PREFIX + "_" + channelTag(channel) + "_" + shard;
+        // 채널 이름·모드 버전 둘 다 해시로만 나간다(서버 로그·URL에 원문이 안 남게).
+        return PUBLIC_ROOMS_LOBBY_PREFIX + "_" + channelTag(channel) + "_" + versionTag() + "_" + shard;
     }
 
     /** 채널 이름(대소문자 무시)의 SHA-256 앞 8바이트 — lobby 이름용. */
     private static String channelTag(String channel) {
+        return sha256Prefix8(channel.toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /** MOD_VERSION의 SHA-256 앞 8바이트 — publicRoomsLobbyId 주석 참고. 마인크래프트 버전은
+     * 일부러 안 섞는다(같은 주석). */
+    private static String versionTag() {
+        return sha256Prefix8(MOD_VERSION);
+    }
+
+    private static String sha256Prefix8(String s) {
         try {
             byte[] d = java.security.MessageDigest.getInstance("SHA-256")
-                    .digest(channel.toLowerCase(java.util.Locale.ROOT).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    .digest(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
             StringBuilder sb = new StringBuilder(16);
             for (int i = 0; i < 8; i++) sb.append(String.format("%02x", d[i]));
             return sb.toString();

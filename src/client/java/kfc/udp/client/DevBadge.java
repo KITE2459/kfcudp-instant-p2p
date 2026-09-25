@@ -78,20 +78,24 @@ public final class DevBadge {
 
     //? if >=26.1 {
     /*public static Component decorate(UUID id, Component name) {
+        // 방장이면 등급 배지 대신 방장 표시 하나만 — 등급자가 자기 방을 열었을 때 둘 다 붙어
+        // 지저분해 보이는 걸 막는다(예: 개발자가 방장이면 "🛠 📶"가 아니라 "📶"만).
+        if (isHostPlayer(id)) return name.copy().append(Component.literal(" 📶").withStyle(ChatFormatting.GREEN));
         Component result = name;
         if (kfc.udp.client.webrtc.Roles.isDev(id)) result = result.copy().append(Component.literal(" 🛠").withStyle(ChatFormatting.AQUA));
         else if (kfc.udp.client.webrtc.Roles.isSupporter(id)) result = result.copy().append(Component.literal(" 💬").withStyle(ChatFormatting.GOLD));
         else if (kfc.udp.client.webrtc.Roles.isStreamer(id)) result = result.copy().append(Component.literal(" 🎧").withStyle(ChatFormatting.RED));
-        if (isHostPlayer(id)) result = result.copy().append(Component.literal(" 📶").withStyle(ChatFormatting.GREEN));
         return result;
     }
     *///?} else {
     public static Text decorate(UUID id, Text name) {
+        // 방장이면 등급 배지 대신 방장 표시 하나만 — 등급자가 자기 방을 열었을 때 둘 다 붙어
+        // 지저분해 보이는 걸 막는다(예: 개발자가 방장이면 "🛠 📶"가 아니라 "📶"만).
+        if (isHostPlayer(id)) return name.copy().append(Text.literal(" 📶").formatted(Formatting.GREEN));
         Text result = name;
         if (kfc.udp.client.webrtc.Roles.isDev(id)) result = result.copy().append(Text.literal(" 🛠").formatted(Formatting.AQUA));
         else if (kfc.udp.client.webrtc.Roles.isSupporter(id)) result = result.copy().append(Text.literal(" 💬").formatted(Formatting.GOLD));
         else if (kfc.udp.client.webrtc.Roles.isStreamer(id)) result = result.copy().append(Text.literal(" 🎧").formatted(Formatting.RED));
-        if (isHostPlayer(id)) result = result.copy().append(Text.literal(" 📶").formatted(Formatting.GREEN));
         return result;
     }
     //?}

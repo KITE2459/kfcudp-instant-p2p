@@ -156,12 +156,18 @@ public class CustomRoomScreen extends Screen {
     @Nullable private Button    startButton;
     @Nullable private Button    settingsApplyButton;
     private final List<Checkbox> optionCheckboxes = new ArrayList<>();
+    // 경고 팝업을 취소했을 때 되돌리려면 실제 위젯을 다시 만들어 갈아 끼워야 한다(체크박스는
+    // 만든 뒤엔 체크 상태를 못 바꾼다) — 그 자리를 찾으려고 따로 들고 있는다.
+    @Nullable private Checkbox allowBroadcastCheckbox;
     *///?} else {
     @Nullable private TextFieldWidget maxPlayersField;
     @Nullable private TextFieldWidget titleField;
     @Nullable private ButtonWidget    startButton;
     @Nullable private ButtonWidget    settingsApplyButton;
     private final List<CheckboxWidget> optionCheckboxes = new ArrayList<>();
+    // 경고 팝업을 취소했을 때 되돌리려면 실제 위젯을 다시 만들어 갈아 끼워야 한다(체크박스는
+    // 만든 뒤엔 체크 상태를 못 바꾼다) — 그 자리를 찾으려고 따로 들고 있는다.
+    @Nullable private CheckboxWidget allowBroadcastCheckbox;
     //?}
 
     public CustomRoomScreen(Screen parent) {
@@ -332,20 +338,8 @@ public class CustomRoomScreen extends Screen {
                 .build();
         forceRelayCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(FORCE_RELAY_TOOLTIP_TEXT));
         this.optionCheckboxes.add(forceRelayCheckbox);
-        Checkbox allowBroadcastCheckbox = Checkbox.builder(ALLOW_BROADCAST_TEXT, this.font)
-                .pos(cx - 155, LIST_Y)
-                .selected(this.allowBroadcast)
-                .onValueChange((cb, value) -> {
-                    this.allowBroadcast = value;
-                    if (this.editingActiveRoom) {
-                        this.refreshSettingsApplyButton();
-                    } else {
-                        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
-                    }
-                })
-                .build();
-        allowBroadcastCheckbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(ALLOW_BROADCAST_TOOLTIP_TEXT));
-        this.optionCheckboxes.add(allowBroadcastCheckbox);
+        this.allowBroadcastCheckbox = this.buildAllowBroadcastCheckbox(this.allowBroadcast);
+        this.optionCheckboxes.add(this.allowBroadcastCheckbox);
         for (Checkbox cb : this.optionCheckboxes) this.addRenderableWidget(cb);
         this.checkboxScrollIndex = 0;
         this.repositionCheckboxes();
@@ -499,21 +493,8 @@ public class CustomRoomScreen extends Screen {
                         })
                         .build()
         );
-        this.optionCheckboxes.add(
-                CheckboxWidget.builder(ALLOW_BROADCAST_TEXT, this.textRenderer)
-                        .pos(cx - 155, LIST_Y)
-                        .checked(this.allowBroadcast)
-                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(ALLOW_BROADCAST_TOOLTIP_TEXT))
-                        .callback((cb, value) -> {
-                            this.allowBroadcast = value;
-                            if (this.editingActiveRoom) {
-                                this.refreshSettingsApplyButton();
-                            } else {
-                                kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
-                            }
-                        })
-                        .build()
-        );
+        this.allowBroadcastCheckbox = this.buildAllowBroadcastCheckbox(this.allowBroadcast);
+        this.optionCheckboxes.add(this.allowBroadcastCheckbox);
         for (CheckboxWidget cb : this.optionCheckboxes) this.addDrawableChild(cb);
         this.checkboxScrollIndex = 0;
         this.repositionCheckboxes();
@@ -668,21 +649,8 @@ public class CustomRoomScreen extends Screen {
                         })
                         .build()
         );
-        this.optionCheckboxes.add(
-                CheckboxWidget.builder(ALLOW_BROADCAST_TEXT, this.textRenderer)
-                        .pos(cx - 155, LIST_Y)
-                        .checked(this.allowBroadcast)
-                        .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(ALLOW_BROADCAST_TOOLTIP_TEXT))
-                        .callback((cb, value) -> {
-                            this.allowBroadcast = value;
-                            if (this.editingActiveRoom) {
-                                this.refreshSettingsApplyButton();
-                            } else {
-                                kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
-                            }
-                        })
-                        .build()
-        );
+        this.allowBroadcastCheckbox = this.buildAllowBroadcastCheckbox(this.allowBroadcast);
+        this.optionCheckboxes.add(this.allowBroadcastCheckbox);
         for (CheckboxWidget cb : this.optionCheckboxes) this.addDrawableChild(cb);
         this.checkboxScrollIndex = 0;
         this.repositionCheckboxes();
@@ -761,18 +729,116 @@ public class CustomRoomScreen extends Screen {
         }
     }
 
-    /** Start 버튼 — 이미 켜진 방이어도 항상 방 재시작(새 초대 코드 발급). */
+    /** 방송 허용 체크박스를 만든다(초기 배치용 selected=this.allowBroadcast와, 경고 팝업 취소 시
+     * 되돌리는 rebuildAllowBroadcastCheckbox의 selected=false/true 양쪽에서 같이 쓴다) — 빌더로
+     * 초기값을 넣는 건 onValueChange를 다시 불러일으키지 않으니 여기서 팝업 걱정은 안 해도 된다. */
+    //? if >=26.1 {
+    /*private Checkbox buildAllowBroadcastCheckbox(boolean selected) {
+        Checkbox checkbox = Checkbox.builder(ALLOW_BROADCAST_TEXT, this.font)
+                .pos(this.width / 2 - 155, LIST_Y)
+                .selected(selected)
+                .onValueChange((cb, value) -> this.onAllowBroadcastChanged(value))
+                .build();
+        checkbox.setTooltip(net.minecraft.client.gui.components.Tooltip.create(ALLOW_BROADCAST_TOOLTIP_TEXT));
+        return checkbox;
+    }
+    *///?} else {
+    private CheckboxWidget buildAllowBroadcastCheckbox(boolean selected) {
+        return CheckboxWidget.builder(ALLOW_BROADCAST_TEXT, this.textRenderer)
+                .pos(this.width / 2 - 155, LIST_Y)
+                .checked(selected)
+                .tooltip(net.minecraft.client.gui.tooltip.Tooltip.of(ALLOW_BROADCAST_TOOLTIP_TEXT))
+                .callback((cb, value) -> this.onAllowBroadcastChanged(value))
+                .build();
+    }
+    //?}
+
+    /** 체크할 때마다 매번 호출된다(체크 해제는 그냥 바로 반영) — 켜는 쪽만 등급 권한 경고가
+     * 필요하다. "다시 보지 않기"로 이미 넘긴 적이 있으면 팝업 없이 바로 켠다. */
+    private void onAllowBroadcastChanged(boolean value) {
+        if (value && !kfc.udp.client.webrtc.P2PConfig.isStreamerProtectionWarningDismissed()) {
+            this.showAllowBroadcastWarning();
+        } else {
+            this.applyAllowBroadcast(value);
+        }
+    }
+
+    private void applyAllowBroadcast(boolean value) {
+        this.allowBroadcast = value;
+        if (this.editingActiveRoom) {
+            this.refreshSettingsApplyButton();
+        } else {
+            kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
+        }
+    }
+
+    /** 경고 팝업 — 취소(Esc/취소 버튼)하면 SafetyWarningScreen이 그냥 이 화면(parent)으로
+     * 돌아가고, 그 복귀가 init()을 다시 돌려 체크박스가 (이 값을 아직 안 바꿨으니) 저절로
+     * 해제된 채로 다시 그려진다 — 별도 되돌리기 코드가 필요 없다. 확인(계속하기)했을 때만
+     * confirmAllowBroadcast가 불려 실제로 켜고, 그 시점엔 이미 한 번 다시 그려진 체크박스를
+     * 한 번 더 갈아 끼워 체크 상태로 맞춘다(rebuildAllowBroadcastCheckbox 참고). */
+    //? if >=26.1 {
+    /*private void showAllowBroadcastWarning() {
+        assert this.minecraft != null;
+        this.minecraft.setScreenAndShow(new SafetyWarningScreen(this,
+                "instant-p2p.streamer_protection.heading", "instant-p2p.streamer_protection.message",
+                0xFF55FFFF, 0xFF002020,
+                kfc.udp.client.webrtc.P2PConfig::setStreamerProtectionWarningDismissed,
+                this::confirmAllowBroadcast));
+    }
+    *///?} else {
+    private void showAllowBroadcastWarning() {
+        assert this.client != null;
+        this.client.setScreen(new SafetyWarningScreen(this,
+                "instant-p2p.streamer_protection.heading", "instant-p2p.streamer_protection.message",
+                0xFF55FFFF, 0xFF002020,
+                kfc.udp.client.webrtc.P2PConfig::setStreamerProtectionWarningDismissed,
+                this::confirmAllowBroadcast));
+    }
+    //?}
+
+    private void confirmAllowBroadcast() {
+        this.applyAllowBroadcast(true);
+        this.rebuildAllowBroadcastCheckbox(true);
+    }
+
+    /** 바닐라 체크박스는 만든 뒤엔 체크 상태를 못 바꾸는 위젯이라, 같은 자리에 새로 만든
+     * 위젯을 갈아 끼우는 게 유일한 방법이다(필드 doc 참고). */
+    //? if >=26.1 {
+    /*private void rebuildAllowBroadcastCheckbox(boolean selected) {
+        int idx = this.optionCheckboxes.indexOf(this.allowBroadcastCheckbox);
+        if (idx < 0) return;
+        this.removeWidget(this.allowBroadcastCheckbox);
+        this.allowBroadcastCheckbox = this.buildAllowBroadcastCheckbox(selected);
+        this.optionCheckboxes.set(idx, this.allowBroadcastCheckbox);
+        this.addRenderableWidget(this.allowBroadcastCheckbox);
+        this.repositionCheckboxes();
+    }
+    *///?} else {
+    private void rebuildAllowBroadcastCheckbox(boolean selected) {
+        int idx = this.optionCheckboxes.indexOf(this.allowBroadcastCheckbox);
+        if (idx < 0) return;
+        this.remove(this.allowBroadcastCheckbox);
+        this.allowBroadcastCheckbox = this.buildAllowBroadcastCheckbox(selected);
+        this.optionCheckboxes.set(idx, this.allowBroadcastCheckbox);
+        this.addDrawableChild(this.allowBroadcastCheckbox);
+        this.repositionCheckboxes();
+    }
+    //?}
+
+    /** Start 버튼 — 이미 켜진 방이어도 항상 방 재시작(새 초대 코드 발급). 방송 허용 경고는 이제
+     * 체크박스를 켜는 순간 뜨므로(buildAllowBroadcastCheckbox 참고) 여기선 신경 쓸 필요 없다. */
     private void onStart() {
         //? if >=26.1 {
         /*assert this.minecraft != null;
         String title = this.publicRoom ? this.titleField.getValue().trim() : null;
-        KfcudpClient.startCustomRoom(this.minecraft, this.gameMode, this.maxPlayers, this.allowCheats,
-                this.publicRoom, title);
+        KfcudpClient.startCustomRoom(this.minecraft, this.gameMode, this.maxPlayers,
+                this.allowCheats, this.publicRoom, title);
         *///?} else {
         assert this.client != null;
         String title = this.publicRoom ? this.titleField.getText().trim() : null;
-        KfcudpClient.startCustomRoom(this.client, this.gameMode, this.maxPlayers, this.allowCheats,
-                this.publicRoom, title);
+        KfcudpClient.startCustomRoom(this.client, this.gameMode, this.maxPlayers,
+                this.allowCheats, this.publicRoom, title);
         //?}
     }
 

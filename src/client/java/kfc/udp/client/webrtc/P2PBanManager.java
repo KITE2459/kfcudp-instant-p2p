@@ -612,16 +612,16 @@ public class P2PBanManager {
         return roomMaxPlayers;
     }
 
-    /** 정원에 세는 인원 — 접속자로 들어온 제작자·서포터는 빼고 센다(DevBadge.hasPerk). 방장은 항상 센다. */
+    /** 정원에 세는 인원 — 개발자·서포터도 유령 취급하지 않고 그대로 센다. 정원이 실제로 차면 그
+     * 특권도 뒤에 들어오는 일반 유저를 막는 데는 그대로 쓰인다(정원을 무시하고 "밀고 들어가는" 건
+     * 특권을 가진 자기 자신뿐 — checkCanJoin의 !hasPerk 조건 참고). */
     //? if >=26.1 {
     /*public static int countedPlayers(MinecraftServer server) {
-        return (int) server.getPlayerList().getPlayers().stream()
-                .filter(p -> isHost(server, p) || !kfc.udp.client.DevBadge.hasPerk(p.getUUID())).count();
+        return server.getPlayerList().getPlayers().size();
     }
     *///?} else {
     public static int countedPlayers(MinecraftServer server) {
-        return (int) server.getPlayerManager().getPlayerList().stream()
-                .filter(p -> isHost(server, p) || !kfc.udp.client.DevBadge.hasPerk(p.getUuid())).count();
+        return server.getPlayerManager().getPlayerList().size();
     }
     //?}
 
@@ -649,6 +649,13 @@ public class P2PBanManager {
         if (isPlayerBanned(uuid)) {
             LOG.info("[instant-p2p] login refused (banned): {}", profileName(profile));
             return Component.literal("§cYou are banned: " + getBanReason(uuid));
+        }
+        // 등급자에게 추방당한 상태라면 그 추방을 건 사람들이 전부 나가거나 풀어줄 때까지 재입장
+        // 자체를 막는다(ExpelManager 클래스 주석 참고) — 방장은 이 지점에 오기 전에 이미 위에서
+        // 통과됐으니 방장이 여기서 걸릴 일은 없다.
+        if (ExpelManager.isExpelled(profileId(profile))) {
+            LOG.info("[instant-p2p] login refused (expelled): {}", profileName(profile));
+            return Component.translatable("instant-p2p.msg.still_expelled");
         }
         if (!P2PWhitelistManager.canJoin(uuid)) {
             LOG.info("[instant-p2p] login refused (not whitelisted): {}", profileName(profile));
@@ -680,6 +687,13 @@ public class P2PBanManager {
         if (isPlayerBanned(uuid)) {
             LOG.info("[instant-p2p] login refused (banned): {}", profileName(profile));
             return Text.literal("§cYou are banned: " + getBanReason(uuid));
+        }
+        // 등급자에게 추방당한 상태라면 그 추방을 건 사람들이 전부 나가거나 풀어줄 때까지 재입장
+        // 자체를 막는다(ExpelManager 클래스 주석 참고) — 방장은 이 지점에 오기 전에 이미 위에서
+        // 통과됐으니 방장이 여기서 걸릴 일은 없다.
+        if (ExpelManager.isExpelled(profileId(profile))) {
+            LOG.info("[instant-p2p] login refused (expelled): {}", profileName(profile));
+            return Text.translatable("instant-p2p.msg.still_expelled");
         }
         if (!P2PWhitelistManager.canJoin(uuid)) {
             LOG.info("[instant-p2p] login refused (not whitelisted): {}", profileName(profile));

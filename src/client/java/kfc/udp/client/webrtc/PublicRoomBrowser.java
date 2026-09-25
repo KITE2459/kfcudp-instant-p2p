@@ -50,7 +50,11 @@ public final class PublicRoomBrowser {
     public record RoomEntry(String code, String title, String hostNickname, String channel, boolean channelAnd,
                              int currentPlayers, int maxPlayers, String version, String hostUuid,
                              String bannedHashes, long hostRttMs, long openedAtMs) {
-        /** 내 마인크래프트 버전과 같은 방인지 — 다르면 목록에 회색으로 뜨고 들어갈 수 없다. */
+        /** 내 마인크래프트 버전과 같은 방인지 — 다르면 목록에 회색으로 뜨고 들어갈 수 없다. 모드
+         * 버전은 여기서 다시 안 본다 — P2PConfig.publicRoomsLobbyId가 모드 버전을 lobby 자체에
+         * 섞어서, 모드 버전이 다른 방은 애초에 이 목록에 도착하지도 않는다(중복 검사였다가
+         * 걷어냄 — 전송 중 빈 문자열이 되는 버그까지 겹쳐서 "로비는 통과했는데 화면엔 다르다고
+         * 뜨는" 모순이 있었다). */
         public boolean sameVersion() {
             return P2PConfig.MC_VERSION.equals(version);
         }
@@ -161,7 +165,8 @@ public final class PublicRoomBrowser {
                 String title = FAKE_TITLES[i % FAKE_TITLES.length];
                 // 다섯 개마다 하나는 다른 버전으로 — 회색 표시·버전 숨기기 확인용.
                 all.add(new RoomEntry(String.format("FAKE%06d", i), title, "Dummy" + i, channel, false,
-                        1 + i % 8, 8, i % 5 == 4 ? "1.21.1" : P2PConfig.MC_VERSION, "00000000-0000-0000-0000-" + String.format("%012d", i),
+                        1 + i % 8, 8, i % 5 == 4 ? "1.21.1" : P2PConfig.MC_VERSION,
+                        "00000000-0000-0000-0000-" + String.format("%012d", i),
                         "", new long[]{15, 90, 200, 450, 800, 1500, -1}[i % 7], i));
             }
             fakeRooms = all;
@@ -273,7 +278,8 @@ public final class PublicRoomBrowser {
         s.infoByCode.put(code, new RoomEntry(code,
                 nullToEmpty(VillasMsg.field(obj, "title")), nullToEmpty(VillasMsg.field(obj, "nickname")),
                 nullToEmpty(VillasMsg.field(obj, "channel")), channelAnd, current, max,
-                nullToEmpty(VillasMsg.field(obj, "version")), nullToEmpty(VillasMsg.field(obj, "host_uuid")),
+                nullToEmpty(VillasMsg.field(obj, "version")),
+                nullToEmpty(VillasMsg.field(obj, "host_uuid")),
                 nullToEmpty(VillasMsg.field(obj, "banned_hashes")), hostRtt, openedAt));
         this.recombine(s);
     }

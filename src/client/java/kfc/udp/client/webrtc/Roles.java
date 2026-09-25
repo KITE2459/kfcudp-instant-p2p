@@ -10,8 +10,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.security.KeyFactory;
 import java.security.PublicKey;
 import java.security.Signature;
@@ -34,15 +32,17 @@ import java.util.concurrent.Executors;
  * 부르지만(매 프레임 가능) 이건 그냥 메모리 Set.contains라 네트워크와 무관 — 실제 새로고침은
  * 주기적 타이머가 아니라 {@link #refreshAsync()} 호출로만 일어난다. 배지가 실제로 쓰이는 시점은
  * instant-p2p 방을 열거나(WebRtcBridge.startHost) 들어갈 때(WebRtcBridge.start)뿐이라, 그 두
- * 지점에서만 새로고침을 걸어 방을 안 켜고 있는 동안은 네트워크를 아예 안 탄다. 마지막으로 받은
- * 값은 로컬 파일에도 저장해서, 시그널링 서버에 잠깐 못 붙어도(오프라인 등) 이전 값을 그대로
- * 쓴다 — 못 받았다고 배지가 사라지면 안 된다.
+ * 지점에서만 새로고침을 걸어 방을 안 켜고 있는 동안은 네트워크를 아예 안 탄다.
+ * <p>
+ * 로컬 파일 캐시는 일부러 안 둔다 — 새로고침이 실패해도(성공했을 때만 덮어쓰므로) 그 세션
+ * 안에서는 마지막 성공값이 메모리에 그대로 남아 있어서, 파일로 남기는 이득은 "이번 실행에서
+ * 첫 새로고침이 하필 실패하는" 딱 그 경우뿐이다(다음 방을 열면 곧 복구된다) — 그 정도를 아끼자고
+ * 로컬에 사람이 편집 가능한 파일을 남기고 싶지 않다는 게 이 설계의 요지.
  */
 public final class Roles {
 
     private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-roles");
     private static final Gson GSON = new GsonBuilder().create();
-    private static final Path CACHE_FILE = Path.of("config", "instant-p2p", "roles-cache.json");
     private static final Duration HTTP_TIMEOUT = Duration.ofSeconds(5);
 
     /**
@@ -91,12 +91,6 @@ public final class Roles {
         return isDev(id) || isSupporter(id);
     }
 
-    /** 모드 초기화 시점에 한 번만 부른다 — 로컬 캐시를 즉시 적용해, 첫 방이 열리기 전에도 지난
-     * 세션에서 받아둔 값이 준비돼 있게 한다. */
-    public static void start() {
-        loadFromCache();
-    }
-
     /** instant-p2p 방을 열거나(WebRtcBridge.startHost) 들어갈 때(WebRtcBridge.start)만 부른다 —
      * 그 외엔 배지가 어차피 안 쓰이니 네트워크를 탈 이유가 없다. 백그라운드 스레드에서 돌고 즉시
      * 리턴하므로 호출부를 막지 않는다. */
@@ -121,7 +115,6 @@ public final class Roles {
                 return;
             }
             apply(resp.body());
-            saveToCache(resp.body());
         } catch (Exception e) {
             LOG.warn("[roles] fetch failed: {}", e.getMessage());
         }
@@ -179,23 +172,5 @@ public final class Roles {
             }
         }
         return Set.copyOf(out);
-    }
-
-    private static void loadFromCache() {
-        try {
-            if (!Files.exists(CACHE_FILE)) return;
-            apply(Files.readString(CACHE_FILE));
-        } catch (Exception e) {
-            LOG.warn("[roles] cache load failed: {}", e.getMessage());
-        }
-    }
-
-    private static void saveToCache(String json) {
-        try {
-            Files.createDirectories(CACHE_FILE.getParent());
-            Files.writeString(CACHE_FILE, json);
-        } catch (Exception e) {
-            LOG.warn("[roles] cache save failed: {}", e.getMessage());
-        }
     }
 }

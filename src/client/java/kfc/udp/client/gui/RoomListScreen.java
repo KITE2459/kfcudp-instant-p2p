@@ -81,8 +81,10 @@ public class RoomListScreen extends Screen {
     /** 검색창(좌측) + 중계 통신 강제(우측, 검색창이 차지하고 남는 폭) — 첫 행 바로
      * 아래 둘째 행. 예전엔 빠른 시작이 검색창과 다른 행에서 한 줄을 통째로 더 썼는데,
      * 빠른 시작을 첫 행 우측(Regen Invite 자리)으로 옮기면서 이 행 하나로 줄었다.
-     * 검색창과 구분선 사이엔 숨 쉴 틈을 남겨서 구분선이 내용에 바짝 붙어 보이지
-     * 않게 했다. */
+     * 지금은 그 자리를 방송인 역할 받기 버튼이 대신 차지한다 — 빠른 시작은 기능(quickStartButton
+     * 필드·onQuickStart·활성화 로직)은 그대로 두고 화면에 추가만 안 해서 안 보이게 했다
+     * (init()의 quickStartButton 관련 주석 참고). 검색창과 구분선 사이엔 숨 쉴 틈을 남겨서
+     * 구분선이 내용에 바짝 붙어 보이지 않게 했다. */
     static final int SEARCH_Y      = CHANNEL_Y + CHANNEL_FIELD_H + 4;
     /** 상단(채널·빠른시작/검색·중계강제)과 리스트 사이 구분선 — 기존 마크 멀티플레이
      * 화면이 상단/목록/하단 3부분을 가로줄로 나누는 걸 그대로 참조했다
@@ -101,16 +103,16 @@ public class RoomListScreen extends Screen {
     /** 방 칸 우측 끝의 차단 버튼(정사각형) — 접속용 히든 버튼(rowButtons)은 이 버튼과 여백만큼 폭을
      * 줄여서 클릭 영역이 안 겹친다. 그리기·클릭 판정은 renderRows/mouseClicked에서 직접 한다
      * (P2PBanManager 클래스 주석 참고 — 개인 차단(=밴) 기능). */
-    static final int BLOCK_BTN = 15; // 홀수 — 테두리 안쪽(13px)에 5px x가 4:4로 딱 떨어진다(BLOCK_X_DX 참고)
+    static final int BLOCK_BTN = 15; // 홀수 — 테두리 안쪽(13px)이라 5px 글자가 양쪽 4px로 딱 맞는다
     static final int BLOCK_BTN_COLOR = 0xFF505050;
     static final int BLOCK_BTN_HOVER_COLOR = 0xFF707070;
-    /** 차단 버튼 안 소문자 x의 그리기 위치 — 대문자 X는 위아래 모양이 달라 상하좌우 대칭인 소문자를 쓴다.
-     * 기본 폰트의 x는 가로 5px(0~4열)·세로 5px(글자 기준 2~6행). 그림자는 어두워 눈에 안 잡히므로 밝은 5×5만
-     * 가운데에 둔다 — 버튼 안쪽이 짝수(16px 버튼→14px)면 5px는 절대 가운데에 못 오고 반 픽셀씩 좌상/우하로
-     * 치우쳐 보여서, 버튼을 홀수(15px→안쪽 13px)로 해 양쪽 4px로 딱 맞춘다: 가로 (15-5)/2=5, 세로 5-2(글자 위 빈 줄)=3. */
-    static final int BLOCK_X_DX = (BLOCK_BTN - 5) / 2;
+    /** 버튼 안 아이콘(❌·♻·⚡·📶 등)의 세로 위치 — 가로는 이모지마다 실측 너비가 달라 glyphX로
+     * 매번 다시 재는데, 세로는 전부 9px 높이 글자라 이 오프셋 하나로 공통 중앙 정렬이 된다:
+     * (15-5)/2-2=3 (그림자는 어두워 눈에 안 잡히므로 밝은 5×5 글자 기준으로 잡은 값). */
     static final int BLOCK_X_DY = (BLOCK_BTN - 5) / 2 - 2;
-    /** 차단 버튼 바로 왼쪽의 핑 막대 — 바닐라 서버 목록 스프라이트 크기 그대로. */
+    /** 차단 버튼 바로 왼쪽의 핑 막대 — 바닐라 서버 목록 스프라이트 크기 그대로. 세로는 칸 가운데가
+     * 아니라 첫째 줄(제목) 높이에 맞춰 위쪽에 둔다(y+4) — 둘째 줄 오른쪽 끝의 버전 표기와 세로로
+     * 두 줄처럼 보이게, 버전의 오른쪽 끝도 이 핑 막대의 오른쪽 끝(bx-3)에 맞춘다. */
     private static final int PING_W = 10;
     private static final int PING_H = 8;
     /** 방 제목이 차지할 수 있는 폭 = 칸에서 핑 막대·차단 버튼 앞 글자 영역. 글자 수가 아니라 폭으로 막아서
@@ -146,6 +148,7 @@ public class RoomListScreen extends Screen {
     private static final Component QUICK_START_TEXT = Component.translatable("instant-p2p.room_list.quick_start");
     private static final Component CHANNEL_SETTINGS_TEXT = Component.translatable("instant-p2p.channel.settings");
     private static final Component BLOCKED_LIST_TEXT = Component.translatable("instant-p2p.room_list.blocked_list");
+    private static final Component CHZZK_LINK_TEXT = Component.translatable("instant-p2p.room_list.chzzk_link");
     private static final Component BLOCK_TOOLTIP_TEXT = Component.translatable("instant-p2p.room_list.block_tooltip");
     private static final Component CLEANUP_TEXT = Component.translatable("instant-p2p.room_list.cleanup");
     private static final Component HIDE_OTHER_VERSIONS_TEXT = Component.translatable("instant-p2p.room_list.hide_other_versions");
@@ -164,6 +167,7 @@ public class RoomListScreen extends Screen {
     private static final Text QUICK_START_TEXT = Text.translatable("instant-p2p.room_list.quick_start");
     private static final Text CHANNEL_SETTINGS_TEXT = Text.translatable("instant-p2p.channel.settings");
     private static final Text BLOCKED_LIST_TEXT = Text.translatable("instant-p2p.room_list.blocked_list");
+    private static final Text CHZZK_LINK_TEXT = Text.translatable("instant-p2p.room_list.chzzk_link");
     private static final Text BLOCK_TOOLTIP_TEXT = Text.translatable("instant-p2p.room_list.block_tooltip");
     private static final Text CLEANUP_TEXT = Text.translatable("instant-p2p.room_list.cleanup");
     private static final Text HIDE_OTHER_VERSIONS_TEXT = Text.translatable("instant-p2p.room_list.hide_other_versions");
@@ -238,13 +242,21 @@ public class RoomListScreen extends Screen {
                         Objects.requireNonNull(this.minecraft).setScreenAndShow(new ChannelScreen(this)))
                 .bounds(cx - 155, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H).build());
 
-        // 빠른 시작 — CustomRoomScreen의 Regen Invite와 완전히 같은 자리·크기
-        // (우측 상단). 채널 입력란과 한 행을 이뤄 더 이상 별도 행을 안 쓴다.
+        // 빠른 시작 — 자리는 그대로(우측 상단, CustomRoomScreen의 Regen Invite와 같은 위치)
+        // 두되 화면에는 추가하지 않는다: 기능(활성화 토글·onQuickStart)은 남기고 버튼만 숨긴다.
+        // 지금 이 자리는 아래 방송인 역할 받기 버튼이 대신 차지한다.
         this.quickStartButton = Button.builder(QUICK_START_TEXT, b -> this.onQuickStart())
                 .bounds((cx + 155) - CHANNEL_FIELD_W, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H)
                 .build();
         this.quickStartButton.active = false;
-        this.addRenderableWidget(this.quickStartButton);
+
+        // 방송인 역할 받기(치지직 연동) — 빠른 시작이 쓰던 우측 상단 자리를 대신 차지한다.
+        this.addRenderableWidget(
+                Button.builder(CHZZK_LINK_TEXT, b ->
+                        Objects.requireNonNull(this.minecraft).setScreenAndShow(new ChzzkLinkScreen(this)))
+                        .bounds((cx + 155) - CHANNEL_FIELD_W, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H)
+                        .build()
+        );
 
         // 초대코드 입력란 바로 위 줄 — 체크박스 둘을 가로로 이어 붙여 화면 가운데에 둔다(라벨 길이가 언어마다 달라
         // 만든 뒤 폭을 잰다).
@@ -384,13 +396,21 @@ public class RoomListScreen extends Screen {
                         Objects.requireNonNull(this.client).setScreen(new ChannelScreen(this)))
                 .dimensions(cx - 155, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H).build());
 
-        // 빠른 시작 — CustomRoomScreen의 Regen Invite와 완전히 같은 자리·크기
-        // (우측 상단). 채널 입력란과 한 행을 이뤄 더 이상 별도 행을 안 쓴다.
+        // 빠른 시작 — 자리는 그대로(우측 상단, CustomRoomScreen의 Regen Invite와 같은 위치)
+        // 두되 화면에는 추가하지 않는다: 기능(활성화 토글·onQuickStart)은 남기고 버튼만 숨긴다.
+        // 지금 이 자리는 아래 방송인 역할 받기 버튼이 대신 차지한다.
         this.quickStartButton = ButtonWidget.builder(QUICK_START_TEXT, b -> this.onQuickStart())
                 .dimensions((cx + 155) - CHANNEL_FIELD_W, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H)
                 .build();
         this.quickStartButton.active = false;
-        this.addDrawableChild(this.quickStartButton);
+
+        // 방송인 역할 받기(치지직 연동) — 빠른 시작이 쓰던 우측 상단 자리를 대신 차지한다.
+        this.addDrawableChild(
+                ButtonWidget.builder(CHZZK_LINK_TEXT, b ->
+                        Objects.requireNonNull(this.client).setScreen(new ChzzkLinkScreen(this)))
+                        .dimensions((cx + 155) - CHANNEL_FIELD_W, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H)
+                        .build()
+        );
 
         // 초대코드 입력란 바로 위 줄 — 체크박스 둘을 가로로 이어 붙여 화면 가운데에 둔다(라벨 길이가 언어마다 달라
         // 만든 뒤 폭을 잰다).
@@ -722,7 +742,40 @@ public class RoomListScreen extends Screen {
         PublicRoomBrowser.RoomEntry r = this.rowRoom[row];
         if (r == null || this.rowRemoved[row] || !r.sameVersion()) return;
         if (!this.stillLive(r.code())) return;
-        this.confirmBroadcastThenJoin(r);
+        this.confirmCapacityThenJoin(r);
+    }
+
+    /** 정원이 찬 방에 개발자·서포터 특권으로 밀고 들어가려 할 때 — "다시 보지 않기"를 안 눌렀다면
+     * — 접속 전에 한 번 확인한다. 개발자·서포터도 이제 정원에 그대로 세이므로(P2PBanManager.
+     * countedPlayers), 특권은 "정원이 차도 들어갈 수 있다"는 뜻이 됐다 — 조용히 들어가는 대신
+     * 한 번은 스스로 확인하게 한다. 방 목록에 이미 있는 현재/최대 인원(r)만으로 판단하므로
+     * (RoomMembersProbe 같은 별도 네트워크 조회 없이) 초대 코드로 직접 입장할 때는 이 확인이
+     * 안 뜬다 — 그 경로는 사전에 정원을 알 방법이 없다. */
+    private void confirmCapacityThenJoin(PublicRoomBrowser.RoomEntry r) {
+        //? if >=26.1 {
+        /*java.util.UUID me = net.minecraft.client.Minecraft.getInstance().getUser().getProfileId();
+        *///?} else {
+        java.util.UUID me = net.minecraft.client.MinecraftClient.getInstance().getSession().getUuidOrNull();
+        //?}
+        boolean full = r.maxPlayers() > 0 && r.currentPlayers() >= r.maxPlayers();
+        if (!full || me == null || !kfc.udp.client.DevBadge.hasPerk(me)
+                || kfc.udp.client.webrtc.P2PConfig.isCapacityBypassWarningDismissed()) {
+            this.confirmBroadcastThenJoin(r);
+            return;
+        }
+        //? if >=26.1 {
+        /*assert this.minecraft != null;
+        this.minecraft.setScreenAndShow(new SafetyWarningScreen(this,
+                "instant-p2p.join_capacity_warning.heading", "instant-p2p.join_capacity_warning.message",
+                0xFFFFFF55, 0xFF1A1A00, kfc.udp.client.webrtc.P2PConfig::setCapacityBypassWarningDismissed,
+                () -> this.confirmBroadcastThenJoin(r)));
+        *///?} else {
+        assert this.client != null;
+        this.client.setScreen(new SafetyWarningScreen(this,
+                "instant-p2p.join_capacity_warning.heading", "instant-p2p.join_capacity_warning.message",
+                0xFFFFFF55, 0xFF1A1A00, kfc.udp.client.webrtc.P2PConfig::setCapacityBypassWarningDismissed,
+                () -> this.confirmBroadcastThenJoin(r)));
+        //?}
     }
 
     /** 방송 비허용 방(P2PConfig.isBroadcastTagged가 false)이면 — "다시 보지 않기"를 안 눌렀다면
@@ -1135,12 +1188,12 @@ public class RoomListScreen extends Screen {
             context.text(this.font, closed ? REMOVED_TEXT.getString()
                             : this.font.plainSubstrByWidth(r.hostNickname(), textW - versionW - 4 - this.font.width(count)) + count,
                     x + 6, y + 13, closed ? 0xFFFF5555 : 0xFFA0A0A0);
-            context.text(this.font, version, x + 6 + textW - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
-            if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + (CELL_H - PING_H) / 2);
-            // 차단 버튼 — 회색 바탕에 빨간 x. 목록엔 아직 차단 안 한 방장만 뜨므로 x 하나뿐이다.
+            context.text(this.font, version, bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
+            if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
+            // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
             context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBlock == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
             context.outline(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBlock == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.text(this.font, "x", bx + BLOCK_X_DX, by + BLOCK_X_DY, 0xFFFF5555);
+            context.text(this.font, "❌", glyphX(this.font, "❌", bx) + glyphNudgeX("❌"), by + BLOCK_X_DY + glyphNudgeY("❌"), 0xFFFF5555);
         }
         if (this.hasScrollbar()) {
             int trackX = this.listX();
@@ -1206,12 +1259,12 @@ public class RoomListScreen extends Screen {
             context.drawTextWithShadow(this.textRenderer, Text.literal(closed ? REMOVED_TEXT.getString()
                             : this.textRenderer.trimToWidth(r.hostNickname(), textW - versionW - 4 - this.textRenderer.getWidth(count)) + count),
                     x + 6, y + 13, closed ? 0xFFFF5555 : 0xFFA0A0A0);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(version), x + 6 + textW - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
-            if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + (CELL_H - PING_H) / 2);
-            // 차단 버튼 — 회색 바탕에 빨간 x. 목록엔 아직 차단 안 한 방장만 뜨므로 x 하나뿐이다.
+            context.drawTextWithShadow(this.textRenderer, Text.literal(version), bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
+            if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
+            // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
             context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBlock == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
             context.drawStrokedRectangle(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBlock == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.drawTextWithShadow(this.textRenderer, Text.literal("x"), bx + BLOCK_X_DX, by + BLOCK_X_DY, 0xFFFF5555);
+            context.drawTextWithShadow(this.textRenderer, Text.literal("❌"), glyphX(this.textRenderer, "❌", bx) + glyphNudgeX("❌"), by + BLOCK_X_DY + glyphNudgeY("❌"), 0xFFFF5555);
         }
         if (this.hasScrollbar()) {
             int trackX = this.listX();
@@ -1276,12 +1329,12 @@ public class RoomListScreen extends Screen {
             context.drawTextWithShadow(this.textRenderer, Text.literal(closed ? REMOVED_TEXT.getString()
                             : this.textRenderer.trimToWidth(r.hostNickname(), textW - versionW - 4 - this.textRenderer.getWidth(count)) + count),
                     x + 6, y + 13, closed ? 0xFFFF5555 : 0xFFA0A0A0);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(version), x + 6 + textW - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
-            if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + (CELL_H - PING_H) / 2);
-            // 차단 버튼 — 회색 바탕에 빨간 x. 목록엔 아직 차단 안 한 방장만 뜨므로 x 하나뿐이다.
+            context.drawTextWithShadow(this.textRenderer, Text.literal(version), bx - 3 - versionW, y + 13, otherVersion ? 0xFFFF5555 : 0xFF707070);
+            if (!closed) this.drawPingSprite(context, pingSprite(r.estimatedPingMs(), i), bx - 3 - PING_W, y + 4);
+            // 차단 버튼 — 회색 바탕에 빨간 ❌. 목록엔 아직 차단 안 한 방장만 뜨므로 ❌ 하나뿐이다.
             context.fill(bx, by, bx + BLOCK_BTN, by + BLOCK_BTN, hoveredBlock == i ? BLOCK_BTN_HOVER_COLOR : BLOCK_BTN_COLOR);
             context.drawBorder(bx, by, BLOCK_BTN, BLOCK_BTN, hoveredBlock == i ? ROW_BORDER_HOVER_COLOR : ROW_BORDER_COLOR);
-            context.drawTextWithShadow(this.textRenderer, Text.literal("x"), bx + BLOCK_X_DX, by + BLOCK_X_DY, 0xFFFF5555);
+            context.drawTextWithShadow(this.textRenderer, Text.literal("❌"), glyphX(this.textRenderer, "❌", bx) + glyphNudgeX("❌"), by + BLOCK_X_DY + glyphNudgeY("❌"), 0xFFFF5555);
         }
         if (this.hasScrollbar()) {
             int trackX = this.listX();
@@ -1345,6 +1398,30 @@ public class RoomListScreen extends Screen {
         context.drawGuiTexture(net.minecraft.util.Identifier.ofVanilla(sprite), x, y, PING_W, PING_H);
     }
     *///?}
+    // ❌·♻·⚡·📶 전부 폭이 이모지마다 달라 고정 오프셋으로는 못 맞춘다 — 버튼 폭 안에서 실측
+    // 너비로 가운데 정렬한다(가로). 세로는 전부 9px 높이라 BLOCK_X_DY 하나로 공통 중앙 정렬된다.
+    //? if >=26.1 {
+    /*static int glyphX(net.minecraft.client.gui.Font font, String glyph, int boxX) {
+        return boxX + (BLOCK_BTN - font.width(glyph)) / 2;
+    }
+    *///?} else {
+    static int glyphX(net.minecraft.client.font.TextRenderer font, String glyph, int boxX) {
+        return boxX + (BLOCK_BTN - font.getWidth(glyph)) / 2;
+    }
+    //?}
+
+    // ❌·⚡·♻ 아이콘만 실측 중앙 위치에서 살짝 처져 보여서 미세 조정한다.
+    // ❌·♻는 아래로 1px(가로는 우측 보정 뒤 다시 왼쪽으로 1px 요청받아 결과적으로 0),
+    // ⚡는 아래로 1px + 오른쪽으로 1px.
+    static int glyphNudgeX(String glyph) {
+        if (glyph.equals("⚡")) return 1;
+        return 0;
+    }
+
+    static int glyphNudgeY(String glyph) {
+        return glyph.equals("❌") || glyph.equals("⚡") || glyph.equals("♻") ? 1 : 0;
+    }
+
     // 바닐라 버튼 클릭음 — 위젯이 아니라 직접 그린 버튼(차단 x, 팝업 확인/취소 등)은 소리를 안 내서 따로 튼다.
     // 정적 도우미가 1.21.2(ClickableWidget.playClickSound)·26.x(AbstractWidget.playButtonClickSound)에서 생겼고,
     // 그 전은 바닐라 버튼이 하던 대로 직접 재생한다.

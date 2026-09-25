@@ -333,8 +333,7 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
-        kfc.udp.client.webrtc.Roles.start();
-        kfc.udp.client.webrtc.FreezeManager.register();
+        kfc.udp.client.webrtc.ExpelManager.register();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -460,12 +459,17 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendSystemMessage(Component.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"));
-            // 제작자·서포터면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
+            // 제작자·서포터·방송인이면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
             String roleKey = DevBadge.roleMessageKey(client.player.getUUID());
             if (roleKey != null) {
                 net.minecraft.network.chat.MutableComponent line = Component.translatable(roleKey);
                 // 특혜가 꺼져 있으면(DevBadge.PERKS_ENABLED) 괄호도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
                 if (DevBadge.hasPerk(client.player.getUUID())) line.append(Component.translatable("instant-p2p.msg.perk_note"));
+                // 등급자(개발자·서포터·방송인 전부, ExpelManager.priority>0) 전원에게 공통 안내 —
+                // 플레이어 차단 화면에서 강퇴·임시밴 권한이 있다는 걸 접속 즉시 알려준다.
+                if (kfc.udp.client.webrtc.ExpelManager.priority(client.player.getUUID()) > 0) {
+                    line.append(Component.translatable("instant-p2p.msg.expel_note"));
+                }
                 client.player.sendSystemMessage(line);
             }
         });
@@ -552,8 +556,7 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
-        kfc.udp.client.webrtc.Roles.start();
-        kfc.udp.client.webrtc.FreezeManager.register();
+        kfc.udp.client.webrtc.ExpelManager.register();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -678,12 +681,17 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendMessage(Text.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"), false);
-            // 제작자·서포터면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
+            // 제작자·서포터·방송인이면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
             String roleKey = DevBadge.roleMessageKey(client.player.getUuid());
             if (roleKey != null) {
                 net.minecraft.text.MutableText line = Text.translatable(roleKey);
                 // 특혜가 꺼져 있으면(DevBadge.PERKS_ENABLED) 괄호도 안 붙인다 — 안내와 실제가 달라지면 안 된다.
                 if (DevBadge.hasPerk(client.player.getUuid())) line.append(Text.translatable("instant-p2p.msg.perk_note"));
+                // 등급자(개발자·서포터·방송인 전부, ExpelManager.priority>0) 전원에게 공통 안내 —
+                // 플레이어 차단 화면에서 강퇴·임시밴 권한이 있다는 걸 접속 즉시 알려준다.
+                if (kfc.udp.client.webrtc.ExpelManager.priority(client.player.getUuid()) > 0) {
+                    line.append(Text.translatable("instant-p2p.msg.expel_note"));
+                }
                 client.player.sendMessage(line, false);
             }
         });
@@ -1353,6 +1361,8 @@ public class KfcudpClient implements ClientModInitializer {
         java.util.List<net.minecraft.client.gui.components.AbstractWidget> added = new java.util.ArrayList<>();
 
         if (isHost) {
+            // 방장은 추방 대상이 될 수 없다(ExpelManager 클래스 주석 참고 — 방장을 내보낼 방법이
+            // 없어서 애초에 시도 자체를 안 한다) — 그래서 이 버튼을 잠글 이유가 없다.
             Button customRoomBtn = Button.builder(
                             Component.translatable(activeInviteCode != null
                                     ? "instant-p2p.custom_room.edit_title"
@@ -1377,8 +1387,8 @@ public class KfcudpClient implements ClientModInitializer {
                 roleText.setX(btnX + (btnW - roleText.getWidth()) / 2);
                 roleText.setY(nextY + (btnH - 9) / 2); // 방장의 버튼 한 줄 높이 가운데
                 // 개발자·서포터는 인원수 무시 특혜 설명까지 같이(특혜가 꺼져 있으면 그 줄은 안 붙인다 —
-                // 안내와 실제가 달라지면 안 된다), 셋 다 공통으로 동결(FreezeManager) 안내를 붙인다.
-                Component tooltipText = Component.translatable("instant-p2p.pause.freeze_tooltip");
+                // 안내와 실제가 달라지면 안 된다), 셋 다 공통으로 추방(ExpelManager) 안내를 붙인다.
+                Component tooltipText = Component.translatable("instant-p2p.pause.expel_tooltip");
                 if (DevBadge.hasPerk(me)) {
                     tooltipText = Component.translatable("instant-p2p.pause.role_tooltip")
                             .copy().append(Component.literal("\n")).append(tooltipText);
@@ -1400,7 +1410,8 @@ public class KfcudpClient implements ClientModInitializer {
                 max = activeMaxPlayers;
             }
         } else if (isGuestSession && guestRoomMaxPlayers > 0 && client.getConnection() != null) {
-            current = (int) client.getConnection().getOnlinePlayers().stream().filter(p -> { java.util.UUID id = P2PBanManager.profileId(p.getProfile()); return id.equals(guestHostUuid) || !DevBadge.hasPerk(id); }).count();
+            // 개발자·서포터도 유령 취급하지 않고 그대로 센다(P2PBanManager.countedPlayers와 같은 규칙).
+            current = client.getConnection().getOnlinePlayers().size();
             max = guestRoomMaxPlayers;
         }
         if (current != null) {
@@ -1415,27 +1426,11 @@ public class KfcudpClient implements ClientModInitializer {
             nextY += 12; // 텍스트 한 줄(9px) + 여백 — 버튼 한 줄(22px)보다 훨씬 얇다
         }
 
-        // 초대 코드 다시 복사 — 인원 표시 아래에 둔다(코드 자체는 안 보여준다). 접속자에겐 이 자리가 비니
-        // 같은 높이만큼만 띄워서 아래 플레이어 차단 버튼이 방장 화면과 같은 줄에 오게 한다.
-        if (isHost) {
-            if (activeInviteCode != null) {
-                String code = activeInviteCode;
-                Button codeBtn = Button.builder(
-                                Component.translatable("instant-p2p.pause.copy_invite").withStyle(ChatFormatting.YELLOW),
-                                button -> client.keyboardHandler.setClipboard(code)
-                        ).bounds(btnX, nextY, btnW, btnH).build();
-                Screens.getWidgets(screen).add(codeBtn);
-                added.add(codeBtn);
-                nextY += rowGap;
-            }
-        } else {
-            nextY += rowGap;
-        }
-
-        // 플레이어 차단 — 방장·접속자 모두, 다른 사람이 들어올 수 있는 세션일 때만. 같은 월드에 있는 사람을 골라
-        // 차단/해제한다(BlockedPlayersScreen 접속자 모드) — 채팅이 가려지고, 앞으로 내가 여는 방에도 못 들어온다.
-        // 목록엔 지금 접속한 사람 다음에 이미 차단해 나간(밴된) 사람도 이어서 나온다(BlockedPlayersScreen
-        // 클래스 주석 참고) — 버튼을 두 개로 나누는 대신 한 화면에서 다 보이게.
+        // 플레이어 차단 — 인원수 바로 아래(호스트·접속자 공통). 방장·접속자 모두, 다른 사람이 들어올 수
+        // 있는 세션일 때만. 같은 월드에 있는 사람을 골라 차단/해제한다(BlockedPlayersScreen 접속자 모드)
+        // — 채팅이 가려지고, 앞으로 내가 여는 방에도 못 들어온다. 목록엔 지금 접속한 사람 다음에 이미
+        // 차단해 나간(밴된) 사람도 이어서 나온다(BlockedPlayersScreen 클래스 주석 참고) — 버튼을 두 개로
+        // 나누는 대신 한 화면에서 다 보이게.
         if (activeInviteCode != null || isGuestSession) {
             Button blockPlayersBtn = Button.builder(
                             Component.translatable("instant-p2p.pause.block_players"),
@@ -1443,6 +1438,20 @@ public class KfcudpClient implements ClientModInitializer {
                     ).bounds(btnX, nextY, btnW, btnH).build();
             Screens.getWidgets(screen).add(blockPlayersBtn);
             added.add(blockPlayersBtn);
+            nextY += rowGap;
+        }
+
+        // 초대 코드 다시 복사 — 이제 플레이어 차단 버튼 자리를 이어받는다(호스트만, 코드 자체는 안 보여준다).
+        // 접속자의 강퇴·임시밴 권한은 이제 별도 화면 없이 "플레이어 차단"(위에서 이미 추가됨) 안에
+        // 통합돼 있다(BlockedPlayersScreen 클래스 주석 참고) — 그래서 여기선 호스트일 때만 버튼을 둔다.
+        if (isHost && activeInviteCode != null) {
+            String code = activeInviteCode;
+            Button codeBtn = Button.builder(
+                            Component.translatable("instant-p2p.pause.copy_invite").withStyle(ChatFormatting.YELLOW),
+                            button -> client.keyboardHandler.setClipboard(code)
+                    ).bounds(btnX, nextY, btnW, btnH).build();
+            Screens.getWidgets(screen).add(codeBtn);
+            added.add(codeBtn);
             nextY += rowGap;
         }
 
@@ -1469,6 +1478,8 @@ public class KfcudpClient implements ClientModInitializer {
         java.util.List<net.minecraft.client.gui.widget.ClickableWidget> added = new java.util.ArrayList<>();
 
         if (isHost) {
+            // 방장은 추방 대상이 될 수 없다(ExpelManager 클래스 주석 참고 — 방장을 내보낼 방법이
+            // 없어서 애초에 시도 자체를 안 한다) — 그래서 이 버튼을 잠글 이유가 없다.
             ButtonWidget customRoomBtn = ButtonWidget.builder(
                             Text.translatable(activeInviteCode != null
                                     ? "instant-p2p.custom_room.edit_title"
@@ -1493,8 +1504,8 @@ public class KfcudpClient implements ClientModInitializer {
                 roleText.setX(btnX + (btnW - roleText.getWidth()) / 2);
                 roleText.setY(nextY + (btnH - 9) / 2); // 방장의 버튼 한 줄 높이 가운데
                 // 개발자·서포터는 인원수 무시 특혜 설명까지 같이(특혜가 꺼져 있으면 그 줄은 안 붙인다 —
-                // 안내와 실제가 달라지면 안 된다), 셋 다 공통으로 동결(FreezeManager) 안내를 붙인다.
-                Text tooltipText = Text.translatable("instant-p2p.pause.freeze_tooltip");
+                // 안내와 실제가 달라지면 안 된다), 셋 다 공통으로 추방(ExpelManager) 안내를 붙인다.
+                Text tooltipText = Text.translatable("instant-p2p.pause.expel_tooltip");
                 if (DevBadge.hasPerk(me)) {
                     tooltipText = Text.translatable("instant-p2p.pause.role_tooltip")
                             .copy().append(Text.literal("\n")).append(tooltipText);
@@ -1514,7 +1525,8 @@ public class KfcudpClient implements ClientModInitializer {
                 max = activeMaxPlayers;
             }
         } else if (isGuestSession && guestRoomMaxPlayers > 0 && client.getNetworkHandler() != null) {
-            current = (int) client.getNetworkHandler().getPlayerList().stream().filter(p -> { java.util.UUID id = P2PBanManager.profileId(p.getProfile()); return id.equals(guestHostUuid) || !DevBadge.hasPerk(id); }).count();
+            // 개발자·서포터도 유령 취급하지 않고 그대로 센다(P2PBanManager.countedPlayers와 같은 규칙).
+            current = client.getNetworkHandler().getPlayerList().size();
             max = guestRoomMaxPlayers;
         }
         if (current != null) {
@@ -1529,27 +1541,11 @@ public class KfcudpClient implements ClientModInitializer {
             nextY += 12;
         }
 
-        // 초대 코드 다시 복사 — 인원 표시 아래에 둔다(코드 자체는 안 보여준다). 접속자에겐 이 자리가 비니
-        // 같은 높이만큼만 띄워서 아래 플레이어 차단 버튼이 방장 화면과 같은 줄에 오게 한다.
-        if (isHost) {
-            if (activeInviteCode != null) {
-                String code = activeInviteCode;
-                ButtonWidget codeBtn = ButtonWidget.builder(
-                                Text.translatable("instant-p2p.pause.copy_invite").formatted(Formatting.YELLOW),
-                                button -> client.keyboard.setClipboard(code)
-                        ).dimensions(btnX, nextY, btnW, btnH).build();
-                Screens.getButtons(screen).add(codeBtn);
-                added.add(codeBtn);
-                nextY += rowGap;
-            }
-        } else {
-            nextY += rowGap;
-        }
-
-        // 플레이어 차단 — 방장·접속자 모두, 다른 사람이 들어올 수 있는 세션일 때만. 같은 월드에 있는 사람을 골라
-        // 차단/해제한다(BlockedPlayersScreen 접속자 모드) — 채팅이 가려지고, 앞으로 내가 여는 방에도 못 들어온다.
-        // 목록엔 지금 접속한 사람 다음에 이미 차단해 나간(밴된) 사람도 이어서 나온다(BlockedPlayersScreen
-        // 클래스 주석 참고) — 버튼을 두 개로 나누는 대신 한 화면에서 다 보이게.
+        // 플레이어 차단 — 인원수 바로 아래(호스트·접속자 공통). 방장·접속자 모두, 다른 사람이 들어올 수
+        // 있는 세션일 때만. 같은 월드에 있는 사람을 골라 차단/해제한다(BlockedPlayersScreen 접속자 모드)
+        // — 채팅이 가려지고, 앞으로 내가 여는 방에도 못 들어온다. 목록엔 지금 접속한 사람 다음에 이미
+        // 차단해 나간(밴된) 사람도 이어서 나온다(BlockedPlayersScreen 클래스 주석 참고) — 버튼을 두 개로
+        // 나누는 대신 한 화면에서 다 보이게.
         if (activeInviteCode != null || isGuestSession) {
             ButtonWidget blockPlayersBtn = ButtonWidget.builder(
                             Text.translatable("instant-p2p.pause.block_players"),
@@ -1557,6 +1553,20 @@ public class KfcudpClient implements ClientModInitializer {
                     ).dimensions(btnX, nextY, btnW, btnH).build();
             Screens.getButtons(screen).add(blockPlayersBtn);
             added.add(blockPlayersBtn);
+            nextY += rowGap;
+        }
+
+        // 초대 코드 다시 복사 — 이제 플레이어 차단 버튼 자리를 이어받는다(호스트만, 코드 자체는 안 보여준다).
+        // 접속자의 강퇴·임시밴 권한은 이제 별도 화면 없이 "플레이어 차단"(위에서 이미 추가됨) 안에
+        // 통합돼 있다(BlockedPlayersScreen 클래스 주석 참고) — 그래서 여기선 호스트일 때만 버튼을 둔다.
+        if (isHost && activeInviteCode != null) {
+            String code = activeInviteCode;
+            ButtonWidget codeBtn = ButtonWidget.builder(
+                            Text.translatable("instant-p2p.pause.copy_invite").formatted(Formatting.YELLOW),
+                            button -> client.keyboard.setClipboard(code)
+                    ).dimensions(btnX, nextY, btnW, btnH).build();
+            Screens.getButtons(screen).add(codeBtn);
+            added.add(codeBtn);
             nextY += rowGap;
         }
 
