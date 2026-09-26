@@ -62,6 +62,17 @@ public final class DevBadge {
      * {@code ExpelManager.priority}(3/2/1)도 같은 순서다.
      */
     public static String roleSuffix(UUID id) {
+        // 접속자로 남의 방에 있는 동안은 방장이 내려준 등급이 먼저다 — 판정하는 쪽(방장)과 그리는
+        // 쪽(나)이 서로 다른 roles.json 사본을 보면 화면과 실제가 어긋난다(RoomRoles 클래스 주석).
+        Integer pushed = kfc.udp.client.webrtc.RoomRoles.rankOrNull(id);
+        if (pushed != null) {
+            return switch (pushed) {
+                case 3 -> "dev";
+                case 2 -> "supporter";
+                case 1 -> "streamer";
+                default -> null;
+            };
+        }
         if (kfc.udp.client.webrtc.Roles.isDev(id)) return "dev";
         if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return "supporter";
         if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return "streamer";

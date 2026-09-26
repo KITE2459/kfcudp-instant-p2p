@@ -98,7 +98,17 @@ public final class Roles {
         EXECUTOR.execute(Roles::refreshNow);
     }
 
-    private static void refreshNow() {
+    /** 새로고침 결과가 <b>실제로 달라졌을 때만</b> onChanged를 부른다 — 방장이 접속자에게 등급을
+     * 다시 뿌리는 데 쓴다(RoomRoles 참고). 콜백은 이 클래스의 전용 스레드에서 돌므로, 서버/클라
+     * 상태를 만지려면 호출부가 알맞은 스레드로 넘겨야 한다. */
+    public static void refreshAsync(Runnable onChanged) {
+        EXECUTOR.execute(() -> {
+            if (refreshNow()) onChanged.run();
+        });
+    }
+
+    /** @return 목록이 실제로 바뀌었으면 true(실패·무변화는 false). */
+    private static boolean refreshNow() {
         try {
             HttpRequest req = HttpRequest.newBuilder(URI.create(P2PConfig.SIGNALING_HTTP_URL + "/api/v1/roles"))
                     .timeout(HTTP_TIMEOUT)
@@ -107,32 +117,41 @@ public final class Roles {
             HttpResponse<String> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofString());
             if (resp.statusCode() != 200) {
                 LOG.warn("[roles] fetch failed: HTTP {}", resp.statusCode());
-                return;
+                return false;
             }
             String sigB64 = resp.headers().firstValue("X-Roles-Signature").orElse(null);
             if (!verifySignature(resp.body(), sigB64)) {
                 LOG.warn("[roles] response signature missing or invalid, ignoring (possible tampering)");
-                return;
+                return false;
             }
-            apply(resp.body());
+            return apply(resp.body());
         } catch (Exception e) {
             LOG.warn("[roles] fetch failed: {}", e.getMessage());
+            return false;
         }
     }
 
-    private static void apply(String json) {
+    /** @return 세 목록 중 하나라도 실제로 달라졌으면 true. */
+    private static boolean apply(String json) {
         JsonObject o;
         try {
             o = GSON.fromJson(json, JsonObject.class);
         } catch (Exception e) {
             LOG.warn("[roles] malformed response, keeping previous values: {}", e.getMessage());
-            return;
+            return false;
         }
-        if (o == null) return;
-        dev = parseUuids(o, "dev");
-        supporter = parseUuids(o, "supporter");
-        streamer = parseUuids(o, "streamer");
-        LOG.info("[roles] updated: dev={} supporter={} streamer={}", dev.size(), supporter.size(), streamer.size());
+        if (o == null) return false;
+        Set<UUID> newDev = parseUuids(o, "dev");
+        Set<UUID> newSupporter = parseUuids(o, "supporter");
+        Set<UUID> newStreamer = parseUuids(o, "streamer");
+        boolean changed = !newDev.equals(dev) || !newSupporter.equals(supporter) || !newStreamer.equals(streamer);
+        dev = newDev;
+        supporter = newSupporter;
+        streamer = newStreamer;
+        if (changed) {
+            LOG.info("[roles] updated: dev={} supporter={} streamer={}", dev.size(), supporter.size(), streamer.size());
+        }
+        return changed;
     }
 
     private static PublicKey loadPublicKey() {
