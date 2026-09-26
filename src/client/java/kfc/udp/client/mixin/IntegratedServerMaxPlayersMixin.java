@@ -45,14 +45,25 @@ public abstract class IntegratedServerMaxPlayersMixin {
     // 전원이 같은 권한을 받는다 — /op로 실제 오프 목록에 올라간 손님까지 방 옵션(치트 허용 꺼짐)에
     // 깔려서 ALL(권한 없음)로 굳어버렸다. 그래서 대상을 아는 getProfilePermissions에서 먼저 op 여부부터
     // 보고, op면 오프 목록의 진짜 권한을 그대로 돌려준다(바닐라 fallback과 동일) — 방 옵션은 op가
-    // *아닌* 손님에게만 적용된다. 방장(싱글플레이 오너)에겐 이 메서드가 안 불리므로 방장 치트는
-    // 월드 설정 그대로 유지된다.
+    // *아닌* 손님에게만 적용된다.
+    //
+    // 방장(싱글플레이 오너)도 방 옵션을 따른다 — 예전엔 여기서 그냥 return해서 월드 설정만 따라갔고,
+    // 그래서 "명령어 허용"을 켜도 접속자만 치트가 되고 방장 자신은 안 되는 문제가 있었다. 단 방 옵션이
+    // 꺼져 있으면 덮어쓰지 않고 바닐라에 넘긴다 — 끄는 쪽으로 덮어쓰면 싱글에서 켜 둔 치트를 방을
+    // 여는 순간 잃는다. 월드 설정(level.dat의 allowCommands)은 여전히 안 건드린다(방 옵션 하나가
+    // 싱글 월드의 치트 설정을 영구히 바꾸면 안 된다).
     //? if >=26.3 {
     /*@Inject(method = "getProfilePermissions", at = @At("HEAD"), cancellable = true)
     private void kfcudp$roomGuestPermissions(net.minecraft.server.players.NameAndId id,
             CallbackInfoReturnable<net.minecraft.server.permissions.LevelBasedPermissionSet> cir) {
         IntegratedServer self = (IntegratedServer) (Object) this;
-        if (P2PBanManager.getRoomMaxPlayers() <= 0 || self.isSingleplayerOwner(id)) return;
+        if (P2PBanManager.getRoomMaxPlayers() <= 0) return;
+        if (self.isSingleplayerOwner(id)) {
+            if (kfc.udp.client.KfcudpClient.isActiveAllowCheats()) {
+                cir.setReturnValue(net.minecraft.server.permissions.LevelBasedPermissionSet.OWNER);
+            }
+            return;
+        }
         net.minecraft.server.players.PlayerList playerList = self.getPlayerList();
         if (playerList.isOp(id)) {
             net.minecraft.server.players.ServerOpListEntry entry =

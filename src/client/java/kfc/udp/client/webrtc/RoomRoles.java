@@ -125,7 +125,7 @@ public final class RoomRoles {
         kfc.udp.client.KfcudpClient.applyGuestRoomState(state.maxPlayers(), state.hostUuid(), state.allowBroadcast());
         // 접속마다 여러 번 오는 값이라 INFO로 찍으면 로그만 지저분해진다 — roles.json이 실제로
         // 바뀌었는지는 Roles의 "[roles] updated"가 알려주므로 여기선 DEBUG로 남긴다.
-        LOG.info("[DIAG-RECV] room state: max={} host={} broadcast={} ranks={}", state.maxPlayers(), state.hostUuid(), state.allowBroadcast(), ranks);
+        LOG.debug("[roles] room state from host: max={} ranks={}", state.maxPlayers(), ranks);
     }
 
     // ── 방장 쪽: 목록을 만들어 접속자 전원에게 뿌린다 ────────────────────────────
@@ -155,15 +155,11 @@ public final class RoomRoles {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));
         }
         P2PNet.RoomState state = state(online);
-        int sent = 0;
         for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
             // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
             if (P2PBanManager.isHost(server, sp)) continue;
             net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(sp, state);
-            sent++;
         }
-        LOG.info("[DIAG-SEND] online={} sent={} max={} host={} broadcast={} ranks={}",
-                online.size(), sent, state.maxPlayers(), state.hostUuid(), state.allowBroadcast(), state.ranks());
     }
     *///?} else {
     public static void broadcast(MinecraftServer server) {
@@ -172,15 +168,11 @@ public final class RoomRoles {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));
         }
         P2PNet.RoomState state = state(online);
-        int sent = 0;
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
             // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
             if (P2PBanManager.isHost(server, sp)) continue;
             net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(sp, state);
-            sent++;
         }
-        LOG.info("[DIAG-SEND] online={} sent={} max={} host={} broadcast={} ranks={}",
-                online.size(), sent, state.maxPlayers(), state.hostUuid(), state.allowBroadcast(), state.ranks());
     }
     //?}
 }
