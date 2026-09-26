@@ -107,6 +107,29 @@ public final class Roles {
         });
     }
 
+    /**
+     * 지금 새로고침하고 <b>최대 timeoutMs까지만</b> 기다린다 — 방장이 접속 요청(LOGIN)을 처리하기
+     * 직전에 부른다. 그 순간의 목록으로 정원 무시 입장 허용이 결정되고 탭 목록 배지가 계산돼
+     * 캐시되기 때문에, 여기서 최신값을 못 받으면 "첫 접속만 어긋나고 두 번째 접속부터 맞는"
+     * 증상이 난다(RoomRoles 클래스 주석 참고).
+     * <p>
+     * HTTP 자체 타임아웃(5초)만큼 서버 스레드를 붙잡으면 안 되니 전용 스레드에 올리고 여기서만
+     * 짧게 기다린다. 시간이 넘으면 캐시값으로 그냥 진행하고, 뒤늦게 도착한 결과도 onChanged로
+     * 똑같이 반영된다 — 그래서 늦어도 결국은 맞춰진다.
+     */
+    public static void refreshBlocking(long timeoutMs, Runnable onChanged) {
+        java.util.concurrent.CompletableFuture<Boolean> f =
+                java.util.concurrent.CompletableFuture.supplyAsync(Roles::refreshNow, EXECUTOR);
+        f.thenAccept(changed -> {
+            if (changed) onChanged.run();
+        });
+        try {
+            f.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+        } catch (Exception e) {
+            LOG.warn("[roles] blocking refresh did not finish in {}ms, using cached values", timeoutMs);
+        }
+    }
+
     /** @return 목록이 실제로 바뀌었으면 true(실패·무변화는 false). */
     private static boolean refreshNow() {
         try {

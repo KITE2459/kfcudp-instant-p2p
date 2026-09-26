@@ -687,6 +687,11 @@ public class P2PBanManager {
         // 방장(싱글플레이 오너)은 어떤 경우에도 막지 않는다
         if (isHost(server, profile)) return null;
 
+        // 아래 정원 판정(hasPerk)과, 바로 뒤에 계산돼 캐시되는 탭 목록 배지가 이 순간의 등급
+        // 목록으로 결정된다 — 그래서 여기서 짧게 기다려 roles.json을 최신으로 맞춘다. 이게 없으면
+        // 새로고침이 비동기라 첫 접속만 낡은 등급으로 처리되고 두 번째 접속부터 맞았다.
+        RoomRoles.ensureFreshForLogin(server);
+
         String realIp = resolveRealIp(address);
         if (realIp != null) uuidToRealIp.put(profileId(profile), realIp);
 

@@ -1025,6 +1025,30 @@ public class KfcudpClient implements ClientModInitializer {
      * 아직 false였다 — 그래서 방장 본인의 📶 표시가 이름표·채팅엔 바로 붙어도(둘 다 매번 새로
      * 계산됨) 탭 목록엔 안 붙고, 다른 계기로 우연히 재전송되기 전까진 그대로였다.
      */
+    /**
+     * 접속자 <b>전원</b>의 탭 목록 표시 이름을 다시 보낸다 — roles.json이 바뀌어 등급 배지가
+     * 달라졌을 때 이미 캐시된 옛 배지를 고치는 용도(RoomRoles.ensureFreshForLogin이 부른다).
+     * 위 kfcudp$refreshHostTabList와 같은 이유로 필요하다: 탭 목록 이름은 접속 시점에 한 번만
+     * 계산돼 전송되므로, 등급이 바뀌어도 재전송 없이는 방이 닫힐 때까지 그대로 남는다.
+     */
+    //? if >=26.1 {
+    /*public static void kfcudp$refreshTabList(net.minecraft.server.MinecraftServer server) {
+        for (net.minecraft.server.level.ServerPlayer sp : server.getPlayerList().getPlayers()) {
+            server.getPlayerList().broadcastAll(
+                    new net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket(
+                            net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME, sp));
+        }
+    }
+    *///?} else {
+    public static void kfcudp$refreshTabList(net.minecraft.server.MinecraftServer server) {
+        for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
+            server.getPlayerManager().sendToAll(
+                    new net.minecraft.network.packet.s2c.play.PlayerListS2CPacket(
+                            net.minecraft.network.packet.s2c.play.PlayerListS2CPacket.Action.UPDATE_DISPLAY_NAME, sp));
+        }
+    }
+    //?}
+
     //? if >=26.1 {
     /*private static void kfcudp$refreshHostTabList(IntegratedServer server, java.util.UUID hostUuid) {
         net.minecraft.server.level.ServerPlayer sp = server.getPlayerList().getPlayer(hostUuid);
