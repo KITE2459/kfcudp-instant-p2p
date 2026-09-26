@@ -142,6 +142,9 @@ public class KfcudpClient implements ClientModInitializer {
         WebRtcBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
                 client.player.getUUID().toString(), activeGuestCount + 1, activeMaxPlayers);
         activeChannel = channel;
+        // 적용 버튼을 누를 필요 없이 여기서 이미 끝났다는 걸 알린다 — 그게 안 보여서 "태그만 바꾸면
+        // 적용이 안 된다"는 오해가 있었다. 채널 값 자체는 안 보여준다(가리기 기능이 있는 값이다).
+        kfcudp$tell(client, P2PBanManager.msgKey("instant-p2p.msg.channel_applied"));
     }
     *///?} else {
     public static void republishForChannelChange(MinecraftClient client) {
@@ -152,6 +155,9 @@ public class KfcudpClient implements ClientModInitializer {
         WebRtcBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
                 client.player.getUuid().toString(), activeGuestCount + 1, activeMaxPlayers);
         activeChannel = channel;
+        // 적용 버튼을 누를 필요 없이 여기서 이미 끝났다는 걸 알린다 — 그게 안 보여서 "태그만 바꾸면
+        // 적용이 안 된다"는 오해가 있었다. 채널 값 자체는 안 보여준다(가리기 기능이 있는 값이다).
+        kfcudp$tell(client, P2PBanManager.msgKey("instant-p2p.msg.channel_applied"));
     }
     //?}
 
