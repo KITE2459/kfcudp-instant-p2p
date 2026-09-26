@@ -912,12 +912,15 @@ public class CustomRoomScreen extends Screen {
                 || this.publicRoom != KfcudpClient.isActivePublicRoom()
                 || this.forceRelay != kfc.udp.client.webrtc.P2PConfig.isRelayOnly()
                 || this.allowBroadcast != kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
+        // titleField는 이 메서드를 처음 부르는 init 시점(적용 버튼 직후)엔 아직 안 만들어져 있다 —
+        // null 검사 없이 읽어서 init이 중간에 터지고 화면 위젯이 통째로 사라진 적이 있다. 그 시점엔
+        // 어차피 입력란이 활성 제목 그대로라 비교할 게 없다.
         //? if >=26.1 {
-        /*if (!changed && this.publicRoom) {
+        /*if (!changed && this.publicRoom && this.titleField != null) {
             changed = !this.titleField.getValue().trim().equals(KfcudpClient.getActiveTitle());
         }
         *///?} else {
-        if (!changed && this.publicRoom) {
+        if (!changed && this.publicRoom && this.titleField != null) {
             changed = !this.titleField.getText().trim().equals(KfcudpClient.getActiveTitle());
         }
         //?}
