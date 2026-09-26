@@ -50,8 +50,11 @@ public final class P2PNet {
     public record RoomState(int maxPlayers, UUID hostUuid, boolean allowBroadcast,
                             Map<UUID, Integer> ranks) implements CustomPacketPayload {
 
-        public static final CustomPacketPayload.Type<RoomState> ID =
-                CustomPacketPayload.createType("instant-p2p:room_state");
+        // createType(String)은 문자열을 namespace 없는 path로 보고 minecraft: 를 붙인다 —
+        // "instant-p2p:room_state"를 그대로 넘기면 minecraft:instant-p2p:room_state가 되어
+        // path에 ':' 가 들어가 IdentifierException으로 게임이 안 뜬다. Identifier를 직접 만든다.
+        public static final CustomPacketPayload.Type<RoomState> ID = new CustomPacketPayload.Type<>(
+                net.minecraft.resources.Identifier.fromNamespaceAndPath("instant-p2p", "room_state"));
         public static final StreamCodec<FriendlyByteBuf, RoomState> CODEC =
                 CustomPacketPayload.codec(RoomState::write, RoomState::new);
 
@@ -89,8 +92,8 @@ public final class P2PNet {
     // ── 접속자 -> 방장: 추방/해제/강퇴 요청 ──────────────────────────────────
     public record Moderation(int action, UUID target) implements CustomPacketPayload {
 
-        public static final CustomPacketPayload.Type<Moderation> ID =
-                CustomPacketPayload.createType("instant-p2p:moderation");
+        public static final CustomPacketPayload.Type<Moderation> ID = new CustomPacketPayload.Type<>(
+                net.minecraft.resources.Identifier.fromNamespaceAndPath("instant-p2p", "moderation"));
         public static final StreamCodec<FriendlyByteBuf, Moderation> CODEC =
                 CustomPacketPayload.codec(Moderation::write, Moderation::new);
 
@@ -113,8 +116,11 @@ public final class P2PNet {
     public record RoomState(int maxPlayers, UUID hostUuid, boolean allowBroadcast,
                             Map<UUID, Integer> ranks) implements CustomPayload {
 
-        public static final CustomPayload.Id<RoomState> ID =
-                CustomPayload.id("instant-p2p:room_state");
+        // CustomPayload.id(String)은 문자열을 namespace 없는 path로 보고 minecraft: 를 붙인다 —
+        // "instant-p2p:room_state"를 그대로 넘기면 minecraft:instant-p2p:room_state가 되어
+        // path에 ':' 가 들어가 IdentifierException으로 게임이 안 뜬다. Identifier를 직접 만든다.
+        public static final CustomPayload.Id<RoomState> ID = new CustomPayload.Id<>(
+                net.minecraft.util.Identifier.of("instant-p2p", "room_state"));
         public static final PacketCodec<PacketByteBuf, RoomState> CODEC =
                 CustomPayload.codecOf(RoomState::write, RoomState::new);
 
@@ -152,8 +158,8 @@ public final class P2PNet {
     // ── 접속자 -> 방장: 추방/해제/강퇴 요청 ──────────────────────────────────
     public record Moderation(int action, UUID target) implements CustomPayload {
 
-        public static final CustomPayload.Id<Moderation> ID =
-                CustomPayload.id("instant-p2p:moderation");
+        public static final CustomPayload.Id<Moderation> ID = new CustomPayload.Id<>(
+                net.minecraft.util.Identifier.of("instant-p2p", "moderation"));
         public static final PacketCodec<PacketByteBuf, Moderation> CODEC =
                 CustomPayload.codecOf(Moderation::write, Moderation::new);
 
