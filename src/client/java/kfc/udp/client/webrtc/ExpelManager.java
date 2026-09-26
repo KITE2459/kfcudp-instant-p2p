@@ -5,7 +5,6 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import net.fabricmc.fabric.api.message.v1.ServerMessageEvents;
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,21 +75,6 @@ public final class ExpelManager {
 
     private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-expel");
 
-    private static final String EXPEL_MARKER = "kfcudp:expel:";
-    private static final String READMIT_MARKER = "kfcudp:readmit:";
-    /** 추방(EXPEL_MARKER)과 달리 재입장을 막지 않는 1회성 강퇴 — holders에 기록을 남기지 않는다
-     * (클래스 주석의 "차단"과는 별개 기능, BlockedPlayersScreen의 3번째 버튼 전용). */
-    private static final String KICK_MARKER = "kfcudp:kick:";
-    /** 접속 시 서버(방장)가 발급해 이 마커로 숨겨 보내는 세션 토큰 — 이걸 모르면 추방 요청 자체가
-     * 안 먹힌다. UUID만 아는 채로 채팅창에 kfcudp:expel:대상UUID를 손으로 쳐서 등급 검사만 우연히
-     * 통과하면 추방이 걸리던 문제(등급 있는 사람이 "차단" 버튼을 실제로 안 눌러도 발동 가능했음)를
-     * 막는다 — 이 토큰은 매 접속마다 무작위로 새로 발급되고 마커로만 오가서, 진짜 이 모드의 차단
-     * 버튼을 거치지 않고는 알아낼 방법이 없다. */
-    private static final String TOKEN_MARKER = "kfcudp:expeltoken:";
-    /** 접속자 UUID → 그 접속에 발급한 토큰(서버=방장 쪽에서만 씀). */
-    private static final Map<UUID, String> sessionTokens = new ConcurrentHashMap<>();
-    /** 이 클라이언트가 이번 접속에서 받은 자기 토큰 — 추방 요청을 보낼 때 같이 실어 보낸다. */
-    private static volatile String mySessionToken;
 
     // -------------------------------------------------------------------------
     // 추방 목록 — 접속자(등급자)가 "내가 추방 요청을 보낸 대상"을 내 로컬 파일에 독립적으로
@@ -170,8 +154,6 @@ public final class ExpelManager {
      * 사람이 걸어둔 추방을 풀 때 이 맵을 본다. */
     private static final Map<UUID, Set<UUID>> holders = new ConcurrentHashMap<>();
 
-    private enum Action { EXPEL, READMIT, KICK }
-
     private ExpelManager() {}
 
     /** 방장은 등급과 무관하게 최상위다 — 자기 방이라 개발자·서포터·방송인 누구든 강퇴·차단할 수
@@ -217,32 +199,43 @@ public final class ExpelManager {
 
     // ── 클라이언트 쪽: BlockedPlayersScreen의 차단/해제 버튼에서 호출 ──────────────────────────
 
-    /** 차단/해제 버튼을 눌렀을 때 — 내가 등급자면 숨은 채팅 마커로 서버(방장)에 추방을 요청한다.
+    /** 차단/해제 버튼을 눌렀을 때 — 내가 등급자면 전용 패킷으로 서버(방장)에 추방을 요청한다.
      * name은 expelled-players.json에 같이 적어 BlockedPlayersScreen이 이름을 보여줄 때 쓴다. */
-    public static void requestExpel(UUID target, String name) { rememberExpelledTarget(target, name); sendMarker(EXPEL_MARKER, target); }
-    public static void requestReadmit(UUID target) { forgetExpelledTarget(target); sendMarker(READMIT_MARKER, target); }
+    public static void requestExpel(UUID target, String name) {
+        rememberExpelledTarget(target, name);
+        request(P2PNet.ACTION_EXPEL, target);
+    }
+
+    public static void requestReadmit(UUID target) {
+        forgetExpelledTarget(target);
+        request(P2PNet.ACTION_READMIT, target);
+    }
+
     /** 1회성 강퇴 — 추방과 달리 아무 것도 기록하지 않는다(재접속 제한 없음, 재접속 시 다시 보낼 것도 없음). */
     public static void requestKick(UUID target) {
-        if (kickAsHost(target)) return;
-        sendMarker(KICK_MARKER, target);
+        request(P2PNet.ACTION_KICK, target);
     }
 
     /**
-     * 내가 방장이면 채팅 마커를 거치지 않고 내 서버에서 바로 강퇴한다 — {@link #sendMarker}는
-     * 방장이면 일부러 아무 것도 안 보내므로(그쪽 주석 참고) 이 경로가 없으면 방장의 강퇴 버튼은
-     * 눌러도 아무 일이 안 난다. 방장이 아니면 false를 돌려주고 원래 마커 경로를 타게 한다.
+     * 방장이면 내 서버에서 바로 처리하고, 접속자면 {@link P2PNet.Moderation} 패킷으로 방장에게 보낸다.
      * <p>
-     * 추방(EXPEL)은 이런 경로를 두지 않는다 — 방장의 차단은 이미 P2PBanManager.banPlayer(영구)
-     * + KfcudpClient.kickBlockedPlayer로 임시밴보다 강하게 처리되고, 그쪽이 내보내는 것과
-     * holders 등록이 겹치면 "온라인이 아닌데 holders에만 남는" 유령 추방이 생긴다.
+     * <b>방장의 추방(EXPEL)은 보내지 않는다</b> — 방장의 차단은 이미 P2PBanManager.banPlayer(영구)
+     * + KfcudpClient.kickBlockedPlayer로 임시밴보다 강하게 처리되고, 그쪽이 내보내는 것과 holders
+     * 등록이 겹치면 "온라인이 아닌데 holders에만 남는" 유령 추방이 생긴다. 강퇴(KICK)는 방장도
+     * 최상위 권한으로 쓸 수 있어야 하므로 그대로 실행한다.
      */
-    private static boolean kickAsHost(UUID target) {
-        if (!kfc.udp.client.KfcudpClient.isRoomActive()) return false;
-        MinecraftServer server = activeServer;
+    private static void request(int action, UUID target) {
+        if (kfc.udp.client.KfcudpClient.isRoomActive()) {
+            MinecraftServer server = activeServer;
+            UUID me = myUuid();
+            if (server == null || me == null || action == P2PNet.ACTION_EXPEL) return;
+            server.execute(() -> dispatch(server, me, action, target));
+            return;
+        }
+        if (!kfc.udp.client.DevBadge.isP2pSessionActive()) return;
         UUID me = myUuid();
-        if (server == null || me == null) return true; // 방장인 건 맞으니 마커로 새지 않게 true
-        server.execute(() -> kick(me, target, server));
-        return true;
+        if (me == null || priority(me) == 0) return;
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(new P2PNet.Moderation(action, target));
     }
 
     //? if >=26.1 {
@@ -257,31 +250,6 @@ public final class ExpelManager {
     }
     //?}
 
-    //? if >=26.1 {
-    /*private static void sendMarker(String prefix, UUID target) {
-        // 방장이 차단하면 kickBlockedPlayer가 이미 즉시 내보낸다 — 방장은 이미 방에 대한
-        // 전권이 있어 추방 요청이 필요 없고, 내보내는 것과 동시에 요청을 보내면 그 사이에 target이
-        // 사라져 "온라인이 아닌데 holders에만 등록"되는 유령 추방이 남을 수 있어 아예 안 보낸다.
-        if (kfc.udp.client.KfcudpClient.isRoomActive()) return;
-        net.minecraft.client.Minecraft client = net.minecraft.client.Minecraft.getInstance();
-        if (client.player == null || !kfc.udp.client.DevBadge.isP2pSessionActive()) return;
-        if (priority(client.player.getUUID()) == 0) return;
-        String token = mySessionToken;
-        if (token == null) return; // 접속 직후 토큰이 아직 안 왔으면(거의 없는 타이밍) 조용히 포기
-        client.player.connection.sendChat(prefix + token + ":" + target);
-    }
-    *///?} else {
-    private static void sendMarker(String prefix, UUID target) {
-        if (kfc.udp.client.KfcudpClient.isRoomActive()) return;
-        net.minecraft.client.MinecraftClient client = net.minecraft.client.MinecraftClient.getInstance();
-        if (client.player == null || !kfc.udp.client.DevBadge.isP2pSessionActive()) return;
-        if (priority(client.player.getUuid()) == 0) return;
-        String token = mySessionToken;
-        if (token == null) return;
-        client.player.networkHandler.sendChatMessage(prefix + token + ":" + target);
-    }
-    //?}
-
     // ── 서버(방장) 쪽: 등록은 KfcudpClient에서 register() 1회 호출 ──────────────────────────
 
     /** ServerPlayerEntity → MinecraftServer로 가는 메서드 이름이 1.21.6~1.21.8 구간에서만 달라서
@@ -292,152 +260,58 @@ public final class ExpelManager {
 
     public static void register() {
         load(); // expelled-players.json을 메모리로 읽어온다 — P2PBanManager.registerCommands()와 같은 타이밍.
-        ServerMessageEvents.ALLOW_CHAT_MESSAGE.register(ExpelManager::onChatMessage);
-        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            activeServer = server;
-            issueSessionToken(handler.player);
-        });
+        // 요청 수신 — 누가 보냈는지는 연결이 보증하므로 예전처럼 세션 토큰으로 증명할 필요가 없다
+        // (P2PNet 클래스 주석 참고). 패킷은 네트워크 스레드에서 올 수 있어 서버 스레드로 넘긴다.
+        net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.registerGlobalReceiver(
+                P2PNet.Moderation.ID, (payload, context) -> {
+                    MinecraftServer server = activeServer;
+                    if (server == null) return;
+                    var sender = context.player();
+                    server.execute(() -> handleRequest(server, sender, payload.action(), payload.target()));
+                });
+        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> activeServer = server);
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> onDisconnect(server, handler.player));
-        // 방장이 접속마다 몰래 발급해 보내는 토큰을 채팅에 안 띄우고 가로채 저장한다(KfcudpClient의
-        // CAPACITY_MARKER와 같은 요령) — 나(호스트 자신 포함, 자기 세션에도 JOIN이 불린다)도 이걸
-        // 받아야 추방 요청을 보낼 수 있다. 토큰을 받은 시점 = 방금 (재)접속했다는 뜻이라, 그 김에
-        // 내가 로컬에 갖고 있는 추방 목록(expelled-players.json) 전체를 다시 추방 요청으로
-        // 흘려보낸다 — 안 그러면 "추방을 건 등급자가 나갔다 다시 들어와도 예전 대상이 다시 안
-        // 쫓겨나는" 문제가 생긴다(나가면 그 즉시 풀리는데, 이 목록엔 그대로 남아있는데도 재접속이
-        // 그걸 다시 발동시켜주는 계기가 없었다). 차단 목록(P2PBanManager)이 아니라 추방 목록을
-        // 그대로 쓴다 — 차단은 유지한 채 BlockedPlayersScreen에서 추방만 해제(release)한 대상은
-        // 재접속해도 다시 안 쫓겨나야 한다. 온라인이 아니거나 등급이 부족한 대상은 서버가 알아서
-        // 조용히 무시하니 그냥 전체를 다시 보내도 안전하다.
-        net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
-            String s = message.getString();
-            if (!s.startsWith(TOKEN_MARKER)) return true;
-            mySessionToken = s.substring(TOKEN_MARKER.length());
+        // 내가 (재)접속한 순간, 로컬에 갖고 있는 추방 목록(expelled-players.json) 전체를 다시 추방
+        // 요청으로 흘려보낸다 — 안 그러면 "추방을 건 등급자가 나갔다 다시 들어와도 예전 대상이 다시
+        // 안 쫓겨나는" 문제가 생긴다(나가면 그 즉시 풀리는데, 이 목록엔 그대로 남아있는데도 재접속이
+        // 그걸 다시 발동시켜주는 계기가 없었다). 차단 목록(P2PBanManager)이 아니라 추방 목록을 그대로
+        // 쓴다 — 차단은 유지한 채 BlockedPlayersScreen에서 추방만 해제한 대상은 재접속해도 다시 안
+        // 쫓겨나야 한다. 온라인이 아니거나 등급이 부족한 대상은 방장이 알아서 조용히 무시하니 전체를
+        // 다시 보내도 안전하다. 예전엔 방장이 보내주는 세션 토큰의 도착이 이 계기였다.
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             for (ExpelledTarget t : myExpelledTargets()) {
-                sendMarker(EXPEL_MARKER, t.uuid()); // rememberExpelledTarget을 다시 부르지 않는다 — 이미 기록돼 있음
+                request(P2PNet.ACTION_EXPEL, t.uuid()); // rememberExpelledTarget을 다시 부르지 않는다 — 이미 기록돼 있음
             }
-            return false;
         });
     }
 
+    /** 요청 하나를 등급 검사 후 실행한다 — 서버(방장) 스레드에서만 불린다. */
     //? if >=26.1 {
-    /*private static void issueSessionToken(ServerPlayer player) {
-        String token = UUID.randomUUID().toString();
-        sessionTokens.put(player.getUUID(), token);
-        player.sendSystemMessage(Component.literal(TOKEN_MARKER + token));
-    }
+    /*private static void handleRequest(MinecraftServer server, ServerPlayer sender, int action, UUID target) {
     *///?} else {
-    private static void issueSessionToken(ServerPlayerEntity player) {
-        String token = UUID.randomUUID().toString();
-        sessionTokens.put(player.getUuid(), token);
-        player.sendMessage(Text.literal(TOKEN_MARKER + token), false);
-    }
+    private static void handleRequest(MinecraftServer server, ServerPlayerEntity sender, int action, UUID target) {
     //?}
-
-    //? if >=26.1 {
-    /*private static boolean onChatMessage(net.minecraft.network.chat.PlayerChatMessage message, ServerPlayer sender,
-                                         net.minecraft.network.chat.ChatType.Bound params) {
-        String content = message.signedContent();
-        if (content == null) return true;
-        if (content.startsWith(EXPEL_MARKER)) {
-            handleRequest(sender, content.substring(EXPEL_MARKER.length()), Action.EXPEL);
-            return false;
-        }
-        if (content.startsWith(READMIT_MARKER)) {
-            handleRequest(sender, content.substring(READMIT_MARKER.length()), Action.READMIT);
-            return false;
-        }
-        if (content.startsWith(KICK_MARKER)) {
-            handleRequest(sender, content.substring(KICK_MARKER.length()), Action.KICK);
-            return false;
-        }
-        return true;
-    }
-
-    private static void handleRequest(ServerPlayer sender, String body, Action action) {
-        MinecraftServer server = activeServer;
-        if (server == null) return;
-        int sep = body.indexOf(':');
-        if (sep < 0) return;
-        // 접속 때 발급한 토큰과 다르면 무시 — 채팅창에 손으로 kfcudp:expel:UUID를 쳐서 등급 검사만
-        // 우연히 통과시키는 걸 막는다(TOKEN_MARKER 필드 주석 참고). 진짜 "차단" 버튼을 거쳐야만
-        // 이 토큰을 붙여 보낼 수 있다.
-        String token = body.substring(0, sep);
-        if (!token.equals(sessionTokens.get(sender.getUUID()))) return;
-        UUID target;
-        try {
-            target = UUID.fromString(body.substring(sep + 1));
-        } catch (Exception e) {
-            return;
-        }
         // 내 등급이 상대보다 "엄격히" 높아야만 통과 — <=로 걸어서 동급끼리(둘 다 방송인끼리 등)
         // 서로 추방하는 것도 막는다. 등급 0(무등급)은 상대가 몇 등급이든 항상 0<=priority(target)이라
-        // 자동으로 걸러진다(따로 0 체크를 안 해도 됨).
-        int senderPriority = P2PBanManager.isHost(server, sender) ? HOST_PRIORITY : priority(sender.getUUID());
+        // 자동으로 걸러진다(따로 0 체크를 안 해도 됨). 방장은 등급과 무관하게 최상위다.
+        int senderPriority = P2PBanManager.isHost(server, sender) ? HOST_PRIORITY : priority(P2PBanManager.profileId(sender.getGameProfile()));
         if (senderPriority <= priority(target)) return;
         // 스트리머 등급(1)의 추방·강퇴 권한은 방송 허용 방에서만 유효 — 방송 중인 스트리머 보호가
-        // 목적이다(CustomRoomScreen.onStart의 스트리머 보호 안내 팝업 참고). 해제는 막지 않는다 —
-        // 방송 허용을 중간에 껐다고 이미 추방한 사람을 영영 못 풀게 되면 안 된다. 개발자·서포터는
-        // 무관하게 그대로.
-        if (action != Action.READMIT && senderPriority == 1 && !P2PConfig.isAllowBroadcast()) return;
-        switch (action) {
-            case EXPEL -> expel(sender.getUUID(), target, server);
-            case READMIT -> readmit(sender.getUUID(), target, server);
-            case KICK -> kick(sender.getUUID(), target, server);
-        }
-    }
-    *///?} else {
-    private static boolean onChatMessage(net.minecraft.network.message.SignedMessage message, ServerPlayerEntity sender,
-                                         net.minecraft.network.message.MessageType.Parameters params) {
-        String content = message.getSignedContent();
-        if (content == null) return true;
-        if (content.startsWith(EXPEL_MARKER)) {
-            handleRequest(sender, content.substring(EXPEL_MARKER.length()), Action.EXPEL);
-            return false;
-        }
-        if (content.startsWith(READMIT_MARKER)) {
-            handleRequest(sender, content.substring(READMIT_MARKER.length()), Action.READMIT);
-            return false;
-        }
-        if (content.startsWith(KICK_MARKER)) {
-            handleRequest(sender, content.substring(KICK_MARKER.length()), Action.KICK);
-            return false;
-        }
-        return true;
+        // 목적이다(CustomRoomScreen의 스트리머 보호 안내 팝업 참고). 해제는 막지 않는다 — 방송
+        // 허용을 중간에 껐다고 이미 추방한 사람을 영영 못 풀게 되면 안 된다. 개발자·서포터는 무관하게 그대로.
+        if (action != P2PNet.ACTION_READMIT && senderPriority == 1 && !P2PConfig.isAllowBroadcast()) return;
+        dispatch(server, P2PBanManager.profileId(sender.getGameProfile()), action, target);
     }
 
-    private static void handleRequest(ServerPlayerEntity sender, String body, Action action) {
-        MinecraftServer server = activeServer;
-        if (server == null) return;
-        int sep = body.indexOf(':');
-        if (sep < 0) return;
-        // 접속 때 발급한 토큰과 다르면 무시 — 채팅창에 손으로 kfcudp:expel:UUID를 쳐서 등급 검사만
-        // 우연히 통과시키는 걸 막는다(TOKEN_MARKER 필드 주석 참고). 진짜 "차단" 버튼을 거쳐야만
-        // 이 토큰을 붙여 보낼 수 있다.
-        String token = body.substring(0, sep);
-        if (!token.equals(sessionTokens.get(sender.getUuid()))) return;
-        UUID target;
-        try {
-            target = UUID.fromString(body.substring(sep + 1));
-        } catch (Exception e) {
-            return;
-        }
-        // 내 등급이 상대보다 "엄격히" 높아야만 통과 — <=로 걸어서 동급끼리(둘 다 방송인끼리 등)
-        // 서로 추방하는 것도 막는다. 등급 0(무등급)은 상대가 몇 등급이든 항상 0<=priority(target)이라
-        // 자동으로 걸러진다(따로 0 체크를 안 해도 됨).
-        int senderPriority = P2PBanManager.isHost(server, sender) ? HOST_PRIORITY : priority(sender.getUuid());
-        if (senderPriority <= priority(target)) return;
-        // 스트리머 등급(1)의 추방·강퇴 권한은 방송 허용 방에서만 유효 — 방송 중인 스트리머 보호가
-        // 목적이다(CustomRoomScreen.onStart의 스트리머 보호 안내 팝업 참고). 해제는 막지 않는다 —
-        // 방송 허용을 중간에 껐다고 이미 추방한 사람을 영영 못 풀게 되면 안 된다. 개발자·서포터는
-        // 무관하게 그대로.
-        if (action != Action.READMIT && senderPriority == 1 && !P2PConfig.isAllowBroadcast()) return;
+    /** 등급 검사를 통과한(또는 방장 본인의) 요청을 실제로 실행한다. */
+    private static void dispatch(MinecraftServer server, UUID senderUuid, int action, UUID target) {
         switch (action) {
-            case EXPEL -> expel(sender.getUuid(), target, server);
-            case READMIT -> readmit(sender.getUuid(), target, server);
-            case KICK -> kick(sender.getUuid(), target, server);
+            case P2PNet.ACTION_EXPEL -> expel(senderUuid, target, server);
+            case P2PNet.ACTION_READMIT -> readmit(senderUuid, target, server);
+            case P2PNet.ACTION_KICK -> kick(senderUuid, target, server);
+            default -> { }
         }
     }
-    //?}
 
     private static void expel(UUID expellerUuid, UUID targetUuid, MinecraftServer server) {
         //? if >=26.1 {
@@ -500,7 +374,6 @@ public final class ExpelManager {
     //? if >=26.1 {
     /*private static void onDisconnect(MinecraftServer server, ServerPlayer player) {
         UUID leaving = player.getUUID();
-        sessionTokens.remove(leaving); // 다음 접속 때 새로 발급받는다
         for (UUID target : java.util.List.copyOf(holders.keySet())) {
             readmit(leaving, target, server);
         }
@@ -508,7 +381,6 @@ public final class ExpelManager {
     *///?} else {
     private static void onDisconnect(MinecraftServer server, ServerPlayerEntity player) {
         UUID leaving = player.getUuid();
-        sessionTokens.remove(leaving); // 다음 접속 때 새로 발급받는다
         for (UUID target : java.util.List.copyOf(holders.keySet())) {
             readmit(leaving, target, server);
         }

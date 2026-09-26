@@ -163,7 +163,6 @@ public class KfcudpClient implements ClientModInitializer {
      * 이미 쓰고 있는 바닐라 채팅 경로를 재사용 — VILLASframework 시그널링 스키마는
      * 서버가 고정해 둔 거라 건드리지 않는 게 안전하다(WebRtcHost 클래스 주석 참고).
      */
-    private static final String CAPACITY_MARKER = "kfcudp:capacity:";
     /** 접속자 쪽에서 파싱해 캐시해 둔 방 정원. 0이면 아직 못 받음(host이거나, 마커 도착 전). */
     private static volatile int guestRoomMaxPlayers = 0;
     /** 마커로 같이 받은 방장 UUID — 접속자 화면 인원 표시에서 방장은 특혜자여도 세기 위해. */
@@ -173,14 +172,12 @@ public class KfcudpClient implements ClientModInitializer {
      * 권한을 실제와 맞게 보여주려면 알아야 한다({@link #isBroadcastAllowedHere}). */
     private static volatile boolean guestAllowBroadcast = false;
 
-    /** 정원 마커 본문: "정원:방장UUID:방송허용(1/0)". */
-    private static String capacityMarker(int max) {
-        String broadcast = ":" + (kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast() ? "1" : "0");
-        //? if >=26.1 {
-        /*return CAPACITY_MARKER + max + ":" + Minecraft.getInstance().getUser().getProfileId() + broadcast;
-        *///?} else {
-        return CAPACITY_MARKER + max + ":" + MinecraftClient.getInstance().getSession().getUuidOrNull() + broadcast;
-        //?}
+    /** 방장이 보낸 {@link kfc.udp.client.webrtc.P2PNet.RoomState}를 접속자 쪽에 반영한다 —
+     * RoomRoles의 수신 핸들러가 부른다. */
+    public static void applyGuestRoomState(int maxPlayers, java.util.UUID hostUuid, boolean allowBroadcast) {
+        guestRoomMaxPlayers = maxPlayers;
+        guestHostUuid = hostUuid;
+        guestAllowBroadcast = allowBroadcast;
     }
 
     /**
@@ -200,7 +197,7 @@ public class KfcudpClient implements ClientModInitializer {
      * refreshPauseMenuWidgets는 화면이 처음 열릴 때(AFTER_INIT)만 불려서 그
      * 순간의 인원 스냅샷을 텍스트에 박아넣고 끝이었다. ESC를 연 채로 누가
      * 들고나거나(호스트 기준 현재 인원) 방장이 정원을 바꿔도(접속자 기준
-     * 최대 인원 — applyRoomSettings의 CAPACITY_MARKER 재전송 참고) 화면을
+     * 최대 인원 — applyRoomSettings의 RoomRoles.broadcast 재전송 참고) 화면을
      * 닫았다 다시 열어야만 반영되던 문제를 고친다. 매 tick 다시 그리긴
      * 아까우니(버튼까지 다 지웠다 다시 만듦) 10틱(0.5초)마다만 갱신한다.
      */
@@ -572,6 +569,7 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
+        kfc.udp.client.webrtc.P2PNet.registerTypes();
         kfc.udp.client.webrtc.ExpelManager.register();
         kfc.udp.client.webrtc.RoomRoles.register();
 
@@ -655,18 +653,6 @@ public class KfcudpClient implements ClientModInitializer {
         // server.getPlayerCount()로는 "누가 들어왔는지"를 신뢰할 수 없다
         // (아직 안 나간 이전 게스트가 새 방의 참여자로 잘못 카운트됨).
         // 로그인 완료 이벤트로 실제 신규 참여만 감지한다.
-        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (activeInviteCode == null) return;
-            if (P2PBanManager.isHost(server, handler.player)) return;
-            // 접속자는 방 정원(activeMaxPlayers)을 직접 모르니, 채팅에는 안 뜨는
-            // 마커 메시지로 몰래 알려준다 — ClientReceiveMessageEvents.ALLOW_GAME에서
-            // 가로채 파싱한다. CAPACITY_MARKER 필드 주석 참고. guestRoomMaxPlayers는
-            // 접속자 클라이언트마다 각자 캐시하는 값이라, 예전에 "방 생애주기당 첫
-            // 접속자에게만" 보내던 건 버그였다 — 두 번째 이후 접속자는 이 마커를
-            // 영원히 못 받아 일시정지 화면 인원 표시가 안 떴다. 접속자마다 매번 보낸다.
-            handler.player.sendSystemMessage(Component.literal(capacityMarker(activeMaxPlayers)), false);
-        });
-
         // 공개 방 목록의 인원(현재/최대) 표기 갱신용 — 위 마커 전송과 달리 매번(첫
         // 접속자뿐 아니라 계속) 걸어야 하므로 별개 리스너로 둔다. 실제 재발행은
         // PublicRoomAnnouncer가 디바운스하므로 여기서 매번 불러도 부담 없다.
@@ -742,19 +728,6 @@ public class KfcudpClient implements ClientModInitializer {
             }, java.util.concurrent.CompletableFuture.delayedExecutor(100, java.util.concurrent.TimeUnit.MILLISECONDS, mc));
         });
 
-        // 방장이 몰래 보낸 정원(N/M) 마커 메시지를 채팅에 띄우지 않고 가로채 파싱한다.
-        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
-            String s = message.getString();
-            if (!s.startsWith(CAPACITY_MARKER)) return true;
-            try {
-                String[] v = s.substring(CAPACITY_MARKER.length()).split(":");
-                guestRoomMaxPlayers = Integer.parseInt(v[0]);
-                guestHostUuid = java.util.UUID.fromString(v[1]);
-                guestAllowBroadcast = "1".equals(v[2]);
-            } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ignored) {}
-            return false;
-        });
-
         // ban/whitelist 명령어 등록 (리슨 서버에서도 동작)
         // 밴/화이트리스트/정원 체크는 PlayerManagerMixin → P2PBanManager.checkCanJoin 에서
         // LOGIN 단계에 처리한다. JOIN 이벤트에서 끊으면 이미 월드에 스폰된 뒤라
@@ -798,6 +771,7 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.info("[instant-p2p] WebRTC bridge mod initialized");
+        kfc.udp.client.webrtc.P2PNet.registerTypes();
         kfc.udp.client.webrtc.ExpelManager.register();
         kfc.udp.client.webrtc.RoomRoles.register();
 
@@ -880,18 +854,6 @@ public class KfcudpClient implements ClientModInitializer {
         // server.getCurrentPlayerCount()로는 "누가 들어왔는지"를 신뢰할 수 없다
         // (아직 안 나간 이전 게스트가 새 방의 참여자로 잘못 카운트됨).
         // 로그인 완료 이벤트로 실제 신규 참여만 감지한다.
-        ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (activeInviteCode == null) return;
-            if (P2PBanManager.isHost(server, handler.player)) return;
-            // 접속자는 방 정원(activeMaxPlayers)을 직접 모르니, 채팅에는 안 뜨는
-            // 마커 메시지로 몰래 알려준다 — ClientReceiveMessageEvents.ALLOW_GAME에서
-            // 가로채 파싱한다. CAPACITY_MARKER 필드 주석 참고. guestRoomMaxPlayers는
-            // 접속자 클라이언트마다 각자 캐시하는 값이라, 예전에 "방 생애주기당 첫
-            // 접속자에게만" 보내던 건 버그였다 — 두 번째 이후 접속자는 이 마커를
-            // 영원히 못 받아 일시정지 화면 인원 표시가 안 떴다. 접속자마다 매번 보낸다.
-            handler.player.sendMessage(Text.literal(capacityMarker(activeMaxPlayers)), false);
-        });
-
         // 공개 방 목록의 인원(현재/최대) 표기 갱신용 — 위 마커 전송과 달리 매번(첫
         // 접속자뿐 아니라 계속) 걸어야 하므로 별개 리스너로 둔다. 실제 재발행은
         // PublicRoomAnnouncer가 디바운스하므로 여기서 매번 불러도 부담 없다.
@@ -965,19 +927,6 @@ public class KfcudpClient implements ClientModInitializer {
                     mc.player.sendMessage(Text.translatable("instant-p2p.msg.blocked_player_joined", name), false);
                 }
             }, java.util.concurrent.CompletableFuture.delayedExecutor(100, java.util.concurrent.TimeUnit.MILLISECONDS, mc));
-        });
-
-        // 방장이 몰래 보낸 정원(N/M) 마커 메시지를 채팅에 띄우지 않고 가로채 파싱한다.
-        ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
-            String s = message.getString();
-            if (!s.startsWith(CAPACITY_MARKER)) return true;
-            try {
-                String[] v = s.substring(CAPACITY_MARKER.length()).split(":");
-                guestRoomMaxPlayers = Integer.parseInt(v[0]);
-                guestHostUuid = java.util.UUID.fromString(v[1]);
-                guestAllowBroadcast = "1".equals(v[2]);
-            } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ignored) {}
-            return false;
         });
 
         // ban/whitelist 명령어 등록 (리슨 서버에서도 동작)
@@ -1213,15 +1162,12 @@ public class KfcudpClient implements ClientModInitializer {
                 // (호스트는 자기 세이브의 원래 게임모드를 그대로 유지).
                 if (!P2PBanManager.isHost(server, sp)) {
                     sp.setGameMode(gameMode);
-                    // 정원(N/M) 마커는 원래 JOIN 시점에만 보냈다 — 이미 접속 중인
-                    // 게스트는 방장이 정원을 바꿔도 그 사실을 알 방법이 없어서, ESC
-                    // 화면 인원 표시가 재접속해야만 바뀌었다. 바뀌었을 때만 다시 보낸다.
-                    // 방송 허용도 같은 마커에 실려 가므로(capacityMarker) 그게 바뀌어도 다시 보낸다 —
-                    // 안 그러면 방송인 접속자의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
-                    if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
-                        sp.sendSystemMessage(Component.literal(capacityMarker(maxPlayers)), false);
-                    }
                 }
+            }
+            // 방 상태(정원·방송 허용)가 바뀌면 접속자에게 다시 내려보낸다 — 이게 없으면 ESC 화면
+            // 인원 표시와 방송인의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
+            if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
+                kfc.udp.client.webrtc.RoomRoles.broadcast(server);
             }
         }));
 
@@ -1341,15 +1287,12 @@ public class KfcudpClient implements ClientModInitializer {
                 // (호스트는 자기 세이브의 원래 게임모드를 그대로 유지).
                 if (!P2PBanManager.isHost(server, sp)) {
                     sp.changeGameMode(gameMode);
-                    // 정원(N/M) 마커는 원래 JOIN 시점에만 보냈다 — 이미 접속 중인
-                    // 게스트는 방장이 정원을 바꿔도 그 사실을 알 방법이 없어서, ESC
-                    // 화면 인원 표시가 재접속해야만 바뀌었다. 바뀌었을 때만 다시 보낸다.
-                    // 방송 허용도 같은 마커에 실려 가므로(capacityMarker) 그게 바뀌어도 다시 보낸다 —
-                    // 안 그러면 방송인 접속자의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
-                    if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
-                        sp.sendMessage(Text.literal(capacityMarker(maxPlayers)), false);
-                    }
                 }
+            }
+            // 방 상태(정원·방송 허용)가 바뀌면 접속자에게 다시 내려보낸다 — 이게 없으면 ESC 화면
+            // 인원 표시와 방송인의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
+            if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
+                kfc.udp.client.webrtc.RoomRoles.broadcast(server);
             }
         }));
 

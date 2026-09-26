@@ -5,13 +5,11 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 //? if >=26.1 {
-/*import net.minecraft.network.chat.Component;
-import net.minecraft.server.MinecraftServer;
+/*import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 *///?} else {
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.network.ServerPlayerEntity;
-import net.minecraft.text.Text;
 //?}
 
 import java.util.LinkedHashMap;
@@ -32,10 +30,10 @@ import java.util.UUID;
  * 새로움), 반대로 "방장은 수락할 생각인데 {@code ExpelManager.sendMarker}가 조기 return해서 요청 자체가
  * 안 나감"(접속자 쪽이 더 낡음)이 생긴다. 판정하는 쪽과 그리는 쪽이 같은 값을 보게 만드는 게 이 클래스다.
  * <p>
- * <b>전달 방법</b> — 새 패킷을 만들지 않고 이미 쓰는 숨은 채팅 마커에 실어 보낸다
- * ({@code KfcudpClient.CAPACITY_MARKER}, {@link ExpelManager} TOKEN_MARKER와 같은 요령).
- * 내용은 <b>접속 중인 등급자만</b> {@code uuid=등급} 목록이라 보통 0~3명, 수십 바이트다. 등급 0은 아예
- * 안 실어 보내고 목록에 없으면 0으로 본다.
+ * <b>전달 방법</b> — 전용 패킷 {@link P2PNet.RoomState}로 보낸다(예전엔 숨은 채팅 마커였는데
+ * 위조가 가능해서 옮겼다 — P2PNet 클래스 주석 참고). 등급 목록에는 <b>접속 중인 등급자만</b> 담아
+ * 보통 0~3명이고, 등급 0은 아예 안 싣고 목록에 없으면 0으로 본다. 같은 패킷에 정원·방장 UUID·방송
+ * 허용도 함께 실려서, 접속자가 방 상태를 한 번에 받는다.
  * <p>
  * <b>방장은 이 값을 쓰지 않는다</b> — 방장이 곧 판정 주체라 자기 {@link Roles}를 그대로 봐야 한다
  * ({@link #rankOrNull}의 isRoomActive 분기). 안 그러면 방장이 자기가 뿌린 값을 다시 읽어서, 나중에
@@ -44,8 +42,6 @@ import java.util.UUID;
 public final class RoomRoles {
 
     private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-roles");
-
-    private static final String MARKER = "kfcudp:roles:";
 
     /** 방장이 알려준 등급 — uuid → 1~3. 등급 0은 안 실려오므로 키가 없으면 0이다. */
     private static volatile Map<UUID, Integer> ranks = Map.of();
@@ -76,12 +72,8 @@ public final class RoomRoles {
 
     /** KfcudpClient.onInitializeClient에서 ExpelManager.register()와 함께 1회 부른다. */
     public static void register() {
-        net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents.ALLOW_GAME.register((message, overlay) -> {
-            String s = message.getString();
-            if (!s.startsWith(MARKER)) return true;
-            apply(s.substring(MARKER.length()));
-            return false;
-        });
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.registerGlobalReceiver(
+                P2PNet.RoomState.ID, (payload, context) -> apply(payload));
         net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> clear());
 
         // 방장 쪽: 접속자 구성이 바뀌었으니 전원에게 새로 뿌린다. 목록이 "접속 중인 등급자"라서
@@ -114,63 +106,61 @@ public final class RoomRoles {
         }));
     }
 
-    private static void apply(String payload) {
-        Map<UUID, Integer> parsed = new LinkedHashMap<>();
-        for (String entry : payload.split(",")) {
-            if (entry.isEmpty()) continue;
-            int eq = entry.indexOf('=');
-            if (eq <= 0) continue;
-            try {
-                parsed.put(UUID.fromString(entry.substring(0, eq)), Integer.parseInt(entry.substring(eq + 1)));
-            } catch (Exception ignored) {
-                // 한 줄이 깨졌다고 나머지까지 버리지 않는다(Roles.parseUuids와 같은 이유).
-            }
-        }
-        ranks = Map.copyOf(parsed);
+    private static void apply(P2PNet.RoomState state) {
+        ranks = state.ranks();
         received = true;
+        // 정원·방장 UUID·방송 허용도 같은 패킷에 실려 온다 — 예전엔 kfcudp:capacity: 마커가 따로
+        // 날아와서 도착 순서를 신경 써야 했다.
+        kfc.udp.client.KfcudpClient.applyGuestRoomState(state.maxPlayers(), state.hostUuid(), state.allowBroadcast());
         // 접속마다 여러 번 오는 값이라 INFO로 찍으면 로그만 지저분해진다 — roles.json이 실제로
         // 바뀌었는지는 Roles의 "[roles] updated"가 알려주므로 여기선 DEBUG로 남긴다.
-        LOG.debug("[roles] room ranks from host: {}", ranks);
+        LOG.debug("[roles] room state from host: max={} ranks={}", state.maxPlayers(), ranks);
     }
 
     // ── 방장 쪽: 목록을 만들어 접속자 전원에게 뿌린다 ────────────────────────────
 
-    /** {@code uuid=등급,uuid=등급} — 등급 0은 넣지 않는다(없으면 0으로 읽힌다). */
-    private static String payload(java.util.List<UUID> online) {
-        StringBuilder sb = new StringBuilder();
+    /** 등급 0은 목록에 넣지 않는다 — 받는 쪽은 키가 없으면 0으로 읽는다({@link #rankOrNull}). */
+    private static Map<UUID, Integer> rankMap(java.util.List<UUID> online) {
+        Map<UUID, Integer> out = new LinkedHashMap<>();
         for (UUID id : online) {
             int rank = ExpelManager.priority(id); // 방장이므로 자기 Roles 사본으로 계산된다
-            if (rank <= 0) continue;
-            if (sb.length() > 0) sb.append(',');
-            sb.append(id).append('=').append(rank);
+            if (rank > 0) out.put(id, rank);
         }
-        return sb.toString();
+        return out;
+    }
+
+    private static P2PNet.RoomState state(java.util.List<UUID> online) {
+        return new P2PNet.RoomState(
+                kfc.udp.client.KfcudpClient.getActiveMaxPlayers(),
+                kfc.udp.client.KfcudpClient.currentHostUuid(),
+                P2PConfig.isAllowBroadcast(),
+                rankMap(online));
     }
 
     //? if >=26.1 {
-    /*private static void broadcast(MinecraftServer server) {
+    /*public static void broadcast(MinecraftServer server) {
         java.util.List<UUID> online = new java.util.ArrayList<>();
         for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));
         }
-        String body = MARKER + payload(online);
+        P2PNet.RoomState state = state(online);
         for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
             // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
             if (P2PBanManager.isHost(server, sp)) continue;
-            sp.sendSystemMessage(Component.literal(body));
+            net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(sp, state);
         }
     }
     *///?} else {
-    private static void broadcast(MinecraftServer server) {
+    public static void broadcast(MinecraftServer server) {
         java.util.List<UUID> online = new java.util.ArrayList<>();
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));
         }
-        String body = MARKER + payload(online);
+        P2PNet.RoomState state = state(online);
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
             // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
             if (P2PBanManager.isHost(server, sp)) continue;
-            sp.sendMessage(Text.literal(body), false);
+            net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(sp, state);
         }
     }
     //?}
