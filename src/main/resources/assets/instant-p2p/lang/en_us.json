@@ -17,6 +17,7 @@
   "instant-p2p.custom_room.restart": "Regen Invite",
   "instant-p2p.custom_room.restart_warning": "⚠",
   "instant-p2p.custom_room.restart_tooltip": "Existing connections will drop",
+  "instant-p2p.custom_room.apply_disabled_tooltip": "No changes to apply (the channel applies as soon as you press Done)",
   "instant-p2p.custom_room.room_options": "Room Options",
   "instant-p2p.custom_room.allow_commands": "Allow Commands",
   "instant-p2p.custom_room.allow_commands_tooltip": "Guests can use commands (cheats) too",

@@ -17,6 +17,7 @@
   "instant-p2p.custom_room.restart": "초대코드 재생성",
   "instant-p2p.custom_room.restart_warning": "⚠",
   "instant-p2p.custom_room.restart_tooltip": "기존 연결이 끊어집니다",
+  "instant-p2p.custom_room.apply_disabled_tooltip": "바뀐 설정이 없습니다 (채널은 완료를 누르면 바로 적용됩니다)",
   "instant-p2p.custom_room.room_options": "방 옵션",
   "instant-p2p.custom_room.allow_commands": "명령어 허용",
   "instant-p2p.custom_room.allow_commands_tooltip": "접속자도 명령어(치트)를 쓸 수 있습니다",

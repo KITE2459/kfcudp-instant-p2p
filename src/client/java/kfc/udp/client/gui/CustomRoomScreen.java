@@ -85,6 +85,7 @@ public class CustomRoomScreen extends Screen {
     private static final Component RESTART_TEXT       = Component.translatable("instant-p2p.custom_room.restart");
     private static final Component RESTART_WARNING_TEXT = Component.translatable("instant-p2p.custom_room.restart_warning");
     private static final Component RESTART_TOOLTIP_TEXT = Component.translatable("instant-p2p.custom_room.restart_tooltip");
+    private static final Component APPLY_DISABLED_TOOLTIP_TEXT = Component.translatable("instant-p2p.custom_room.apply_disabled_tooltip");
     private static final Component PUBLIC_TEXT        = Component.translatable("instant-p2p.custom_room.public_allow");
     private static final Component PUBLIC_TOOLTIP_TEXT = Component.translatable("instant-p2p.custom_room.public_allow_tooltip");
     private static final Component TITLE_PLACEHOLDER_TEXT = Component.translatable("instant-p2p.custom_room.title_placeholder");
@@ -107,6 +108,7 @@ public class CustomRoomScreen extends Screen {
     private static final Text RESTART_TEXT       = Text.translatable("instant-p2p.custom_room.restart");
     private static final Text RESTART_WARNING_TEXT = Text.translatable("instant-p2p.custom_room.restart_warning");
     private static final Text RESTART_TOOLTIP_TEXT = Text.translatable("instant-p2p.custom_room.restart_tooltip");
+    private static final Text APPLY_DISABLED_TOOLTIP_TEXT = Text.translatable("instant-p2p.custom_room.apply_disabled_tooltip");
     private static final Text PUBLIC_TEXT        = Text.translatable("instant-p2p.custom_room.public_allow");
     private static final Text PUBLIC_TOOLTIP_TEXT = Text.translatable("instant-p2p.custom_room.public_allow_tooltip");
     private static final Text TITLE_PLACEHOLDER_TEXT = Text.translatable("instant-p2p.custom_room.title_placeholder");
@@ -261,8 +263,8 @@ public class CustomRoomScreen extends Screen {
             this.settingsApplyButton = Button.builder(TITLE_APPLY_TEXT, btn -> this.onApplyButtonClicked())
                     .bounds(cx - 155, this.buttonsY, 150, 20)
                     .build();
-            this.settingsApplyButton.active = false; // 초기 값 = 지금 설정과 같아 바뀐 게 없음
             this.addRenderableWidget(this.settingsApplyButton);
+            this.refreshSettingsApplyButton(); // 초기 활성 여부 + 비활성 툴팁을 여기서 정한다
         }
 
         this.addRenderableWidget(
@@ -416,8 +418,8 @@ public class CustomRoomScreen extends Screen {
             this.settingsApplyButton = ButtonWidget.builder(TITLE_APPLY_TEXT, btn -> this.onApplyButtonClicked())
                     .dimensions(cx - 155, this.buttonsY, 150, 20)
                     .build();
-            this.settingsApplyButton.active = false; // 초기 값 = 지금 설정과 같아 바뀐 게 없음
             this.addDrawableChild(this.settingsApplyButton);
+            this.refreshSettingsApplyButton(); // 초기 활성 여부 + 비활성 툴팁을 여기서 정한다
         }
 
         this.addDrawableChild(
@@ -572,8 +574,8 @@ public class CustomRoomScreen extends Screen {
             this.settingsApplyButton = ButtonWidget.builder(TITLE_APPLY_TEXT, btn -> this.onApplyButtonClicked())
                     .dimensions(cx - 155, this.buttonsY, 150, 20)
                     .build();
-            this.settingsApplyButton.active = false; // 초기 값 = 지금 설정과 같아 바뀐 게 없음
             this.addDrawableChild(this.settingsApplyButton);
+            this.refreshSettingsApplyButton(); // 초기 활성 여부 + 비활성 툴팁을 여기서 정한다
         }
 
         this.addDrawableChild(
@@ -920,6 +922,15 @@ public class CustomRoomScreen extends Screen {
         }
         //?}
         this.settingsApplyButton.active = changed;
+        // 꺼져 있으면 왜 꺼졌는지 알려준다 — 채널만 바꾼 사람이 "적용이 안 된다"고 읽던 자리다
+        // (채널은 ChannelScreen에서 완료를 누르는 순간 이미 반영되므로 여기 남을 변경이 없다).
+        //? if >=26.1 {
+        /*this.settingsApplyButton.setTooltip(changed ? null
+                : net.minecraft.client.gui.components.Tooltip.create(APPLY_DISABLED_TOOLTIP_TEXT));
+        *///?} else {
+        this.settingsApplyButton.setTooltip(changed ? null
+                : net.minecraft.client.gui.tooltip.Tooltip.of(APPLY_DISABLED_TOOLTIP_TEXT));
+        //?}
     }
 
     //? if >=26.1 {
