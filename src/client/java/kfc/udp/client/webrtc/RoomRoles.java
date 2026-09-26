@@ -148,7 +148,7 @@ public final class RoomRoles {
     }
 
     //? if >=26.1 {
-    /*public static void broadcast(MinecraftServer server) {
+    /*private static void broadcast(MinecraftServer server) {
         java.util.List<UUID> online = new java.util.ArrayList<>();
         for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));
@@ -161,7 +161,7 @@ public final class RoomRoles {
         }
     }
     *///?} else {
-    public static void broadcast(MinecraftServer server) {
+    private static void broadcast(MinecraftServer server) {
         java.util.List<UUID> online = new java.util.ArrayList<>();
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));

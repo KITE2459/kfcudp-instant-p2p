@@ -30,9 +30,10 @@ import java.util.concurrent.Executors;
  * <p>
  * DevNameMixin/DevBadgeMixin이 이름 하나 그릴 때마다 {@link #isDev}/{@link #isSupporter}를
  * 부르지만(매 프레임 가능) 이건 그냥 메모리 Set.contains라 네트워크와 무관 — 실제 새로고침은
- * 주기적 타이머가 아니라 {@link #refreshAsync()} 호출로만 일어난다. 배지가 실제로 쓰이는 시점은
- * instant-p2p 방을 열거나(WebRtcBridge.startHost) 들어갈 때(WebRtcBridge.start)뿐이라, 그 두
- * 지점에서만 새로고침을 걸어 방을 안 켜고 있는 동안은 네트워크를 아예 안 탄다.
+ * 주기적 타이머가 아니라 명시적 호출로만 일어난다 — 방을 열거나 들어갈 때
+ * ({@code WebRtcBridge.startHost}/{@code start})의 {@link #refreshAsync()}, 그리고 방장이 접속
+ * 요청을 처리하기 직전의 {@link #refreshBlocking}({@code RoomRoles.ensureFreshForLogin})뿐이다.
+ * 방을 안 켜고 있는 동안은 네트워크를 아예 안 탄다.
  * <p>
  * 로컬 파일 캐시는 일부러 안 둔다 — 새로고침이 실패해도(성공했을 때만 덮어쓰므로) 그 세션
  * 안에서는 마지막 성공값이 메모리에 그대로 남아 있어서, 파일로 남기는 이득은 "이번 실행에서
@@ -86,25 +87,11 @@ public final class Roles {
         return id != null && streamer.contains(id);
     }
 
-    /** 개발자 또는 서포터 — 방 정원 무시 같은 기존 DevBadge 특혜 대상. */
-    public static boolean hasBadge(UUID id) {
-        return isDev(id) || isSupporter(id);
-    }
-
     /** instant-p2p 방을 열거나(WebRtcBridge.startHost) 들어갈 때(WebRtcBridge.start)만 부른다 —
      * 그 외엔 배지가 어차피 안 쓰이니 네트워크를 탈 이유가 없다. 백그라운드 스레드에서 돌고 즉시
      * 리턴하므로 호출부를 막지 않는다. */
     public static void refreshAsync() {
         EXECUTOR.execute(Roles::refreshNow);
-    }
-
-    /** 새로고침 결과가 <b>실제로 달라졌을 때만</b> onChanged를 부른다 — 방장이 접속자에게 등급을
-     * 다시 뿌리는 데 쓴다(RoomRoles 참고). 콜백은 이 클래스의 전용 스레드에서 돌므로, 서버/클라
-     * 상태를 만지려면 호출부가 알맞은 스레드로 넘겨야 한다. */
-    public static void refreshAsync(Runnable onChanged) {
-        EXECUTOR.execute(() -> {
-            if (refreshNow()) onChanged.run();
-        });
     }
 
     /**

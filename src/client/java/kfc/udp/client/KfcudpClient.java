@@ -1019,17 +1019,16 @@ public class KfcudpClient implements ClientModInitializer {
     //?}
 
     /**
-     * 방을 여는 순간 방장 자신의 탭 목록 항목을 강제로 다시 그리게 한다 — 탭 목록 이름은 접속
-     * 시점에 딱 한 번만 계산돼 전송되는데(DevBadgeMixin 클래스 주석 참고), 방장은 이미 싱글
-     * 플레이로 로그인해 있던 상태에서 방만 여는 거라 그 최초 계산 시점엔 DevBadge.isHostPlayer가
-     * 아직 false였다 — 그래서 방장 본인의 📶 표시가 이름표·채팅엔 바로 붙어도(둘 다 매번 새로
-     * 계산됨) 탭 목록엔 안 붙고, 다른 계기로 우연히 재전송되기 전까진 그대로였다.
-     */
-    /**
-     * 접속자 <b>전원</b>의 탭 목록 표시 이름을 다시 보낸다 — roles.json이 바뀌어 등급 배지가
-     * 달라졌을 때 이미 캐시된 옛 배지를 고치는 용도(RoomRoles.ensureFreshForLogin이 부른다).
-     * 위 kfcudp$refreshHostTabList와 같은 이유로 필요하다: 탭 목록 이름은 접속 시점에 한 번만
-     * 계산돼 전송되므로, 등급이 바뀌어도 재전송 없이는 방이 닫힐 때까지 그대로 남는다.
+     * 접속 중인 <b>전원</b>의 탭 목록 표시 이름을 다시 보낸다.
+     * <p>
+     * 탭 목록 이름은 접속 시점에 딱 한 번만 계산돼 전송된다(DevBadgeMixin 클래스 주석 참고) —
+     * 그 뒤에 배지가 달라지면 재전송 없이는 방이 닫힐 때까지 옛 배지가 그대로 남는다. 두 경우에 쓴다:
+     * <ul>
+     *   <li>방을 여는 순간 — 방장은 이미 싱글플레이로 로그인해 있던 상태에서 방만 여는 거라, 최초
+     *       계산 시점엔 DevBadge.isHostPlayer가 아직 false였다. 그래서 방장 본인의 📶가 이름표·
+     *       채팅엔 바로 붙어도(둘 다 매번 새로 계산됨) 탭 목록엔 안 붙었다.</li>
+     *   <li>roles.json이 바뀌어 등급 배지가 달라졌을 때(RoomRoles.ensureFreshForLogin).</li>
+     * </ul>
      */
     //? if >=26.1 {
     /*public static void kfcudp$refreshTabList(net.minecraft.server.MinecraftServer server) {
@@ -1046,22 +1045,6 @@ public class KfcudpClient implements ClientModInitializer {
                     new net.minecraft.network.packet.s2c.play.PlayerListS2CPacket(
                             net.minecraft.network.packet.s2c.play.PlayerListS2CPacket.Action.UPDATE_DISPLAY_NAME, sp));
         }
-    }
-    //?}
-
-    //? if >=26.1 {
-    /*private static void kfcudp$refreshHostTabList(IntegratedServer server, java.util.UUID hostUuid) {
-        net.minecraft.server.level.ServerPlayer sp = server.getPlayerList().getPlayer(hostUuid);
-        if (sp != null) server.getPlayerList().broadcastAll(
-                new net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket(
-                        net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket.Action.UPDATE_DISPLAY_NAME, sp));
-    }
-    *///?} else {
-    private static void kfcudp$refreshHostTabList(IntegratedServer server, java.util.UUID hostUuid) {
-        ServerPlayerEntity sp = server.getPlayerManager().getPlayer(hostUuid);
-        if (sp != null) server.getPlayerManager().sendToAll(
-                new net.minecraft.network.packet.s2c.play.PlayerListS2CPacket(
-                        net.minecraft.network.packet.s2c.play.PlayerListS2CPacket.Action.UPDATE_DISPLAY_NAME, sp));
     }
     //?}
 
@@ -1179,7 +1162,7 @@ public class KfcudpClient implements ClientModInitializer {
         activePublicRoom = publicRoom;
         activeTitle = title;
         activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
-        kfcudp$refreshHostTabList(server, kfcudp$uuid(client.player));
+        kfcudp$refreshTabList(server);
 
         // 초대 코드 자체는 채팅에 안 띄운다(화면 공유·방송으로 새지 않게) — 누르면 클립보드로만 복사된다.
         kfcudp$tell(client, kfcudp$inviteMessage(code));

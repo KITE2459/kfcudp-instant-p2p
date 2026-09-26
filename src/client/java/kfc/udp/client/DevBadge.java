@@ -27,16 +27,13 @@ import java.util.UUID;
  */
 public final class DevBadge {
 
-    /** 특혜(방 정원 무시 + 인원 수에서 빠짐) 스위치 — false면 표시만 남고 특혜는 전부 꺼진다. */
+    /** 특혜(방 정원 무시) 스위치 — false면 표시만 남고 특혜는 꺼진다. 인원 수에서 빼주는 특혜는
+     * 없다(등급과 무관하게 전부 센다 — KfcudpClient.activeGuestCount 주석 참고). */
     public static final boolean PERKS_ENABLED = true;
 
     private DevBadge() {}
 
-    public static boolean hasBadge(UUID id) {
-        return kfc.udp.client.webrtc.Roles.hasBadge(id);
-    }
-
-    /** 이름에 배지가 붙는 대상 전체 — 개발자·서포터·방송인·방장. hasBadge와 달리 방 정원 특혜는 안 준다. */
+    /** 이름에 배지가 붙는 대상 전체 — 개발자·서포터·방송인·방장. hasPerk와 달리 방 정원 특혜는 안 준다. */
     public static boolean shouldDecorate(UUID id) {
         return roleSuffix(id) != null || isHostPlayer(id);
     }
@@ -46,9 +43,13 @@ public final class DevBadge {
         return id != null && id.equals(kfc.udp.client.KfcudpClient.currentHostUuid());
     }
 
-    /** 방 정원을 무시하고 들어오며 인원 수에도 세지 않는다. */
+    /** 방 정원을 무시하고 들어온다(개발자·서포터) — 들어간 뒤엔 등급과 무관하게 한 자리를
+     * 그대로 차지한다. 등급 판정은 {@link #roleSuffix} 하나만 거치므로, 방에 있는 동안은
+     * 방장이 내려준 등급이 여기에도 그대로 반영된다. */
     public static boolean hasPerk(UUID id) {
-        return PERKS_ENABLED && hasBadge(id);
+        if (!PERKS_ENABLED) return false;
+        String suffix = roleSuffix(id);
+        return "dev".equals(suffix) || "supporter".equals(suffix);
     }
 
     /**
