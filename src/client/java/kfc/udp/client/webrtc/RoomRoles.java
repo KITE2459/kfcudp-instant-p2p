@@ -128,7 +128,9 @@ public final class RoomRoles {
         }
         ranks = Map.copyOf(parsed);
         received = true;
-        LOG.info("[roles] room ranks from host: {}", ranks.size());
+        // 접속마다 여러 번 오는 값이라 INFO로 찍으면 로그만 지저분해진다 — roles.json이 실제로
+        // 바뀌었는지는 Roles의 "[roles] updated"가 알려주므로 여기선 DEBUG로 남긴다.
+        LOG.debug("[roles] room ranks from host: {}", ranks);
     }
 
     // ── 방장 쪽: 목록을 만들어 접속자 전원에게 뿌린다 ────────────────────────────
@@ -153,6 +155,8 @@ public final class RoomRoles {
         }
         String body = MARKER + payload(online);
         for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
+            // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
+            if (P2PBanManager.isHost(server, sp)) continue;
             sp.sendSystemMessage(Component.literal(body));
         }
     }
@@ -164,6 +168,8 @@ public final class RoomRoles {
         }
         String body = MARKER + payload(online);
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
+            // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
+            if (P2PBanManager.isHost(server, sp)) continue;
             sp.sendMessage(Text.literal(body), false);
         }
     }
