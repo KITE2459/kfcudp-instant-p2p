@@ -291,6 +291,11 @@ public final class ExpelManager {
     *///?} else {
     private static void handleRequest(MinecraftServer server, ServerPlayerEntity sender, int action, UUID target) {
     //?}
+        // 방 상태 요청은 등급과 무관하다 — 누구나 자기 화면을 맞추려고 보낼 수 있다.
+        if (action == P2PNet.ACTION_REQUEST_STATE) {
+            RoomRoles.broadcast(server);
+            return;
+        }
         // 내 등급이 상대보다 "엄격히" 높아야만 통과 — <=로 걸어서 동급끼리(둘 다 방송인끼리 등)
         // 서로 추방하는 것도 막는다. 등급 0(무등급)은 상대가 몇 등급이든 항상 0<=priority(target)이라
         // 자동으로 걸러진다(따로 0 체크를 안 해도 됨). 방장은 등급과 무관하게 최상위다.

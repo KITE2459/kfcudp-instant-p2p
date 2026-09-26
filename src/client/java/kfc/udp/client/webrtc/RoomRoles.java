@@ -79,8 +79,19 @@ public final class RoomRoles {
         // 방장 쪽: 접속자 구성이 바뀌었으니 전원에게 새로 뿌린다. 목록이 "접속 중인 등급자"라서
         // 새로 들어온 사람을 기존 접속자들도 알아야 한다. roles.json 새로고침은 이 시점이 아니라
         // 더 앞(LOGIN, ensureFreshForLogin)에서 이미 끝나 있다.
+        // 접속자 쪽: 접속이 끝난 순간 방장에게 방 상태를 직접 요청한다.
+        // <b>방장이 ServerPlayConnectionEvents.JOIN에서 먼저 보내는 것만으로는 안 됐다</b> — 그
+        // 시점엔 아직 커스텀 페이로드가 접속자에게 확실히 전달되지 않아서, 정원 표기·방장 배지·
+        // 스트리머 보호 표시가 "방 설정을 한 번 바꿀 때까지" 안 떴다(설정 변경 경로는 server.execute
+        // 를 거쳐 한참 뒤에 보내므로 됐다). 요청은 접속자가 보내는 거라 그 경쟁을 아예 안 탄다.
+        net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents.JOIN.register((handler, sender, client) ->
+                net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking.send(
+                        new P2PNet.Moderation(P2PNet.ACTION_REQUEST_STATE, new UUID(0L, 0L))));
+
+        // 방장 쪽: 접속자 구성이 바뀌었으니 기존 접속자들에게도 새로 뿌린다(목록이 "접속 중인
+        // 등급자"라서 새로 들어온 사람을 기존 접속자도 알아야 한다). 한 틱 미뤄 보낸다.
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> {
-            if (kfc.udp.client.KfcudpClient.isRoomActive()) broadcast(server);
+            if (kfc.udp.client.KfcudpClient.isRoomActive()) server.execute(() -> broadcast(server));
         });
     }
 
@@ -114,7 +125,7 @@ public final class RoomRoles {
         kfc.udp.client.KfcudpClient.applyGuestRoomState(state.maxPlayers(), state.hostUuid(), state.allowBroadcast());
         // 접속마다 여러 번 오는 값이라 INFO로 찍으면 로그만 지저분해진다 — roles.json이 실제로
         // 바뀌었는지는 Roles의 "[roles] updated"가 알려주므로 여기선 DEBUG로 남긴다.
-        LOG.debug("[roles] room state from host: max={} ranks={}", state.maxPlayers(), ranks);
+        LOG.info("[DIAG-RECV] room state: max={} host={} broadcast={} ranks={}", state.maxPlayers(), state.hostUuid(), state.allowBroadcast(), ranks);
     }
 
     // ── 방장 쪽: 목록을 만들어 접속자 전원에게 뿌린다 ────────────────────────────
@@ -144,11 +155,15 @@ public final class RoomRoles {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));
         }
         P2PNet.RoomState state = state(online);
+        int sent = 0;
         for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
             // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
             if (P2PBanManager.isHost(server, sp)) continue;
             net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(sp, state);
+            sent++;
         }
+        LOG.info("[DIAG-SEND] online={} sent={} max={} host={} broadcast={} ranks={}",
+                online.size(), sent, state.maxPlayers(), state.hostUuid(), state.allowBroadcast(), state.ranks());
     }
     *///?} else {
     public static void broadcast(MinecraftServer server) {
@@ -157,11 +172,15 @@ public final class RoomRoles {
             online.add(P2PBanManager.profileId(sp.getGameProfile()));
         }
         P2PNet.RoomState state = state(online);
+        int sent = 0;
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
             // 방장은 이 값을 쓰지 않으니(rankOrNull의 isRoomActive 분기) 보낼 필요도 없다.
             if (P2PBanManager.isHost(server, sp)) continue;
             net.fabricmc.fabric.api.networking.v1.ServerPlayNetworking.send(sp, state);
+            sent++;
         }
+        LOG.info("[DIAG-SEND] online={} sent={} max={} host={} broadcast={} ranks={}",
+                online.size(), sent, state.maxPlayers(), state.hostUuid(), state.allowBroadcast(), state.ranks());
     }
     //?}
 }

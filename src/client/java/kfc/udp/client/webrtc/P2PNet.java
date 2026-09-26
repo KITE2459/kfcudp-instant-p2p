@@ -44,6 +44,10 @@ public final class P2PNet {
     public static final int ACTION_EXPEL = 0;
     public static final int ACTION_READMIT = 1;
     public static final int ACTION_KICK = 2;
+    /** 등급과 무관하게 누구나 보낼 수 있는 요청 — 방장이 {@link RoomState}를 다시 내려보낸다.
+     * 접속자가 자기 접속 완료 시점에 직접 요청하므로, 방장이 JOIN에서 먼저 보내려 할 때 생기는
+     * 채널 등록 타이밍 경쟁을 타지 않는다(RoomRoles.register 주석 참고). target은 안 쓴다. */
+    public static final int ACTION_REQUEST_STATE = 3;
 
     //? if >=26.1 {
     /*// ── 방장 -> 접속자: 방 상태 한 묶음 ──────────────────────────────────────
