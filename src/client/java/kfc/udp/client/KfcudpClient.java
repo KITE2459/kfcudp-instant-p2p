@@ -4,6 +4,7 @@ import kfc.udp.client.gui.CustomRoomScreen;
 import kfc.udp.client.webrtc.P2PBanManager;
 import kfc.udp.client.webrtc.P2PWhitelistManager;
 import kfc.udp.client.webrtc.WebRtcBridge;
+import kfc.udp.client.quic.QuicBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
@@ -768,6 +769,8 @@ public class KfcudpClient implements ClientModInitializer {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             WebRtcBridge.stop();
             WebRtcBridge.stopHost();
+            QuicBridge.stop();
+            QuicBridge.stopHost();
         }, "kfcudp-shutdown"));
     }
     *///?} else {
@@ -969,6 +972,8 @@ public class KfcudpClient implements ClientModInitializer {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             WebRtcBridge.stop();
             WebRtcBridge.stopHost();
+            QuicBridge.stop();
+            QuicBridge.stopHost();
         }, "kfcudp-shutdown"));
     }
     //?}
@@ -1091,6 +1096,14 @@ public class KfcudpClient implements ClientModInitializer {
 
         // 초대 코드 생성
         String code = generateCode();
+
+        // QUIC 전송을 같은 방 코드로 나란히 띄운다 — 접속자가 webrtc.CODE / quic.CODE 로
+        // 골라 붙어 비교할 수 있게. 실험 중인 경로라 실패해도 방 자체는 그대로 둔다.
+        try {
+            QuicBridge.startHost(code, "127.0.0.1:" + finalPort);
+        } catch (Exception e) {
+            LOG.warn("[instant-p2p] QUIC host 시작 실패(WebRTC 는 그대로 진행): {}", e.getMessage());
+        }
 
         try {
             WebRtcBridge.startHost(code, "127.0.0.1:" + finalPort);
@@ -1826,11 +1839,13 @@ public class KfcudpClient implements ClientModInitializer {
         if (waitForClose) {
             try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
             WebRtcBridge.stopHostIfCurrent(hostToken);
+            QuicBridge.stopHost();
             return;
         }
         Thread t = new Thread(() -> {
             try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
             WebRtcBridge.stopHostIfCurrent(hostToken);
+            QuicBridge.stopHost();
         }, "kfcudp-room-close");
         t.setDaemon(true);
         t.start();

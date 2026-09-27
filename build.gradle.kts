@@ -46,6 +46,11 @@ dependencies {
     implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")
     implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:macos-x86_64")
     implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:macos-aarch64")
+
+    // QUIC — 순수 자바(kwik). 네이티브 없음, 전부 합쳐 646KB.
+    // agent15는 kwik의 TLS 1.3 구현 — QUIC은 레코드 프레이밍 없는 핸드셰이크 바이트가
+    // 필요해서 JDK SSLEngine을 쓸 수 없다. 대량 암복호화는 JCE(AES-NI)를 탄다.
+    implementation("tech.kwik:kwik:0.11")
 }
 
 tasks.processResources {
@@ -83,8 +88,18 @@ tasks.jar {
 
     // webrtc-java 클래스 및 네이티브 라이브러리를 jar에 번들링
     from({
-        configurations.compileClasspath.get().resolvedConfiguration.resolvedArtifacts
-            .filter { it.moduleVersion.id.group in setOf("dev.onvoid.webrtc") }
+        // runtimeClasspath 를 봐야 한다 — kwik POM 이 agent15/hkdf/siphash 를 runtime 스코프로
+        // 선언하므로 compileClasspath 에는 안 올라오고, 그러면 게임에서 TlsStatusEventHandler
+        // NoClassDefFoundError 가 난다. 마인크래프트/Fabric 은 아래 그룹 필터가 걸러낸다.
+        configurations.runtimeClasspath.get().resolvedConfiguration.resolvedArtifacts
+            .filter {
+                it.moduleVersion.id.group in setOf(
+                    "dev.onvoid.webrtc",
+                    // kwik + 그 의존(agent15 = TLS 1.3, hkdf, siphash)
+                    // ponytail: LGPL-3.0이라 배포판에서는 shading 대신 JiJ(중첩 jar)로 옮겨야 한다
+                    "tech.kwik", "at.favre.lib", "com.io7m.repackage.io.whitfin",
+                )
+            }
             .map { zipTree(it.file) }
     }) {
         exclude("META-INF/*.SF")

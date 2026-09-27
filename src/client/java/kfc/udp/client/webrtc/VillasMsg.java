@@ -20,12 +20,12 @@ import java.util.List;
  * 주의: 서버 수신 한도 4096바이트(maxMessageSize), 접속 직후 클라이언트가
  * signals 메시지({} 가능)를 1회 먼저 보내야 하며, 릴레이 메시지에는 발신자 정보가 없다.
  */
-final class VillasMsg {
+public final class VillasMsg {  // QUIC 전송도 같은 시그널링을 쓴다 — WebRTC 전용이 아니다
 
     /** 접속 직후 보내는 signals 초기 메시지 */
-    static String hello() { return "{}"; }
+    public static String hello() { return "{}"; }
 
-    static String description(String type, String sdp) {
+    public static String description(String type, String sdp) {
         return "{\"description\":{\"spd\":\"" + escape(sdp) + "\",\"type\":\"" + type + "\"}}";
     }
 
@@ -55,12 +55,12 @@ final class VillasMsg {
                 + "}}";
     }
 
-    static boolean has(String json, String key) {
+    public static boolean has(String json, String key) {
         return json.contains("\"" + key + "\"");
     }
 
     /** control.peers 배열 → [name, remote(연결 안 됐으면 null)] 목록 */
-    static List<String[]> peers(String json) {
+    public static List<String[]> peers(String json) {
         return peerObjects(json, "peers");
     }
 
@@ -147,7 +147,7 @@ final class VillasMsg {
     }
 
     /** {"key":{...}} 내부 오브젝트 추출 */
-    static String object(String json, String key) {
+    public static String object(String json, String key) {
         String k = "\"" + key + "\"";
         int idx = json.indexOf(k);
         if (idx < 0) return null;
@@ -164,7 +164,7 @@ final class VillasMsg {
     }
 
     /** 문자열/숫자 필드 추출 (+ 이스케이프 해제) */
-    static String field(String json, String key) {
+    public static String field(String json, String key) {
         String k = "\"" + key + "\"";
         int idx = json.indexOf(k);
         if (idx < 0) return null;

@@ -1,6 +1,7 @@
 package kfc.udp.client.mixin;
 
 import kfc.udp.client.webrtc.WebRtcBridge;
+import kfc.udp.client.quic.QuicBridge;
 import kfc.udp.client.kcp.KcpAddressRegistry;
 //? if >=26.1 {
 /*import net.minecraft.client.Minecraft;
@@ -65,6 +66,32 @@ public class ConnectScreenMixin {
                 );
             } catch (Exception e) {
                 WebRtcBridge.LOG.warn("[WebRTC] Failed to start: {}", e.getMessage(), e);
+                client.execute(() -> client.setScreenAndShow(new DisconnectedScreen(
+                        screen,
+                        Component.translatable("connect.failed"),
+                        Component.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())))));
+            }
+            return;
+        }
+
+        // quic. 처리 — webrtc.와 흐름이 같고 전송만 다르다(QuicBridge 클래스 주석 참고).
+        String quicRoom = QuicBridge.parseRoomId(originalAddress);
+        if (quicRoom != null) {
+            ci.cancel();
+            WebRtcBridge.LOG.info("[QUIC] Connecting via QUIC, roomId={}", quicRoom);
+            try {
+                int localPort = QuicBridge.start(quicRoom);
+                ServerAddress localAddr = new ServerAddress("127.0.0.1", localPort);
+                ServerData localInfo = new ServerData(
+                        serverInfo != null ? serverInfo.name : quicRoom,
+                        "127.0.0.1:" + localPort,
+                        ServerData.Type.OTHER
+                );
+                client.execute(() ->
+                        ConnectScreen.startConnecting(screen, client, localAddr, localInfo, false, null)
+                );
+            } catch (Exception e) {
+                WebRtcBridge.LOG.warn("[QUIC] Failed to start: {}", e.getMessage(), e);
                 client.execute(() -> client.setScreenAndShow(new DisconnectedScreen(
                         screen,
                         Component.translatable("connect.failed"),
@@ -149,6 +176,32 @@ public class ConnectScreenMixin {
                 );
             } catch (Exception e) {
                 WebRtcBridge.LOG.warn("[WebRTC] Failed to start: {}", e.getMessage(), e);
+                client.execute(() -> client.setScreen(new DisconnectedScreen(
+                        screen,
+                        Text.translatable("connect.failed"),
+                        Text.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())))));
+            }
+            return;
+        }
+
+        // quic. 처리 — webrtc.와 흐름이 같고 전송만 다르다(QuicBridge 클래스 주석 참고).
+        String quicRoom = QuicBridge.parseRoomId(originalAddress);
+        if (quicRoom != null) {
+            ci.cancel();
+            WebRtcBridge.LOG.info("[QUIC] Connecting via QUIC, roomId={}", quicRoom);
+            try {
+                int localPort = QuicBridge.start(quicRoom);
+                ServerAddress localAddr = new ServerAddress("127.0.0.1", localPort);
+                ServerInfo localInfo = new ServerInfo(
+                        serverInfo != null ? serverInfo.name : quicRoom,
+                        "127.0.0.1:" + localPort,
+                        ServerInfo.ServerType.OTHER
+                );
+                client.execute(() ->
+                        ConnectScreen.connect(screen, client, localAddr, localInfo, false, null)
+                );
+            } catch (Exception e) {
+                WebRtcBridge.LOG.warn("[QUIC] Failed to start: {}", e.getMessage(), e);
                 client.execute(() -> client.setScreen(new DisconnectedScreen(
                         screen,
                         Text.translatable("connect.failed"),
