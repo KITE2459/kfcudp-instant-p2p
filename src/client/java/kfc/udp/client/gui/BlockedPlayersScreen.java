@@ -82,6 +82,13 @@ public class BlockedPlayersScreen extends Screen {
     private final boolean online;
     private List<P2PBanManager.BannedEntry> entries = List.of();
     private int entriesVersion = -1;
+    /** 검색으로 걸러내기 전 전체 목록 — {@link #entries}는 화면에 실제로 그리는(걸러진) 목록이라
+     * 원본을 따로 들고 있어야 한다. 안 그러면 차단 목록 모드에서 entriesVersion 캐시 때문에 목록을
+     * 다시 읽지 않고 이미 걸러진 목록을 또 걸러서, 검색할수록 목록이 계속 줄어든다. */
+    private List<P2PBanManager.BannedEntry> allEntries = List.of();
+    /** 닉네임 검색어 — 위젯이 아니라 이 문자열을 본다(init에서 위젯이 만들어지기 전에 refreshGrid가
+     * 돌 수 있어서, 위젯을 직접 보면 NPE가 난다). */
+    private String searchQuery = "";
     /** 온라인 모드에서 지금 접속 중인 대상 uuid — 강퇴 버튼은 이 목록에 있는(=온라인) 대상에만 뜬다. */
     private java.util.Set<String> onlineUuids = java.util.Set.of();
     /** 내가 등급자(스트리머 이상)라 x/o 옆에 강퇴 버튼도 같이 뜨는지 — 온라인 모드에서만 켜진다. */
@@ -160,6 +167,16 @@ public class BlockedPlayersScreen extends Screen {
     /*@Override
     protected void init() {
         this.layout();
+        // 방 목록의 채널 입력칸과 같은 자리·크기 — 두 화면의 첫 줄이 어긋나지 않게.
+        net.minecraft.client.gui.components.EditBox search = new net.minecraft.client.gui.components.EditBox(
+                this.font, (this.width / 2 + 155) - CHANNEL_FIELD_W, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H,
+                Component.translatable("instant-p2p.blocked_players.search_label"));
+        search.setMaxLength(16); // 닉네임 최대 길이
+        search.setHint(Component.translatable("instant-p2p.blocked_players.search_placeholder")
+                .withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+        search.setValue(this.searchQuery); // 창 크기가 바뀌면 init이 다시 도는데 입력이 날아가지 않게
+        search.setResponder(t -> { this.searchQuery = t; this.scrollCol = 0; });
+        this.addRenderableWidget(search);
         this.addRenderableWidget(
                 Button.builder(CommonComponents.GUI_BACK, b -> this.onClose())
                         .bounds(this.width / 2 - BACK_W / 2, this.backY, BACK_W, 20)
@@ -171,6 +188,16 @@ public class BlockedPlayersScreen extends Screen {
     @Override
     protected void init() {
         this.layout();
+        // 방 목록의 채널 입력칸과 같은 자리·크기 — 두 화면의 첫 줄이 어긋나지 않게.
+        net.minecraft.client.gui.widget.TextFieldWidget search = new net.minecraft.client.gui.widget.TextFieldWidget(
+                this.textRenderer, (this.width / 2 + 155) - CHANNEL_FIELD_W, CHANNEL_Y, CHANNEL_FIELD_W, CHANNEL_FIELD_H,
+                Text.translatable("instant-p2p.blocked_players.search_label"));
+        search.setMaxLength(16); // 닉네임 최대 길이
+        search.setPlaceholder(Text.translatable("instant-p2p.blocked_players.search_placeholder")
+                .formatted(net.minecraft.util.Formatting.DARK_GRAY));
+        search.setText(this.searchQuery); // 창 크기가 바뀌면 init이 다시 도는데 입력이 날아가지 않게
+        search.setChangedListener(t -> { this.searchQuery = t; this.scrollCol = 0; });
+        this.addDrawableChild(search);
         this.addDrawableChild(
                 ButtonWidget.builder(ScreenTexts.BACK, b -> this.close())
                         .dimensions(this.width / 2 - BACK_W / 2, this.backY, BACK_W, 20)
@@ -210,6 +237,15 @@ public class BlockedPlayersScreen extends Screen {
         return (this.width - this.listW()) / 2;
     }
 
+    /** 검색어가 든 닉네임만 남긴다(대소문자 무시) — 비었으면 원본을 그대로 돌려준다. */
+    private List<P2PBanManager.BannedEntry> filtered() {
+        String q = this.searchQuery.trim().toLowerCase(java.util.Locale.ROOT);
+        if (q.isEmpty()) return this.allEntries;
+        return this.allEntries.stream()
+                .filter(e -> e.name().toLowerCase(java.util.Locale.ROOT).contains(q))
+                .toList();
+    }
+
     /** 밴 목록이 바뀌었을 때만 다시 읽고, 현재 스크롤 열에 맞춰 칸마다 항목과 좌표를 채운다(열 우선). */
     private void refreshGrid() {
         if (this.online) {
@@ -225,16 +261,17 @@ public class BlockedPlayersScreen extends Screen {
                     .filter(e -> !liveUuids.contains(e.uuid()))
                     .sorted(java.util.Comparator.comparing(P2PBanManager.BannedEntry::name, String.CASE_INSENSITIVE_ORDER))
                     .toList();
-            this.entries = java.util.stream.Stream.concat(live.stream(), offlineBanned.stream()).toList();
+            this.allEntries = java.util.stream.Stream.concat(live.stream(), offlineBanned.stream()).toList();
         } else {
             int version = P2PBanManager.banListVersion();
             if (version != this.entriesVersion) {
-                this.entries = P2PBanManager.listBannedPlayers();
+                this.allEntries = P2PBanManager.listBannedPlayers();
                 this.entriesVersion = version;
             }
             this.onlineUuids = java.util.Set.of();
             this.showKickColumn = false;
         }
+        this.entries = this.filtered();
         this.nameW = CELL_W - 6 - HEAD_SIZE - HEAD_GAP - (3 + BLOCK_BTN) - (this.showKickColumn ? (3 + BLOCK_BTN) : 0);
 
         int maxCol = Math.max(0, this.totalCols() - this.cols);
