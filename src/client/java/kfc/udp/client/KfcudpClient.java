@@ -578,6 +578,7 @@ public class KfcudpClient implements ClientModInitializer {
         kfc.udp.client.webrtc.P2PNet.registerTypes();
         kfc.udp.client.webrtc.ExpelManager.register();
         kfc.udp.client.webrtc.RoomRoles.register();
+        kfc.udp.client.webrtc.P2PFavoriteManager.load(); // favorite-players.json — 순수 로컬 취향, 서버 등록 없이 한 번만 읽으면 된다.
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -780,6 +781,7 @@ public class KfcudpClient implements ClientModInitializer {
         kfc.udp.client.webrtc.P2PNet.registerTypes();
         kfc.udp.client.webrtc.ExpelManager.register();
         kfc.udp.client.webrtc.RoomRoles.register();
+        kfc.udp.client.webrtc.P2PFavoriteManager.load(); // favorite-players.json — 순수 로컬 취향, 서버 등록 없이 한 번만 읽으면 된다.
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —

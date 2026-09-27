@@ -1,6 +1,7 @@
 package kfc.udp.client.gui;
 
 import kfc.udp.client.webrtc.P2PBanManager;
+import kfc.udp.client.webrtc.P2PFavoriteManager;
 //? if >=26.1 {
 /*import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -88,6 +89,8 @@ public class BlockedPlayersScreen extends Screen {
     private boolean showKickColumn = false;
     /** 닉네임이 차지할 수 있는 폭 — 머리 아이콘, ❌/♻ 버튼, (등급자면) 강퇴 버튼까지 뺀 나머지. */
     private int nameW = CELL_W - 6 - HEAD_SIZE - HEAD_GAP - (3 + BLOCK_BTN);
+    /** 접속자 모드(online) 전용 즐겨찾기 별 버튼의 왼쪽 여백 — ❌/♻ 버튼과 같은 3px을 왼쪽에도 쓴다. */
+    private static final int STAR_GAP = 3;
 
     /** 맨 왼쪽에 보이는 열 번호 — 휠 한 칸에 1씩 바뀐다. */
     private int scrollCol = 0;
@@ -216,7 +219,11 @@ public class BlockedPlayersScreen extends Screen {
             // 지금 접속한 사람 먼저, 그다음 이미 차단해서 나간(온라인 목록엔 없는) 사람을 이어붙인다 —
             // 버튼을 "플레이어 차단"/"차단 목록" 둘로 나누지 않고 한 화면에서 다 보이게. 매 tick 다시
             // 계산하는데 한 방 인원 + 밴 목록 둘 다 가벼워서 문제없다.
-            List<P2PBanManager.BannedEntry> live = this.onlinePlayers();
+            // 즐겨찾기한 사람을 맨 앞에 고정한다 — 그 안에서는 원래대로 이름순.
+            // sorted()는 안정 정렬이라 onlinePlayers()가 이미 이름순으로 넘겨준 순서를 그대로 보존한다.
+            List<P2PBanManager.BannedEntry> live = this.onlinePlayers().stream()
+                    .sorted(java.util.Comparator.comparing((P2PBanManager.BannedEntry e) -> !P2PFavoriteManager.isFavorite(e.uuid())))
+                    .toList();
             java.util.Set<String> liveUuids = live.stream().map(P2PBanManager.BannedEntry::uuid)
                     .collect(java.util.stream.Collectors.toSet());
             this.onlineUuids = liveUuids;
@@ -235,7 +242,8 @@ public class BlockedPlayersScreen extends Screen {
             this.onlineUuids = java.util.Set.of();
             this.showKickColumn = false;
         }
-        this.nameW = CELL_W - 6 - HEAD_SIZE - HEAD_GAP - (3 + BLOCK_BTN) - (this.showKickColumn ? (3 + BLOCK_BTN) : 0);
+        this.nameW = CELL_W - 6 - HEAD_SIZE - HEAD_GAP - (3 + BLOCK_BTN) - (this.showKickColumn ? (3 + BLOCK_BTN) : 0)
+                - (this.online ? (STAR_GAP + BLOCK_BTN) : 0);
 
         int maxCol = Math.max(0, this.totalCols() - this.cols);
         if (this.scrollCol > maxCol) this.scrollCol = maxCol;
@@ -257,6 +265,23 @@ public class BlockedPlayersScreen extends Screen {
             int bx = this.cellX[i] + CELL_W - 3 - BLOCK_BTN;
             int by = this.cellY[i] + (CELL_H - BLOCK_BTN) / 2;
             if (mouseX >= bx && mouseX < bx + BLOCK_BTN && mouseY >= by && mouseY < by + BLOCK_BTN) return i;
+        }
+        return -1;
+    }
+
+    /** 얼굴 아이콘의 x좌표 — 접속자 모드(online)에서는 왼쪽에 즐겨찾기 별 버튼이 하나 더
+     * 들어가는 만큼 오른쪽으로 밀린다(차단 목록 모드는 즐겨찾기가 없으니 그대로). */
+    private int headX(int cellX) {
+        return cellX + 6 + (this.online ? STAR_GAP + BLOCK_BTN : 0);
+    }
+
+    /** (mouseX,mouseY)가 즐겨찾기(⭐/☆) 버튼 위에 있는 칸, 없으면 -1 — 접속자 모드에서만 뜬다. */
+    private int starButtonAt(double mouseX, double mouseY) {
+        if (!this.online) return -1;
+        for (int i = 0; i < this.cellEntry.length; i++) {
+            if (this.cellEntry[i] == null) continue;
+            int sx = this.cellX[i] + 6, sy = this.cellY[i] + (CELL_H - BLOCK_BTN) / 2;
+            if (mouseX >= sx && mouseX < sx + BLOCK_BTN && mouseY >= sy && mouseY < sy + BLOCK_BTN) return i;
         }
         return -1;
     }
@@ -402,6 +427,14 @@ public class BlockedPlayersScreen extends Screen {
         if (this.isOnScrollbarTrack(mouseX, mouseY)) {
             this.draggingScrollbar = true;
             this.scrollToTrackX(mouseX);
+            return true;
+        }
+        int starSlot = this.starButtonAt(mouseX, mouseY);
+        if (starSlot >= 0) {
+            playClick();
+            // 차단과 달리 되돌리기 쉬운 가벼운 취향 조작이라 확인 팝업 없이 즉시 토글한다.
+            P2PBanManager.BannedEntry e = this.cellEntry[starSlot];
+            P2PFavoriteManager.toggleFavorite(e.uuid(), e.name());
             return true;
         }
         int kickSlot = this.kickButtonAt(mouseX, mouseY);
@@ -560,6 +593,20 @@ public class BlockedPlayersScreen extends Screen {
      * 아니라 이모지라 BLOCK_X_DX로는 안 맞는다). */
     private boolean willUnblock(P2PBanManager.BannedEntry e) {
         return !this.online || P2PBanManager.isPlayerBanned(e.uuid());
+    }
+
+    private static String starGlyph(P2PBanManager.BannedEntry e) {
+        return P2PFavoriteManager.isFavorite(e.uuid()) ? "⭐" : "☆";
+    }
+
+    private static int starColor(P2PBanManager.BannedEntry e) {
+        return P2PFavoriteManager.isFavorite(e.uuid()) ? 0xFFFFFF55 : 0xFFA0A0A0;
+    }
+
+    private static String starTooltipKey(P2PBanManager.BannedEntry e) {
+        return P2PFavoriteManager.isFavorite(e.uuid())
+                ? "instant-p2p.online_players.unfavorite_tooltip"
+                : "instant-p2p.online_players.favorite_tooltip";
     }
 
     private String glyph(P2PBanManager.BannedEntry e) {
@@ -759,6 +806,7 @@ public class BlockedPlayersScreen extends Screen {
         int hoveredBtn = this.unblockButtonAt(mouseX, mouseY);
         int hoveredKick = this.kickButtonAt(mouseX, mouseY);
         int hoveredImmune = this.immuneBadgeAt(mouseX, mouseY);
+        int hoveredStar = this.starButtonAt(mouseX, mouseY);
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
             if (e == null) continue;
@@ -766,8 +814,11 @@ public class BlockedPlayersScreen extends Screen {
             int bx = x + CELL_W - 3 - BLOCK_BTN, by = y + (CELL_H - BLOCK_BTN) / 2;
             context.fill(x, y, x + CELL_W, y + CELL_H, ROW_BG_COLOR);
             context.outline(x, y, CELL_W, CELL_H, ROW_BORDER_COLOR);
-            this.drawHead(context, e, x + 6, y + (CELL_H - HEAD_SIZE) / 2);
-            context.text(this.font, this.font.plainSubstrByWidth(displayName(e), this.nameW), x + 6 + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
+            if (this.online) {
+                glyphButton(context, this.font, starGlyph(e), x + 6, by, starColor(e), hoveredStar == i);
+            }
+            this.drawHead(context, e, this.headX(x), y + (CELL_H - HEAD_SIZE) / 2);
+            context.text(this.font, this.font.plainSubstrByWidth(displayName(e), this.nameW), this.headX(x) + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
             glyphButton(context, this.font, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
@@ -795,6 +846,8 @@ public class BlockedPlayersScreen extends Screen {
             context.setComponentTooltipForNextFrame(this.font, tooltipLines("instant-p2p.online_players.kick_tooltip"), mouseX, mouseY);
         } else if (hoveredImmune >= 0) {
             context.setComponentTooltipForNextFrame(this.font, immuneTooltip(this.cellEntry[hoveredImmune]), mouseX, mouseY);
+        } else if (hoveredStar >= 0) {
+            context.setComponentTooltipForNextFrame(this.font, tooltipLines(starTooltipKey(this.cellEntry[hoveredStar])), mouseX, mouseY);
         }
         this.popup.render(context, this.width, this.height, realX, realY);
     }
@@ -821,6 +874,7 @@ public class BlockedPlayersScreen extends Screen {
         int hoveredBtn = this.unblockButtonAt(mouseX, mouseY);
         int hoveredKick = this.kickButtonAt(mouseX, mouseY);
         int hoveredImmune = this.immuneBadgeAt(mouseX, mouseY);
+        int hoveredStar = this.starButtonAt(mouseX, mouseY);
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
             if (e == null) continue;
@@ -828,8 +882,11 @@ public class BlockedPlayersScreen extends Screen {
             int bx = x + CELL_W - 3 - BLOCK_BTN, by = y + (CELL_H - BLOCK_BTN) / 2;
             context.fill(x, y, x + CELL_W, y + CELL_H, ROW_BG_COLOR);
             context.drawStrokedRectangle(x, y, CELL_W, CELL_H, ROW_BORDER_COLOR);
-            this.drawHead(context, e, x + 6, y + (CELL_H - HEAD_SIZE) / 2);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(displayName(e), this.nameW)), x + 6 + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
+            if (this.online) {
+                glyphButton(context, this.textRenderer, starGlyph(e), x + 6, by, starColor(e), hoveredStar == i);
+            }
+            this.drawHead(context, e, this.headX(x), y + (CELL_H - HEAD_SIZE) / 2);
+            context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(displayName(e), this.nameW)), this.headX(x) + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
             glyphButton(context, this.textRenderer, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
@@ -853,6 +910,8 @@ public class BlockedPlayersScreen extends Screen {
             context.drawTooltip(this.textRenderer, tooltipLines("instant-p2p.online_players.kick_tooltip"), mouseX, mouseY);
         } else if (hoveredImmune >= 0) {
             context.drawTooltip(this.textRenderer, immuneTooltip(this.cellEntry[hoveredImmune]), mouseX, mouseY);
+        } else if (hoveredStar >= 0) {
+            context.drawTooltip(this.textRenderer, tooltipLines(starTooltipKey(this.cellEntry[hoveredStar])), mouseX, mouseY);
         }
         this.popup.render(context, this.width, this.height, realX, realY);
     }
@@ -879,6 +938,7 @@ public class BlockedPlayersScreen extends Screen {
         int hoveredBtn = this.unblockButtonAt(mouseX, mouseY);
         int hoveredKick = this.kickButtonAt(mouseX, mouseY);
         int hoveredImmune = this.immuneBadgeAt(mouseX, mouseY);
+        int hoveredStar = this.starButtonAt(mouseX, mouseY);
         for (int i = 0; i < this.cellEntry.length; i++) {
             P2PBanManager.BannedEntry e = this.cellEntry[i];
             if (e == null) continue;
@@ -886,8 +946,11 @@ public class BlockedPlayersScreen extends Screen {
             int bx = x + CELL_W - 3 - BLOCK_BTN, by = y + (CELL_H - BLOCK_BTN) / 2;
             context.fill(x, y, x + CELL_W, y + CELL_H, ROW_BG_COLOR);
             context.drawBorder(x, y, CELL_W, CELL_H, ROW_BORDER_COLOR);
-            this.drawHead(context, e, x + 6, y + (CELL_H - HEAD_SIZE) / 2);
-            context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(displayName(e), this.nameW)), x + 6 + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
+            if (this.online) {
+                glyphButton(context, this.textRenderer, starGlyph(e), x + 6, by, starColor(e), hoveredStar == i);
+            }
+            this.drawHead(context, e, this.headX(x), y + (CELL_H - HEAD_SIZE) / 2);
+            context.drawTextWithShadow(this.textRenderer, Text.literal(this.textRenderer.trimToWidth(displayName(e), this.nameW)), this.headX(x) + HEAD_SIZE + HEAD_GAP, y + (CELL_H - 9) / 2 + 1, this.nameColor(e));
             glyphButton(context, this.textRenderer, this.glyph(e), bx, by, this.glyphColor(e), hoveredBtn == i);
             if (this.showKickColumn && this.onlineUuids.contains(e.uuid())) {
                 int kx = x + CELL_W - 6 - 2 * BLOCK_BTN;
@@ -911,6 +974,8 @@ public class BlockedPlayersScreen extends Screen {
             context.drawTooltip(this.textRenderer, tooltipLines("instant-p2p.online_players.kick_tooltip"), mouseX, mouseY);
         } else if (hoveredImmune >= 0) {
             context.drawTooltip(this.textRenderer, immuneTooltip(this.cellEntry[hoveredImmune]), mouseX, mouseY);
+        } else if (hoveredStar >= 0) {
+            context.drawTooltip(this.textRenderer, tooltipLines(starTooltipKey(this.cellEntry[hoveredStar])), mouseX, mouseY);
         }
         this.popup.render(context, this.width, this.height, realX, realY);
     }
