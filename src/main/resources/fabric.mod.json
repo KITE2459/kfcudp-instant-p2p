@@ -11,7 +11,7 @@
 		"homepage": "https://modrinth.com/mod/instant-p2p",
 		"sources": "https://github.com/KITE2459/kfcudp-instant-p2p"
 	},
-	"license": "CC0-1.0",
+	"license": "MIT",
 	"icon": "assets/instant-p2p/icon.png",
 	"environment": "*",
 	"entrypoints": {

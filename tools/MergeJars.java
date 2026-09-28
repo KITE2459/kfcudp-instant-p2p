@@ -99,6 +99,7 @@ public class MergeJars {
                 String name = e.getKey();
                 if (ours(name) || name.equals(MIXIN_JSON) || name.endsWith("-refmap.json") || name.endsWith("module-info.class")
                         || name.equals("fabric.mod.json") || name.equals("META-INF/MANIFEST.MF") || name.endsWith("/")) continue;
+                if (name.startsWith("LICENSE_")) name = "LICENSE"; // 빌드가 버전 이름을 붙인 같은 파일 17벌 → 하나
                 byte[] had = merged.putIfAbsent(name, e.getValue());
                 if (had != null && name.startsWith("assets/") && !Arrays.equals(had, e.getValue())) {
                     System.out.println("  경고: " + name + " 이 버전마다 다르다(" + v.mc() + ") — 앞 jar 것을 쓴다");
