@@ -42,8 +42,8 @@ Signaling, STUN, and TURN servers are hosted on **Oracle Cloud Seoul**.
    생성된 초대코드를 접속자에게 전달합니다.
    Share the generated invite code with your friends.
 
-> 방을 열려면 **정품 계정**이 필요합니다. 접속은 계정과 상관없이 됩니다.
-> Opening a room requires a **premium (Mojang-verified) account**. Joining works with any account.
+> 방을 열려면 **정품 계정**이 필요합니다. 접속도 바닐라 LAN 월드와 같이 정품 로그인 확인을 거치므로 정품 계정이어야 합니다.
+> Opening a room requires a **premium (Mojang-verified) account**. Joining does too — like any vanilla LAN world, the host verifies each player's login with Mojang.
 
 ---
 

@@ -7,7 +7,7 @@ plugins {
 stonecutter active "1.21.5"
 
 /**
- * 각 버전 서브프로젝트가 만든 최종 jar 산출물을 versions/all/ 로 모은다.
+ * 각 버전 서브프로젝트가 만든 최종 jar 산출물을 build/per-version/ 으로 모은다(통합 jar 재료 — mergeJars).
  * <p>
  * build/libs/를 뒤져서 "*.jar면 다 복사"하던 예전 방식은 Gradle이 archivesName이나
  * mod 버전을 바꿔도 이전 산출물을 build/libs/에서 자동으로 안 지우는 탓에, 이름
@@ -21,7 +21,8 @@ stonecutter active "1.21.5"
  * 봐야 할지 분기한다.
  */
 val collectAllVersionJars by tasks.registering {
-    val collectDir = rootProject.layout.projectDirectory.dir("versions/all")
+    // 버전별 jar 는 이제 통합 jar 의 재료일 뿐이라 배포 폴더(versions/all)가 아니라 루트 build/ 에 둔다.
+    val collectDir = rootProject.layout.buildDirectory.dir("per-version")
     val jarTasks = stonecutter.versions.map { v ->
         val taskName = if (v.project.startsWith("26.")) "jar" else "remapJar"
         project(":${v.project}").tasks.named(taskName)
@@ -32,21 +33,54 @@ val collectAllVersionJars by tasks.registering {
     stonecutter.versions.forEach { v -> dependsOn("${v.project}:build") }
 
     doLast {
-        val out = collectDir.asFile
+        val out = collectDir.get().asFile
+        out.deleteRecursively() // 옛 모드 버전의 재료가 남지 않게
         out.mkdirs()
         jarTasks.forEach { taskProvider ->
             val archiveFile = (taskProvider.get() as AbstractArchiveTask).archiveFile.get().asFile
             if (archiveFile.exists()) archiveFile.copyTo(out.resolve(archiveFile.name), overwrite = true)
         }
         libsDirs.forEach { it.get().asFile.deleteRecursively() }
-        println("모은 jar: ${out.absolutePath}")
+        println("버전별 jar: ${out.absolutePath}")
+    }
+}
+
+/**
+ * 통합 jar — 1.21.x·26.x 17개 버전을 jar 하나로 합친다(tools/MergeJars.java 주석).
+ * 결과: versions/all/instant-p2p-<모드 버전>.jar
+ * 병합기는 ASM 이 필요해서 따로 받은 ASM 으로 JDK 소스 실행(java X.java)을 한다 — 빌드 스크립트
+ * 클래스패스에 ASM 을 올리면 Loom 이 쓰는 ASM 과 섞인다.
+ */
+repositories { mavenCentral() }
+val mergeTool by configurations.creating
+dependencies { mergeTool("org.ow2.asm:asm-commons:9.8") }
+
+val mergeJars by tasks.registering {
+    group = "build"
+    dependsOn(collectAllVersionJars)
+    val toolCp = mergeTool
+    val root = rootProject.layout.projectDirectory.asFile
+    val perVersion = rootProject.layout.buildDirectory.dir("per-version")
+    // 1.21.x 를 먼저 — 공유 코드는 앞 jar 것을 쓰는데 Java 21 바이트코드여야 두 시대 모두에서 읽힌다
+    val versions = stonecutter.versions.map { it.project }.sortedBy { it.startsWith("26.") }
+    doLast {
+        val modVersion = Regex("""mod\.version\s*=\s*"([^"]+)"""")
+            .find(root.resolve("stonecutter.properties.toml").readText())!!.groupValues[1]
+        val java = File(System.getProperty("java.home"), "bin/java").absolutePath
+        val out = root.resolve("versions/all/instant-p2p-$modVersion.jar")
+        val inputs = versions.map { v -> "$v=" + perVersion.get().asFile.resolve("instant-p2p-$v-$modVersion.jar").absolutePath }
+        val p = ProcessBuilder(listOf(java, "-cp", toolCp.resolve().joinToString(File.pathSeparator),
+                root.resolve("tools/MergeJars.java").absolutePath, out.absolutePath) + inputs)
+            .inheritIO().start()
+        check(p.waitFor() == 0) { "통합 jar 병합 실패" }
+        println("통합 jar: ${out.absolutePath}")
     }
 }
 
 tasks.register("buildAllVersions") {
     group = "build"
-    description = "모든 Stonecutter 버전을 빌드하고 versions/all/ 에 jar를 모은다."
-    dependsOn(collectAllVersionJars)
+    description = "모든 Stonecutter 버전을 빌드하고 versions/all/ 에 통합 jar 1개를 만든다."
+    dependsOn(collectAllVersionJars, mergeJars)
 }
 
 /**
@@ -63,5 +97,5 @@ tasks.register("buildAllVersions") {
 tasks.register("build") {
     group = "build"
     stonecutter.versions.forEach { v -> dependsOn("${v.project}:build") }
-    finalizedBy(collectAllVersionJars)
+    finalizedBy(collectAllVersionJars, mergeJars)
 }
