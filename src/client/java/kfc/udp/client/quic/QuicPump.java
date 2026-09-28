@@ -11,7 +11,7 @@ import java.net.Socket;
 /**
  * TCP 소켓 ↔ QUIC 스트림 양방향 복사.
  * <p>
- * <b>WebRTC 쪽 {@code BatchPipe}에 해당하는 계층이 여기엔 없다.</b> DataChannel은 메시지 API라
+ * <b>배칭 계층이 없다.</b> 예전 WebRTC 경로에는 {@code BatchPipe}가 있었다 — DataChannel은 메시지 API라
  * 256KB 상한(libwebrtc max-message-size)이 있었고, 그 상한 안에서 처리량을 내려고 배칭·워터마크·
  * writev 묶음이 필요했다. QUIC 스트림은 그냥 바이트 스트림이고 배압은 QUIC 흐름 제어가 처리하므로
  * {@code read} / {@code write} 루프면 끝이다. 계층 하나가 통째로 사라진 것이라 다시 넣지 말 것.
@@ -29,13 +29,15 @@ final class QuicPump {
      * 두 방향을 각자 스레드에서 돌리고 <b>어느 쪽이든 끝나면 양쪽을 닫는다</b> —
      * 한쪽만 닫으면 반대편 스레드가 영원히 read에 걸려 남는다.
      *
-     * @param label 로그용 꼬리표(sid 등). 실제 IP는 넣지 말 것.
+     * @param label   로그용 꼬리표(sid 등). 실제 IP는 넣지 말 것.
+     * @param onClose 양쪽이 닫힌 뒤 한 번 실행된다(방향마다 불리므로 멱등이어야 한다). null 허용.
      */
-    static void wire(Socket tcp, InputStream quicIn, OutputStream quicOut, String label) {
+    static void wire(Socket tcp, InputStream quicIn, OutputStream quicOut, String label, Runnable onClose) {
         Runnable closeBoth = () -> {
             try { tcp.close(); } catch (IOException ignored) {}
             try { quicOut.close(); } catch (IOException ignored) {}
             try { quicIn.close(); } catch (IOException ignored) {}
+            if (onClose != null) onClose.run();
         };
         spawn(label + "-up", () -> copy(tcp.getInputStream(), quicOut), closeBoth);
         spawn(label + "-down", () -> copy(quicIn, tcp.getOutputStream()), closeBoth);
@@ -63,7 +65,9 @@ final class QuicPump {
         int n;
         while ((n = in.read(buf)) > 0) {
             out.write(buf, 0, n);
-            out.flush(); // 마크는 지연에 민감하다 — 모아 보내면 렉으로 보인다
+            // kwik 의 스트림 flush 는 no-op 이다(StreamOutputStreamImpl: "sends data as soon as
+            // possible"). 즉 모아 두는 계층이 없어 지연이 붙지 않는다 — 스트림 규약상 남겨 둔다.
+            out.flush();
         }
     }
 }

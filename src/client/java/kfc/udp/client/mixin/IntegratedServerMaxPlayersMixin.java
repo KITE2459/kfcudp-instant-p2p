@@ -1,6 +1,6 @@
 package kfc.udp.client.mixin;
 
-import kfc.udp.client.webrtc.P2PBanManager;
+import kfc.udp.client.signaling.P2PBanManager;
 //? if >=26.1 {
 /*import net.minecraft.client.server.IntegratedServer;
 *///?} else {

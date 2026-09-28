@@ -1,6 +1,6 @@
 package kfc.udp.client;
 
-import kfc.udp.client.webrtc.P2PBanManager;
+import kfc.udp.client.signaling.P2PBanManager;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 //? if >=26.1 {
 /*import net.minecraft.client.Minecraft;

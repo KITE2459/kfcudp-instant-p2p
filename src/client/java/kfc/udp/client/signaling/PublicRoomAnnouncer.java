@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +15,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 /**
  * 공개 방 목록 — 새 서버 인프라 없이 기존 시그널링 relay의 lobby/peer 메커니즘을 재사용한다.
  * <p>
- * {@link WebRtcHost}가 방마다 여는 {@code /{roomId}} lobby(조인 감지용)와는 별개로, 공개 방을 연
+ * {@code QuicHost}가 방마다 여는 {@code /{roomId}} lobby(조인 감지용)와는 별개로, 공개 방을 연
  * 호스트는 자기 채널마다 결정되는 샤드 lobby({@link P2PConfig#publicRoomsLobbyId(String, int)},
  * {@link P2PConfig#publicRoomShardFor(String)} 참고)에 {@code "r" + 방코드}라는 짧고 고정된 이름의
  * peer로 접속해 둔다. 방 목록 화면({@link PublicRoomBrowser})은 자기 채널들의 lobby에 동시 접속해서
@@ -42,10 +42,10 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * <b>스레드</b> — 접속(TCP+핸드셰이크, 서버가 느리면 수 초)과 메시지 전송은 전부 {@link #scheduler}
  * 스레드 하나에서만 한다. 예전엔 {@code publish()}가 부른 쪽 스레드에서 곧장 접속해서, 방을 열거나
- * 밴할 때 게임 렌더/서버 스레드가 최대 수십 초 멈출 수 있었다. 이 인스턴스는 WebRtcBridge의 싱글턴이라
+ * 밴할 때 게임 렌더/서버 스레드가 최대 수십 초 멈출 수 있었다. 이 인스턴스는 QuicBridge의 싱글턴이라
  * scheduler를 절대 종료하지 않는다.
  */
-final class PublicRoomAnnouncer {
+public final class PublicRoomAnnouncer {  // QuicBridge 가 들고 쓴다(패키지 밖)
 
     private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-public");
 
@@ -81,7 +81,7 @@ final class PublicRoomAnnouncer {
     /** 방을 연 시각(방장 시계, epoch ms) — 방 목록 정렬용. publish() 참고. */
     private volatile long openedAtMs;
 
-    PublicRoomAnnouncer() {
+    public PublicRoomAnnouncer() {
         scheduler.scheduleWithFixedDelay(() -> {
             if (running && SignalingRtt.bars(SignalingRtt.currentMs()) != SignalingRtt.bars(announcedRttMs)) {
                 sendUpdate();
@@ -92,7 +92,7 @@ final class PublicRoomAnnouncer {
     /** 방을 공개 목록에 올리거나(처음 호출) 이미 올라와 있으면 정보를 갱신한다. 방 코드·채널 구성이
      * 지난 접속과 같으면 재접속 없이 메시지만 보낸다 — hostUuid는 개인 차단(=밴) 기능용(P2PBanManager
      * 클래스 주석 참고). 접속/재접속은 백그라운드에서 진행되며 즉시 반환. */
-    synchronized void publish(String roomCode, String title, String hostNickname, String hostUuid,
+    public synchronized void publish(String roomCode, String title, String hostNickname, String hostUuid,
                                int currentPlayers, int maxPlayers) {
         boolean firstTime = !running;
         running = true;
@@ -110,15 +110,15 @@ final class PublicRoomAnnouncer {
         if (firstTime || !channels.equals(connectedChannels)) {
             this.backoffMs = INITIAL_BACKOFF_MS;
             int gen = generation.incrementAndGet();
-            LOG.info("[public-room] announcing: code={} title={}", roomCode, title);
+            LOG.info("[public-room] announcing: title={}", title);
             scheduler.execute(() -> connect(gen, channels));
         } else {
-            LOG.debug("[public-room] updating (no reconnect): code={} title={}", roomCode, title);
+            LOG.debug("[public-room] updating (no reconnect): title={}", title);
             sendUpdate();
         }
     }
 
-    void stop() {
+    public void stop() {
         if (!running) return;
         running = false;
         generation.incrementAndGet();
@@ -131,7 +131,7 @@ final class PublicRoomAnnouncer {
 
     /** 인원 또는 최대 인원이 바뀔 때마다 호출 — 이제 재접속이 아니라 메시지 하나라 디바운스가
      * 필요 없다. 방 설정에서 정원만 바꾼 경우(현재 인원은 그대로)도 여기로 들어온다. */
-    void updatePlayerCount(int current, int max) {
+    public void updatePlayerCount(int current, int max) {
         if (current == this.currentPlayers && max == this.maxPlayers) return;
         this.currentPlayers = current;
         this.maxPlayers = max;
@@ -139,7 +139,7 @@ final class PublicRoomAnnouncer {
     }
 
     /** 밴(=차단) 목록이 바뀌었을 때 P2PBanManager가 호출 — 방이 공개돼 있지 않으면 아무 것도 안 한다. */
-    void republishNow() {
+    public void republishNow() {
         if (running) sendUpdate();
     }
 
@@ -195,7 +195,12 @@ final class PublicRoomAnnouncer {
     }
 
     private WebSocketClient newClient(int gen, String lobbyId) {
-        return new WebSocketClient(P2PConfig.SIGNALING_URL + "/" + lobbyId + "/r" + roomCode) {
+        // 게시 토큰을 쿼리로 실어 보낸다 — 방은 로비의 peer 존재로 만들어지므로 서버가 연결
+        // 시점에 막아야 하고, 그래서 메시지 형식은 건드리지 않는다(MojangAuth 클래스 주석).
+        // 토큰이 없으면 붙여 보내지 않는다: 서버가 인증을 안 쓰는 상태면 그래도 통과하고,
+        // 쓰는 상태면 401 로 거절된다(사용자에게는 방을 열 때 이미 안내가 나간다).
+        String url = MojangAuth.withToken(P2PConfig.SIGNALING_URL + "/" + lobbyId + "/r" + roomCode);
+        return new WebSocketClient(url) {
             @Override public void onConnected() {
                 backoffMs = INITIAL_BACKOFF_MS;
                 send(VillasMsg.hello());

@@ -137,10 +137,10 @@ public class CustomRoomScreen extends Screen {
     private boolean allowCheats;
     private boolean publicRoom;
     /** 다른 방 옵션과 마찬가지로 체크박스 자체는 그냥 이 필드만 바꾸고, 실제
-     * {@link kfc.udp.client.webrtc.P2PConfig#setRelayOnly}는 적용 버튼을 눌러야
+     * {@link kfc.udp.client.signaling.P2PConfig#setRelayOnly}는 적용 버튼을 눌러야
      * (호스팅 전이면 즉시) 반영된다 — 예전엔 이 옵션만 체크하자마자 바로 나갔다. */
     private boolean forceRelay;
-    /** forceRelay와 같은 방식 — 체크박스는 이 필드만 바꾸고, {@link kfc.udp.client.webrtc.P2PConfig#setAllowBroadcast}는
+    /** forceRelay와 같은 방식 — 체크박스는 이 필드만 바꾸고, {@link kfc.udp.client.signaling.P2PConfig#setAllowBroadcast}는
      * 적용 버튼을 눌러야(호스팅 전이면 즉시) 반영된다. */
     private boolean allowBroadcast;
     private int checkboxScrollIndex = 0;
@@ -175,8 +175,10 @@ public class CustomRoomScreen extends Screen {
     public CustomRoomScreen(Screen parent) {
         super(KfcudpClient.isRoomActive() ? EDIT_TITLE_TEXT : TITLE_TEXT);
         this.parent = parent;
-        this.forceRelay = kfc.udp.client.webrtc.P2PConfig.isRelayOnly();
-        this.allowBroadcast = kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
+        this.forceRelay = kfc.udp.client.signaling.P2PConfig.isRelayOnly();
+        // 방을 여는 순간 기다리지 않게 중계 계정을 미리 받아 둔다(이미 있으면 즉시 끝난다).
+        kfc.udp.client.signaling.MojangAuth.prefetchTurnAsync();
+        this.allowBroadcast = kfc.udp.client.signaling.P2PConfig.isAllowBroadcast();
         if (this.editingActiveRoom) {
             // 이미 켜진 방 — 지금 실제로 적용돼 있는 값을 그대로 보여준다.
             this.gameMode = KfcudpClient.getActiveGameMode();
@@ -334,7 +336,7 @@ public class CustomRoomScreen extends Screen {
                     if (this.editingActiveRoom) {
                         this.refreshSettingsApplyButton();
                     } else {
-                        kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value);
+                        kfc.udp.client.signaling.P2PConfig.setRelayOnly(value);
                     }
                 })
                 .build();
@@ -490,7 +492,7 @@ public class CustomRoomScreen extends Screen {
                             if (this.editingActiveRoom) {
                                 this.refreshSettingsApplyButton();
                             } else {
-                                kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value);
+                                kfc.udp.client.signaling.P2PConfig.setRelayOnly(value);
                             }
                         })
                         .build()
@@ -646,7 +648,7 @@ public class CustomRoomScreen extends Screen {
                             if (this.editingActiveRoom) {
                                 this.refreshSettingsApplyButton();
                             } else {
-                                kfc.udp.client.webrtc.P2PConfig.setRelayOnly(value);
+                                kfc.udp.client.signaling.P2PConfig.setRelayOnly(value);
                             }
                         })
                         .build()
@@ -758,7 +760,7 @@ public class CustomRoomScreen extends Screen {
     /** 체크할 때마다 매번 호출된다(체크 해제는 그냥 바로 반영) — 켜는 쪽만 등급 권한 경고가
      * 필요하다. "다시 보지 않기"로 이미 넘긴 적이 있으면 팝업 없이 바로 켠다. */
     private void onAllowBroadcastChanged(boolean value) {
-        if (value && !kfc.udp.client.webrtc.P2PConfig.isStreamerProtectionWarningDismissed()) {
+        if (value && !kfc.udp.client.signaling.P2PConfig.isStreamerProtectionWarningDismissed()) {
             this.showAllowBroadcastWarning();
         } else {
             this.applyAllowBroadcast(value);
@@ -770,7 +772,7 @@ public class CustomRoomScreen extends Screen {
         if (this.editingActiveRoom) {
             this.refreshSettingsApplyButton();
         } else {
-            kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(value);
+            kfc.udp.client.signaling.P2PConfig.setAllowBroadcast(value);
         }
     }
 
@@ -785,7 +787,7 @@ public class CustomRoomScreen extends Screen {
         this.minecraft.setScreenAndShow(new SafetyWarningScreen(this,
                 "instant-p2p.streamer_protection.heading", "instant-p2p.streamer_protection.message",
                 0xFF55FFFF, 0xFF002020,
-                kfc.udp.client.webrtc.P2PConfig::setStreamerProtectionWarningDismissed,
+                kfc.udp.client.signaling.P2PConfig::setStreamerProtectionWarningDismissed,
                 this::confirmAllowBroadcast));
     }
     *///?} else {
@@ -794,7 +796,7 @@ public class CustomRoomScreen extends Screen {
         this.client.setScreen(new SafetyWarningScreen(this,
                 "instant-p2p.streamer_protection.heading", "instant-p2p.streamer_protection.message",
                 0xFF55FFFF, 0xFF002020,
-                kfc.udp.client.webrtc.P2PConfig::setStreamerProtectionWarningDismissed,
+                kfc.udp.client.signaling.P2PConfig::setStreamerProtectionWarningDismissed,
                 this::confirmAllowBroadcast));
     }
     //?}
@@ -867,7 +869,7 @@ public class CustomRoomScreen extends Screen {
         // 중계 강제만 여기서 반영한다(방송 허용은 applyRoomSettings 안에서 방 설정과 함께 처리 —
         // 방송 허용 여부도 방송 필터에 실리는 공개 정보라 다른 방 옵션들과 같은 재공지·변경 로그
         // 경로를 타야 한다).
-        kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
+        kfc.udp.client.signaling.P2PConfig.setRelayOnly(this.forceRelay);
         *///?} else {
         assert this.client != null;
         String title = this.publicRoom ? this.titleField.getText().trim() : null;
@@ -884,7 +886,7 @@ public class CustomRoomScreen extends Screen {
         // 중계 강제만 여기서 반영한다(방송 허용은 applyRoomSettings 안에서 방 설정과 함께 처리 —
         // 방송 허용 여부도 방송 필터에 실리는 공개 정보라 다른 방 옵션들과 같은 재공지·변경 로그
         // 경로를 타야 한다).
-        kfc.udp.client.webrtc.P2PConfig.setRelayOnly(this.forceRelay);
+        kfc.udp.client.signaling.P2PConfig.setRelayOnly(this.forceRelay);
         //?}
         // 적용 결과는 채팅으로 알리고, 초대코드 재생성처럼 곧장 게임 화면으로 돌아간다.
         // 방 전원에게 바뀐 설정을 알렸으면(applyRoomSettings) 방장에게 "적용 완료"를 또 띄우지 않는다.
@@ -910,8 +912,8 @@ public class CustomRoomScreen extends Screen {
                 || this.maxPlayers != KfcudpClient.getActiveMaxPlayers()
                 || this.allowCheats != KfcudpClient.isActiveAllowCheats()
                 || this.publicRoom != KfcudpClient.isActivePublicRoom()
-                || this.forceRelay != kfc.udp.client.webrtc.P2PConfig.isRelayOnly()
-                || this.allowBroadcast != kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
+                || this.forceRelay != kfc.udp.client.signaling.P2PConfig.isRelayOnly()
+                || this.allowBroadcast != kfc.udp.client.signaling.P2PConfig.isAllowBroadcast();
         // titleField는 이 메서드를 처음 부르는 init 시점(적용 버튼 직후)엔 아직 안 만들어져 있다 —
         // null 검사 없이 읽어서 init이 중간에 터지고 화면 위젯이 통째로 사라진 적이 있다. 그 시점엔
         // 어차피 입력란이 활성 제목 그대로라 비교할 게 없다.

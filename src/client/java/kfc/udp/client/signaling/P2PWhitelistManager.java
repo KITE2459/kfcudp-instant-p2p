@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import com.google.gson.*;
 import com.mojang.brigadier.CommandDispatcher;

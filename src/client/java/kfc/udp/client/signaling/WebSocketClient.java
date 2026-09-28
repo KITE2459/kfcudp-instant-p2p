@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,7 +22,7 @@ import java.util.Base64;
  */
 public abstract class WebSocketClient {
 
-    private static final Logger LOG = LoggerFactory.getLogger("webrtc-ws");
+    private static final Logger LOG = LoggerFactory.getLogger("signaling-ws");
 
     private static final String WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
     private static final int CONNECT_TIMEOUT_MS   = 10_000; // TCP 연결 + 핸드셰이크 응답 한도
@@ -130,10 +130,11 @@ public abstract class WebSocketClient {
             ok = true;
             if (readIdleTimeoutMs() > 0) SignalingRtt.track(this);
             // 방 목록은 채널×샤드마다 접속해서(최대 20개) 매번 찍으면 로그가 도배된다 — 경로는 debug로만 남긴다.
-            LOG.debug("[ws] connected to {}", url);
+            // URL·메시지 원문은 남기지 않는다 — URL 에 방 코드·인증 토큰, 메시지에 상대 후보(IP)가 들어 있다.
+            LOG.debug("[ws] connected");
 
             final InputStream fin = in;
-            Thread reader = new Thread(() -> readLoop(fin), "webrtc-ws-read");
+            Thread reader = new Thread(() -> readLoop(fin), "signaling-ws-read");
             reader.setDaemon(true);
             reader.start();
 
@@ -188,7 +189,6 @@ public abstract class WebSocketClient {
                     if (fin) {
                         String msg = fragment.toString(StandardCharsets.UTF_8);
                         fragment.reset();
-                        LOG.debug("[ws] recv: {}", msg.length() > 120 ? msg.substring(0, 120) + "..." : msg);
                         // type 필드가 없는 프로토콜(VILLAS 등)도 있으므로 항상 전달
                         String type = extractType(msg);
                         try {
@@ -240,7 +240,6 @@ public abstract class WebSocketClient {
 
     /** raw JSON 문자열 직접 전송 */
     public void send(String json) {
-        LOG.debug("[ws] send: {}", json.length() > 120 ? json.substring(0, 120) + "..." : json);
         try {
             sendFrame(0x1, json.getBytes(StandardCharsets.UTF_8));
         } catch (IOException e) {

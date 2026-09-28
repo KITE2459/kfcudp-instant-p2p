@@ -1,6 +1,6 @@
 package kfc.udp.client.gui;
 
-import kfc.udp.client.webrtc.ChzzkLink;
+import kfc.udp.client.signaling.ChzzkLink;
 //? if >=26.1 {
 /*import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;

@@ -31,8 +31,8 @@ public class ServerAddressMixin {
         if (entry == null || entry.ip == null) return;
 
         String realAddress = null;
-        if (entry.ip.startsWith("webrtc.")) {
-            realAddress = entry.ip.substring("webrtc.".length());
+        if (entry.ip.startsWith("quic.")) {
+            realAddress = entry.ip.substring("quic.".length());
         } else if (entry.ip.startsWith("kcp.")) {
             realAddress = entry.ip.substring("kcp.".length());
         }
@@ -70,8 +70,8 @@ public class ServerAddressMixin {
         if (entry == null || entry.address == null) return;
 
         String realAddress = null;
-        if (entry.address.startsWith("webrtc.")) {
-            realAddress = entry.address.substring("webrtc.".length());
+        if (entry.address.startsWith("quic.")) {
+            realAddress = entry.address.substring("quic.".length());
         } else if (entry.address.startsWith("kcp.")) {
             realAddress = entry.address.substring("kcp.".length());
         }
@@ -108,8 +108,8 @@ public class ServerAddressMixin {
         if (entry == null || entry.address == null) return;
 
         String realAddress = null;
-        if (entry.address.startsWith("webrtc.")) {
-            realAddress = entry.address.substring("webrtc.".length());
+        if (entry.address.startsWith("quic.")) {
+            realAddress = entry.address.substring("quic.".length());
         } else if (entry.address.startsWith("kcp.")) {
             realAddress = entry.address.substring("kcp.".length());
         }

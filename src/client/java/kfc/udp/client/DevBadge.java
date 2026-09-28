@@ -21,7 +21,7 @@ import java.util.UUID;
  * UUID는 Mojang 인증 값이라 온라인 모드 방에선 흉내 낼 수 없다. 이 클래스는 mixin 패키지 밖에 둔다 — mixin 패키지
  * 안의 클래스는 일반 클래스처럼 불러 쓸 수 없다.
  * <p>
- * 실제 UUID 목록은 더 이상 여기 하드코딩돼 있지 않다 — {@link kfc.udp.client.webrtc.Roles}가
+ * 실제 UUID 목록은 더 이상 여기 하드코딩돼 있지 않다 — {@link kfc.udp.client.signaling.Roles}가
  * mc-signaling에서 받아온다(그쪽 클래스 주석 참고). 이 클래스는 그 목록을 이름 표시용으로
  * 소비하는 자리만 그대로 유지한다.
  */
@@ -65,7 +65,7 @@ public final class DevBadge {
     public static String roleSuffix(UUID id) {
         // 접속자로 남의 방에 있는 동안은 방장이 내려준 등급이 먼저다 — 판정하는 쪽(방장)과 그리는
         // 쪽(나)이 서로 다른 roles.json 사본을 보면 화면과 실제가 어긋난다(RoomRoles 클래스 주석).
-        Integer pushed = kfc.udp.client.webrtc.RoomRoles.rankOrNull(id);
+        Integer pushed = kfc.udp.client.signaling.RoomRoles.rankOrNull(id);
         if (pushed != null) {
             return switch (pushed) {
                 case 3 -> "dev";
@@ -74,9 +74,9 @@ public final class DevBadge {
                 default -> null;
             };
         }
-        if (kfc.udp.client.webrtc.Roles.isDev(id)) return "dev";
-        if (kfc.udp.client.webrtc.Roles.isSupporter(id)) return "supporter";
-        if (kfc.udp.client.webrtc.Roles.isStreamer(id)) return "streamer";
+        if (kfc.udp.client.signaling.Roles.isDev(id)) return "dev";
+        if (kfc.udp.client.signaling.Roles.isSupporter(id)) return "supporter";
+        if (kfc.udp.client.signaling.Roles.isStreamer(id)) return "streamer";
         return null;
     }
 
@@ -103,7 +103,7 @@ public final class DevBadge {
 
     /**
      * 지금 실제로 instant-p2p로 통신 중인지 — 내가 Custom Room으로 방을 열었거나(KfcudpClient.isRoomActive),
-     * webrtc로 남의 방에 접속자로 들어간 상태(WebRtcBridge.getActiveConnectionUsesRelay)일 때만 true다.
+     * 커스텀 방에 접속자로 들어간 상태(QuicBridge.getActiveConnectionUsesRelay)일 때만 true다.
      * <p>
      * DevNameMixin/DevBadgeMixin이 이걸로 표시 여부를 가른다 — 이게 없으면 그냥 연 싱글플레이·LAN이나 이 모드와
      * 무관한 일반 서버에서도 UUID만 맞으면 배지가 붙어버린다(이름표·채팅은 클라이언트가 접속한 모든 서버에서,
@@ -111,7 +111,7 @@ public final class DevBadge {
      */
     public static boolean isP2pSessionActive() {
         return kfc.udp.client.KfcudpClient.isRoomActive()
-                || kfc.udp.client.webrtc.WebRtcBridge.getActiveConnectionUsesRelay() != null;
+                || kfc.udp.client.quic.QuicBridge.getActiveConnectionUsesRelay() != null;
     }
 
     //? if >=26.1 {

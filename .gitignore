@@ -48,3 +48,6 @@ hs_err_*.log
 replay_*.log
 *.hprof
 *.jfr
+
+# 패킷 캡쳐 — 공인 IP·방 코드가 들어 있다
+wireshark/

@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -35,7 +35,7 @@ import java.util.concurrent.atomic.AtomicReferenceArray;
  * 보낼 수 있고, {@code Peer.Marshal()}은 연결이 없으면 {@code remote} 필드 자체를
  * 비워 보낸다(Go 쪽 {@code json:"remote,omitempty"}) — 즉 "그 peer가 목록에 있다"와
  * "그 peer가 지금 연결돼 있다"는 서로 다른 정보이고, 후자는 반드시 remote 필드 유무로
- * 따로 확인해야 한다. {@link WebRtcHost}의 조인 감지, {@link WebRtcClient}의 호스트
+ * 따로 확인해야 한다. {@code QuicHost}의 조인 감지, {@code QuicClient}의 호스트
  * 감지도 같은 이유로 이 필드를 확인한다.
  * <p>
  * <b>연결이 끊기면 재접속해야 하는 이유</b> — 예전엔 lobby 하나가(네트워크
@@ -121,6 +121,50 @@ public final class PublicRoomBrowser {
         }
     }
 
+    // ── 공방이 서버에서 꺼져 있는지 ──────────────────────────────────────────
+
+    /**
+     * 서버가 공개 방 목록을 열어 두고 있는지({@code /api/v1/public-rooms} 의 mode).
+     * {@code "on"} 이 아니면 목록이 비는 게 정상이라, 화면이 "방이 없다" 대신 그 이유를 말해야
+     * 한다 — 안 그러면 사용자는 고장으로 본다. 초대코드는 이것과 무관하게 항상 된다.
+     * <p>
+     * 아직 못 물어봤거나 확인에 실패하면 {@code "on"} 으로 둔다 — 멀쩡한 서버를 꺼진 것처럼
+     * 안내하는 쪽이 더 나쁘다.
+     */
+    private static volatile String serverMode = "on";
+    private static volatile String serverNotice = "";
+
+    /** 서버가 공방을 열어 두고 있는지. */
+    public static boolean publicRoomsEnabled() {
+        return "on".equals(serverMode);
+    }
+
+    /** 서버가 함께 내려준 안내(비어 있을 수 있다). */
+    public static String serverNotice() {
+        return serverNotice;
+    }
+
+    /** 토큰을 확보하는 길에 같이 물어본다 — 이미 별도 스레드다(start 주석). */
+    private static void refreshServerMode() {
+        try {
+            java.net.http.HttpRequest req = java.net.http.HttpRequest
+                    .newBuilder(java.net.URI.create(P2PConfig.SIGNALING_HTTP_URL + "/api/v1/public-rooms"))
+                    .timeout(java.time.Duration.ofSeconds(5))
+                    .GET().build();
+            java.net.http.HttpResponse<String> res = java.net.http.HttpClient.newHttpClient()
+                    .send(req, java.net.http.HttpResponse.BodyHandlers.ofString());
+            if (res.statusCode() != 200) return;
+            String mode = VillasMsg.field(res.body(), "mode");
+            if (mode == null || mode.isBlank()) return;
+            serverMode = mode;
+            String n = VillasMsg.field(res.body(), "notice");
+            serverNotice = n != null ? n : "";
+            if (!"on".equals(mode)) LOG.debug("[public] 서버가 공개 방 목록을 제한 중이다 (mode={})", mode);
+        } catch (Exception e) {
+            LOG.debug("[public] 공방 상태 확인 실패(무시): {}", e.getMessage());
+        }
+    }
+
     /** null이면 멈춘 상태. */
     private volatile Session session;
     private final AtomicReference<List<RoomEntry>> currentRooms = new AtomicReference<>(List.of());
@@ -136,7 +180,18 @@ public final class PublicRoomBrowser {
         if (this.session != null) return;
         Session s = new Session(P2PConfig.getEffectiveChannels());
         this.session = s;
-        for (int i = 0; i < s.lobbyIds.length; i++) connect(s, i);
+        // 토큰을 먼저 확보한 뒤에 붙는다 — 공방을 테스터 한정으로 돌릴 때, 토큰 없이 붙으면
+        // 서버가 우리를 못 알아보고 빈 목록을 준다. ensureToken 은 네트워크를 기다리므로
+        // 여기서 직접 부르면 안 된다(화면 여는 경로다) — 재접속용 스케줄러에 넘긴다.
+        // 실패해도 그냥 붙는다: 공방이 열려 있으면 토큰 없이도 다 보인다.
+        SCHEDULER.execute(() -> {
+            MojangAuth.ensureToken();
+            // 중계 계정도 여기서 미리 받는다 — 방에 들어가는 순간(렌더 스레드) 기다리지 않게.
+            MojangAuth.turnCredentials();
+            refreshServerMode();
+            if (this.session != s) return; // 그 사이 화면이 닫혔다
+            for (int i = 0; i < s.lobbyIds.length; i++) connect(s, i);
+        });
     }
 
     public synchronized void stop() {
@@ -192,7 +247,10 @@ public final class PublicRoomBrowser {
     private void connect(Session s, int idx) {
         if (this.session != s) return;
         String peerName = PublicRoomAnnouncer.randomBrowserPeerName();
-        WebSocketClient client = new WebSocketClient(P2PConfig.SIGNALING_URL + "/" + s.lobbyIds[idx] + "/" + peerName) {
+        // 토큰을 붙인다 — 공방을 테스터 한정으로 돌릴 때 서버가 목록을 보여줄지 판단하는 근거다
+        // (MojangAuth.withToken 주석). 없으면 그냥 안 붙고, 공방이 열려 있으면 그래도 다 보인다.
+        String url = MojangAuth.withToken(P2PConfig.SIGNALING_URL + "/" + s.lobbyIds[idx] + "/" + peerName);
+        WebSocketClient client = new WebSocketClient(url) {
             @Override public void onConnected() {
                 s.backoffMs.set(idx, INITIAL_BACKOFF_MS);
                 send(VillasMsg.hello());

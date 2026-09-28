@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -29,7 +29,7 @@ public final class VillasMsg {  // QUIC 전송도 같은 시그널링을 쓴다 
         return "{\"description\":{\"spd\":\"" + escape(sdp) + "\",\"type\":\"" + type + "\"}}";
     }
 
-    static String candidate(String candidate, String mid) {
+    public static String candidate(String candidate, String mid) {
         return "{\"candidate\":{\"spd\":\"" + escape(candidate) + "\",\"mid\":\"" + escape(mid) + "\"}}";
     }
 

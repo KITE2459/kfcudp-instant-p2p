@@ -33,14 +33,14 @@ public abstract class DevNameMixin {
     /*@Inject(method = "getDisplayName", at = @At("RETURN"), cancellable = true)
     private void kfcudp$devBadge(CallbackInfoReturnable<Component> cir) {
         Player self = (Player) (Object) this;
-        // 배지 대상이어도 실제로 instant-p2p 방(내 호스팅 또는 webrtc 접속)에서만 붙인다 — 클래스 주석 참고.
+        // 배지 대상이어도 실제로 instant-p2p 방(내 호스팅 또는 커스텀 방 접속)에서만 붙인다 — 클래스 주석 참고.
         if (DevBadge.shouldDecorate(self.getUUID()) && DevBadge.isP2pSessionActive()) cir.setReturnValue(DevBadge.decorate(self.getUUID(), cir.getReturnValue()));
     }
     *///?} else {
     @Inject(method = "getDisplayName", at = @At("RETURN"), cancellable = true)
     private void kfcudp$devBadge(CallbackInfoReturnable<Text> cir) {
         PlayerEntity self = (PlayerEntity) (Object) this;
-        // 배지 대상이어도 실제로 instant-p2p 방(내 호스팅 또는 webrtc 접속)에서만 붙인다 — 클래스 주석 참고.
+        // 배지 대상이어도 실제로 instant-p2p 방(내 호스팅 또는 커스텀 방 접속)에서만 붙인다 — 클래스 주석 참고.
         if (DevBadge.shouldDecorate(self.getUuid()) && DevBadge.isP2pSessionActive()) cir.setReturnValue(DevBadge.decorate(self.getUuid(), cir.getReturnValue()));
     }
     //?}

@@ -1,6 +1,5 @@
 package kfc.udp.client.mixin;
 
-import kfc.udp.client.webrtc.WebRtcBridge;
 import kfc.udp.client.quic.QuicBridge;
 import kfc.udp.client.kcp.KcpAddressRegistry;
 //? if >=26.1 {
@@ -48,37 +47,11 @@ public class ConnectScreenMixin {
 
         String originalAddress = serverInfo != null ? serverInfo.ip : address.getHost();
 
-        // webrtc. 처리
-        String roomId = WebRtcBridge.parseRoomId(originalAddress);
-        if (roomId != null) {
-            ci.cancel();
-            WebRtcBridge.LOG.info("[WebRTC] Connecting via WebRTC, roomId={}", roomId);
-            try {
-                int localPort = WebRtcBridge.start(roomId);
-                ServerAddress localAddr = new ServerAddress("127.0.0.1", localPort);
-                ServerData localInfo = new ServerData(
-                        serverInfo != null ? serverInfo.name : roomId,
-                        "127.0.0.1:" + localPort,
-                        ServerData.Type.OTHER
-                );
-                client.execute(() ->
-                        ConnectScreen.startConnecting(screen, client, localAddr, localInfo, false, null)
-                );
-            } catch (Exception e) {
-                WebRtcBridge.LOG.warn("[WebRTC] Failed to start: {}", e.getMessage(), e);
-                client.execute(() -> client.setScreenAndShow(new DisconnectedScreen(
-                        screen,
-                        Component.translatable("connect.failed"),
-                        Component.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())))));
-            }
-            return;
-        }
-
-        // quic. 처리 — webrtc.와 흐름이 같고 전송만 다르다(QuicBridge 클래스 주석 참고).
+        // quic. — 커스텀 방(초대 코드) 접속. 프리픽스는 connectToRoom 이 내부에서 붙인다.
         String quicRoom = QuicBridge.parseRoomId(originalAddress);
         if (quicRoom != null) {
             ci.cancel();
-            WebRtcBridge.LOG.info("[QUIC] Connecting via QUIC, roomId={}", quicRoom);
+            QuicBridge.LOG.debug("[QUIC] Connecting via QUIC"); // 방 코드는 남기지 않는다(로그를 공유하면 남이 들어온다)
             try {
                 int localPort = QuicBridge.start(quicRoom);
                 ServerAddress localAddr = new ServerAddress("127.0.0.1", localPort);
@@ -91,7 +64,7 @@ public class ConnectScreenMixin {
                         ConnectScreen.startConnecting(screen, client, localAddr, localInfo, false, null)
                 );
             } catch (Exception e) {
-                WebRtcBridge.LOG.warn("[QUIC] Failed to start: {}", e.getMessage(), e);
+                QuicBridge.LOG.warn("[QUIC] Failed to start: {}", e.getMessage(), e);
                 client.execute(() -> client.setScreenAndShow(new DisconnectedScreen(
                         screen,
                         Component.translatable("connect.failed"),
@@ -101,7 +74,7 @@ public class ConnectScreenMixin {
         }
 
         // kcp. 처리
-        String kcpAddr = WebRtcBridge.parseKcpAddress(originalAddress);
+        String kcpAddr = QuicBridge.parseKcpAddress(originalAddress);
         if (kcpAddr != null) {
             ci.cancel();
 
@@ -110,7 +83,7 @@ public class ConnectScreenMixin {
                 String host = parsed.getHost();
                 int    port = parsed.getPort();
 
-                WebRtcBridge.LOG.info("[KCP] Connecting native KCP, server={}:{}", host, port);
+                QuicBridge.LOG.info("[KCP] Connecting native KCP, server={}:{}", host, port);
 
                 // register + connect를 client.execute() 안에서 연속 실행
                 // → Server Pinger가 끼어들 타이밍 없음
@@ -125,7 +98,7 @@ public class ConnectScreenMixin {
                         KcpAddressRegistry.register();
                         ConnectScreen.startConnecting(screen, client, realAddr, realInfo, false, null);
                     } catch (Exception e) {
-                        WebRtcBridge.LOG.warn("[KCP] Failed to connect: {}", e.getMessage(), e);
+                        QuicBridge.LOG.warn("[KCP] Failed to connect: {}", e.getMessage(), e);
                         client.setScreenAndShow(new DisconnectedScreen(
                                 screen,
                                 Component.translatable("connect.failed"),
@@ -133,7 +106,7 @@ public class ConnectScreenMixin {
                     }
                 });
             } catch (Exception e) {
-                WebRtcBridge.LOG.warn("[KCP] Failed to parse address: {}", e.getMessage(), e);
+                QuicBridge.LOG.warn("[KCP] Failed to parse address: {}", e.getMessage(), e);
                 client.execute(() -> client.setScreenAndShow(new DisconnectedScreen(
                         screen,
                         Component.translatable("connect.failed"),
@@ -158,37 +131,11 @@ public class ConnectScreenMixin {
 
         String originalAddress = serverInfo != null ? serverInfo.address : address.getAddress();
 
-        // webrtc. 처리
-        String roomId = WebRtcBridge.parseRoomId(originalAddress);
-        if (roomId != null) {
-            ci.cancel();
-            WebRtcBridge.LOG.info("[WebRTC] Connecting via WebRTC, roomId={}", roomId);
-            try {
-                int localPort = WebRtcBridge.start(roomId);
-                ServerAddress localAddr = new ServerAddress("127.0.0.1", localPort);
-                ServerInfo localInfo = new ServerInfo(
-                        serverInfo != null ? serverInfo.name : roomId,
-                        "127.0.0.1:" + localPort,
-                        ServerInfo.ServerType.OTHER
-                );
-                client.execute(() ->
-                        ConnectScreen.connect(screen, client, localAddr, localInfo, false, null)
-                );
-            } catch (Exception e) {
-                WebRtcBridge.LOG.warn("[WebRTC] Failed to start: {}", e.getMessage(), e);
-                client.execute(() -> client.setScreen(new DisconnectedScreen(
-                        screen,
-                        Text.translatable("connect.failed"),
-                        Text.translatable("instant-p2p.msg.connect_failed", String.valueOf(e.getMessage())))));
-            }
-            return;
-        }
-
-        // quic. 처리 — webrtc.와 흐름이 같고 전송만 다르다(QuicBridge 클래스 주석 참고).
+        // quic. — 커스텀 방(초대 코드) 접속. 프리픽스는 connectToRoom 이 내부에서 붙인다.
         String quicRoom = QuicBridge.parseRoomId(originalAddress);
         if (quicRoom != null) {
             ci.cancel();
-            WebRtcBridge.LOG.info("[QUIC] Connecting via QUIC, roomId={}", quicRoom);
+            QuicBridge.LOG.debug("[QUIC] Connecting via QUIC"); // 방 코드는 남기지 않는다(로그를 공유하면 남이 들어온다)
             try {
                 int localPort = QuicBridge.start(quicRoom);
                 ServerAddress localAddr = new ServerAddress("127.0.0.1", localPort);
@@ -201,7 +148,7 @@ public class ConnectScreenMixin {
                         ConnectScreen.connect(screen, client, localAddr, localInfo, false, null)
                 );
             } catch (Exception e) {
-                WebRtcBridge.LOG.warn("[QUIC] Failed to start: {}", e.getMessage(), e);
+                QuicBridge.LOG.warn("[QUIC] Failed to start: {}", e.getMessage(), e);
                 client.execute(() -> client.setScreen(new DisconnectedScreen(
                         screen,
                         Text.translatable("connect.failed"),
@@ -211,7 +158,7 @@ public class ConnectScreenMixin {
         }
 
         // kcp. 처리
-        String kcpAddr = WebRtcBridge.parseKcpAddress(originalAddress);
+        String kcpAddr = QuicBridge.parseKcpAddress(originalAddress);
         if (kcpAddr != null) {
             ci.cancel();
 
@@ -220,7 +167,7 @@ public class ConnectScreenMixin {
                 String host = parsed.getAddress();
                 int    port = parsed.getPort();
 
-                WebRtcBridge.LOG.info("[KCP] Connecting native KCP, server={}:{}", host, port);
+                QuicBridge.LOG.info("[KCP] Connecting native KCP, server={}:{}", host, port);
 
                 // register + connect를 client.execute() 안에서 연속 실행
                 // → Server Pinger가 끼어들 타이밍 없음
@@ -235,7 +182,7 @@ public class ConnectScreenMixin {
                         KcpAddressRegistry.register();
                         ConnectScreen.connect(screen, client, realAddr, realInfo, false, null);
                     } catch (Exception e) {
-                        WebRtcBridge.LOG.warn("[KCP] Failed to connect: {}", e.getMessage(), e);
+                        QuicBridge.LOG.warn("[KCP] Failed to connect: {}", e.getMessage(), e);
                         client.setScreen(new DisconnectedScreen(
                                 screen,
                                 Text.translatable("connect.failed"),
@@ -243,7 +190,7 @@ public class ConnectScreenMixin {
                     }
                 });
             } catch (Exception e) {
-                WebRtcBridge.LOG.warn("[KCP] Failed to parse address: {}", e.getMessage(), e);
+                QuicBridge.LOG.warn("[KCP] Failed to parse address: {}", e.getMessage(), e);
                 client.execute(() -> client.setScreen(new DisconnectedScreen(
                         screen,
                         Text.translatable("connect.failed"),

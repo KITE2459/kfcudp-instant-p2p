@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents;
 import org.slf4j.Logger;
@@ -20,7 +20,7 @@ import java.util.UUID;
  * 방 안에서 통용되는 등급 — <b>방장이 자기 {@link Roles} 사본으로 계산해 접속자에게 내려보낸 값</b>이다.
  * <p>
  * <b>왜 필요한가</b> — roles.json은 방장이 방을 열 때와 접속자가 들어올 때 각자 따로 받아온다
- * ({@code WebRtcBridge.startHost}/{@code start}의 {@link Roles#refreshAsync()}). 그 사이에 roles.json이
+ * ({@code QuicBridge.startHost}/{@code start}의 {@link Roles#refreshAsync()}). 그 사이에 roles.json이
  * 바뀌면 두 사본이 어긋나는데, 실제 효력은 전부 방장 쪽에서 판정한다:
  * <ul>
  *   <li>{@code P2PBanManager.checkCanJoin} — 정원 무시 입장 허용</li>

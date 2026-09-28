@@ -32,19 +32,14 @@ loom {
 
     // 디버그: ./gradlew ":<버전>:runClient" -PfakeRooms=84 → 방 목록에 가짜 방 84개(PublicRoomBrowser.FAKE_ROOMS)
     findProperty("fakeRooms")?.let { n -> runs.named("client") { vmArg("-Dkfcudp.debug.fakeRooms=$n") } }
+    // 개발 클라이언트 닉네임 고정(-PdevName=KiteDev) — 기본은 실행마다 PlayerNNN 이라 서버의 정품 인증 예외 목록에 못 넣는다.
+    findProperty("devName")?.let { n -> runs.named("client") { programArgs("--username", n.toString()) } }
 }
 
 dependencies {
     minecraft("com.mojang:minecraft:${stonecutter.current.version}")
     implementation("net.fabricmc:fabric-loader:${project.property("loader_version_26x")}")
     implementation("net.fabricmc.fabric-api:fabric-api:${sc.properties["deps.fabric_api"] as String}")
-
-    // WebRTC Java — dev.onvoid.webrtc 0.14.0 (MC 버전과 무관, 고정)
-    implementation("dev.onvoid.webrtc:webrtc-java:0.14.0")
-    implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:windows-x86_64")
-    implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:linux-x86_64")
-    implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:macos-x86_64")
-    implementation("dev.onvoid.webrtc:webrtc-java:0.14.0:macos-aarch64")
 
     // QUIC — 순수 자바(kwik). 네이티브 없음, 전부 합쳐 646KB.
     // agent15는 kwik의 TLS 1.3 구현 — QUIC은 레코드 프레이밍 없는 핸드셰이크 바이트가
@@ -85,7 +80,7 @@ tasks.jar {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     inputs.property("projectName", projectName)
 
-    // webrtc-java 클래스 및 네이티브 라이브러리를 jar에 번들링
+    // kwik(QUIC) 클래스를 jar 에 번들링 — 네이티브는 없다
     from({
         // runtimeClasspath 를 봐야 한다 — kwik POM 이 agent15/hkdf/siphash 를 runtime 스코프로
         // 선언하므로 compileClasspath 에는 안 올라오고, 그러면 게임에서 TlsStatusEventHandler
@@ -93,8 +88,8 @@ tasks.jar {
         configurations.runtimeClasspath.get().resolvedConfiguration.resolvedArtifacts
             .filter {
                 it.moduleVersion.id.group in setOf(
-                    "dev.onvoid.webrtc",
-                    // kwik + 그 의존(agent15 = TLS 1.3, hkdf, siphash)
+                    // kwik + 그 의존(agent15 = TLS 1.3, hkdf, siphash). 전부 순수 자바 —
+                    // libwebrtc 를 걷어내면서 네이티브 라이브러리가 하나도 없어졌다.
                     // ponytail: LGPL-3.0이라 배포판에서는 shading 대신 JiJ(중첩 jar)로 옮겨야 한다
                     "tech.kwik", "at.favre.lib", "com.io7m.repackage.io.whitfin",
                 )

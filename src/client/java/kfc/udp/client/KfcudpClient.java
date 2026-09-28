@@ -1,9 +1,8 @@
 package kfc.udp.client;
 
 import kfc.udp.client.gui.CustomRoomScreen;
-import kfc.udp.client.webrtc.P2PBanManager;
-import kfc.udp.client.webrtc.P2PWhitelistManager;
-import kfc.udp.client.webrtc.WebRtcBridge;
+import kfc.udp.client.signaling.P2PBanManager;
+import kfc.udp.client.signaling.P2PWhitelistManager;
 import kfc.udp.client.quic.QuicBridge;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -98,6 +97,9 @@ public class KfcudpClient implements ClientModInitializer {
 
     public static boolean isRoomActive() { return activeInviteCode != null; }
 
+    /** 내가 열어 둔 방 코드 — 방 목록이 "내 방은 절대 숨기지 않게" 쓴다. 없으면 null. */
+    public static String activeRoomCode() { return activeInviteCode; }
+
     /** 지금 이 클라이언트가 아는 방장 UUID — 내가 방장이면 내 UUID, 접속자면 JOIN 때 받아둔
      * {@link #guestHostUuid}(둘 다 아니면 null). DevBadge의 방장 표시(📶)가 이걸로 판단한다. */
     public static java.util.UUID currentHostUuid() {
@@ -136,11 +138,11 @@ public class KfcudpClient implements ClientModInitializer {
     /** 채널 설정 화면(ChannelScreen)에서 적용을 눌렀을 때 — 공개 중인 방이면 새 채널·규칙으로 다시 공지한다. */
     //? if >=26.1 {
     /*public static void republishForChannelChange(Minecraft client) {
-        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        String channel = kfc.udp.client.signaling.P2PConfig.getChannelKey();
         if (activeInviteCode == null || !activePublicRoom || client.player == null || channel.equals(activeChannel)) return;
         // publishPublicRoom(=PublicRoomAnnouncer.publish)이 채널 구성이 바뀐 걸 스스로 감지해 재접속한다 —
         // 여기서 먼저 내릴 필요 없다.
-        WebRtcBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
+        QuicBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
                 client.player.getUUID().toString(), activeGuestCount + 1, activeMaxPlayers);
         activeChannel = channel;
         // 적용 버튼을 누를 필요 없이 여기서 이미 끝났다는 걸 알린다 — 그게 안 보여서 "태그만 바꾸면
@@ -149,11 +151,11 @@ public class KfcudpClient implements ClientModInitializer {
     }
     *///?} else {
     public static void republishForChannelChange(MinecraftClient client) {
-        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        String channel = kfc.udp.client.signaling.P2PConfig.getChannelKey();
         if (activeInviteCode == null || !activePublicRoom || client.player == null || channel.equals(activeChannel)) return;
         // publishPublicRoom(=PublicRoomAnnouncer.publish)이 채널 구성이 바뀐 걸 스스로 감지해 재접속한다 —
         // 여기서 먼저 내릴 필요 없다.
-        WebRtcBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
+        QuicBridge.publishPublicRoom(activeInviteCode, activeTitle, client.player.getName().getString(),
                 client.player.getUuid().toString(), activeGuestCount + 1, activeMaxPlayers);
         activeChannel = channel;
         // 적용 버튼을 누를 필요 없이 여기서 이미 끝났다는 걸 알린다 — 그게 안 보여서 "태그만 바꾸면
@@ -168,7 +170,7 @@ public class KfcudpClient implements ClientModInitializer {
      * {@code ClientReceiveMessageEvents.ALLOW_GAME}에서 이 접두사를 가로채 채팅에는
      * 안 띄우고 숫자만 파싱해서 저장한다. 새 커스텀 네트워킹 패킷을 추가하는 대신
      * 이미 쓰고 있는 바닐라 채팅 경로를 재사용 — VILLASframework 시그널링 스키마는
-     * 서버가 고정해 둔 거라 건드리지 않는 게 안전하다(WebRtcHost 클래스 주석 참고).
+     * 서버가 고정해 둔 거라 건드리지 않는 게 안전하다(QuicHost 클래스 주석 참고).
      */
     /** 접속자 쪽에서 파싱해 캐시해 둔 방 정원. 0이면 아직 못 받음(host이거나, 마커 도착 전). */
     private static volatile int guestRoomMaxPlayers = 0;
@@ -179,7 +181,7 @@ public class KfcudpClient implements ClientModInitializer {
      * 권한을 실제와 맞게 보여주려면 알아야 한다({@link #isBroadcastAllowedHere}). */
     private static volatile boolean guestAllowBroadcast = false;
 
-    /** 방장이 보낸 {@link kfc.udp.client.webrtc.P2PNet.RoomState}를 접속자 쪽에 반영한다 —
+    /** 방장이 보낸 {@link kfc.udp.client.signaling.P2PNet.RoomState}를 접속자 쪽에 반영한다 —
      * RoomRoles의 수신 핸들러가 부른다. */
     public static void applyGuestRoomState(int maxPlayers, java.util.UUID hostUuid, boolean allowBroadcast) {
         guestRoomMaxPlayers = maxPlayers;
@@ -196,7 +198,7 @@ public class KfcudpClient implements ClientModInitializer {
      * 버튼이 뻔히 보이는데 눌러도 아무 일도 안 일어난다.
      */
     public static boolean isBroadcastAllowedHere() {
-        return isRoomActive() ? kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast() : guestAllowBroadcast;
+        return isRoomActive() ? kfc.udp.client.signaling.P2PConfig.isAllowBroadcast() : guestAllowBroadcast;
     }
 
     /**
@@ -211,9 +213,9 @@ public class KfcudpClient implements ClientModInitializer {
     private static final int PAUSE_REFRESH_INTERVAL_TICKS = 10;
     private static int pauseRefreshCooldown = 0;
 
-    /** 지금 붙어있는 세션이 webrtc 커스텀 방 접속자 세션인지 — JOIN 시점에 세팅,
+    /** 지금 붙어있는 세션이 커스텀 방 접속자 세션인지 — JOIN 시점에 세팅,
      * DISCONNECT 시점에 읽고 리셋한다({@link #pendingRoomListRedirect} 참고). */
-    private static volatile boolean activeSessionIsWebrtcGuest = false;
+    private static volatile boolean activeSessionIsRoomGuest = false;
     /** 이번 접속 세션에서 이미 "차단한 유저가 접속했다"고 알린 플레이어 — 사람마다 한 번만(클라이언트 스레드 전용). */
     private static final java.util.Set<java.util.UUID> warnedBlockedPlayers = new java.util.HashSet<>();
     /** 방 클릭 → 입장 전 확인(RoomMembersProbe)이 도는 중 — 연타로 접속이 두 번 시작되지 않게(클라이언트 스레드 전용). */
@@ -245,18 +247,18 @@ public class KfcudpClient implements ClientModInitializer {
     // 곧장 target으로 간다.
     //? if >=26.1 {
     /*private static void kfcudp$openWithSafetyWarning(net.minecraft.client.Minecraft client, Screen parent, Screen target) {
-        if (kfc.udp.client.webrtc.P2PConfig.isSafetyWarningDismissed()) client.setScreenAndShow(target);
+        if (kfc.udp.client.signaling.P2PConfig.isSafetyWarningDismissed()) client.setScreenAndShow(target);
         else client.setScreenAndShow(new kfc.udp.client.gui.SafetyWarningScreen(parent,
                 "instant-p2p.safety_warning.heading", "instant-p2p.safety_warning.message",
-                0xFFFF5555, 0xFF1A0000, kfc.udp.client.webrtc.P2PConfig::setSafetyWarningDismissed,
+                0xFFFF5555, 0xFF1A0000, kfc.udp.client.signaling.P2PConfig::setSafetyWarningDismissed,
                 () -> client.setScreenAndShow(target)));
     }
     *///?} else {
     private static void kfcudp$openWithSafetyWarning(MinecraftClient client, Screen parent, Screen target) {
-        if (kfc.udp.client.webrtc.P2PConfig.isSafetyWarningDismissed()) client.setScreen(target);
+        if (kfc.udp.client.signaling.P2PConfig.isSafetyWarningDismissed()) client.setScreen(target);
         else client.setScreen(new kfc.udp.client.gui.SafetyWarningScreen(parent,
                 "instant-p2p.safety_warning.heading", "instant-p2p.safety_warning.message",
-                0xFFFF5555, 0xFF1A0000, kfc.udp.client.webrtc.P2PConfig::setSafetyWarningDismissed,
+                0xFFFF5555, 0xFF1A0000, kfc.udp.client.signaling.P2PConfig::setSafetyWarningDismissed,
                 () -> client.setScreen(target)));
     }
     //?}
@@ -291,7 +293,11 @@ public class KfcudpClient implements ClientModInitializer {
     //? if >=26.3 {
     /*private static void kfcudp$applyGuestCommandAccess(net.minecraft.client.server.IntegratedServer server, boolean allowCheats) {
         // 26.3은 이 값이 월드 설정과 함께 봐야 효력이 있어서, 접속자 권한 자체는
-        // IntegratedServerMaxPlayersMixin이 방 옵션으로 답한다. 여기선 권한 재전송만 유발한다.
+        // IntegratedServerMaxPlayersMixin이 방 옵션(activeAllowCheats)으로 답한다. 여기선 권한 재전송만 유발한다.
+        // 값을 먼저 바꿔야 한다 — setGuestCommandAccess가 안에서 곧바로 전원 권한을 재전송하는데
+        // (updatePermissions), 믹스인 동기화 훅은 TAIL이라 그때 옛 값이 나갔다. 그래서 켜도 안 되고
+        // 꺼도 되는, 한 박자 늦은 권한이 재접속할 때까지 남았다.
+        activeAllowCheats = allowCheats;
         server.setGuestCommandAccess(allowCheats);
     }
     *///?}
@@ -379,7 +385,7 @@ public class KfcudpClient implements ClientModInitializer {
 
     private static void kfcudp$sendCommandTrees(IntegratedServer server) {
         for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
-            server.getCommands().sendCommands(sp);
+            server.getPlayerList().sendPlayerPermissionLevel(sp); // 권한 레벨 + 명령어 트리
         }
     }
 
@@ -440,7 +446,7 @@ public class KfcudpClient implements ClientModInitializer {
 
     private static void kfcudp$sendCommandTrees(IntegratedServer server) {
         for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
-            server.getCommandManager().sendCommandTree(sp);
+            server.getPlayerManager().sendCommandTree(sp); // 권한 레벨 + 명령어 트리
         }
     }
 
@@ -575,10 +581,11 @@ public class KfcudpClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        LOG.info("[instant-p2p] WebRTC bridge mod initialized");
-        kfc.udp.client.webrtc.P2PNet.registerTypes();
-        kfc.udp.client.webrtc.ExpelManager.register();
-        kfc.udp.client.webrtc.RoomRoles.register();
+        LOG.debug("[instant-p2p] QUIC transport initialized");
+        kfc.udp.client.signaling.ModVersionCheck.refreshAsync(); // 구버전이면 방 목록 제목에 안내를 띄운다
+        kfc.udp.client.signaling.P2PNet.registerTypes();
+        kfc.udp.client.signaling.ExpelManager.register();
+        kfc.udp.client.signaling.RoomRoles.register();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -670,25 +677,25 @@ public class KfcudpClient implements ClientModInitializer {
             if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount++;
             if (activePublicRoom) {
-                WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
+                QuicBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount = Math.max(0, activeGuestCount - 1);
             if (activePublicRoom) {
-                WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
+                QuicBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
 
-        // webrtc.로 접속한 경우 월드 진입 시점에 내 연결이 직결인지 중계인지 알려준다.
-        // kcp./일반 서버 접속이면 활성 webrtc 세션이 없으니 null → 아무 것도 안 뜸.
-        // 동시에 이 세션이 webrtc 커스텀 방 접속자 세션이었다는 걸 기억해 둔다
+        // 커스텀 방(quic)으로 접속한 경우 월드 진입 시점에 직결인지 중계인지 알려준다.
+        // kcp./일반 서버 접속이면 활성 세션이 없으니 null → 아무 것도 안 뜸.
+        // 동시에 이 세션이 커스텀 방 접속자 세션이었다는 걸 기억해 둔다
         // (DISCONNECT 시점에 읽어서 pendingRoomListRedirect 세팅용).
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            Boolean relay = WebRtcBridge.getActiveConnectionUsesRelay();
+            Boolean relay = QuicBridge.getActiveConnectionUsesRelay();
             if (relay == null || client.player == null) return;
-            activeSessionIsWebrtcGuest = true;
+            activeSessionIsRoomGuest = true;
             client.player.sendSystemMessage(Component.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"));
@@ -700,7 +707,7 @@ public class KfcudpClient implements ClientModInitializer {
                 if (DevBadge.hasPerk(client.player.getUUID())) line.append(Component.translatable("instant-p2p.msg.perk_note"));
                 // 등급자(개발자·서포터·방송인 전부, ExpelManager.priority>0) 전원에게 공통 안내 —
                 // 플레이어 차단 화면에서 강퇴·임시밴 권한이 있다는 걸 접속 즉시 알려준다.
-                if (kfc.udp.client.webrtc.ExpelManager.priority(client.player.getUUID()) > 0) {
+                if (kfc.udp.client.signaling.ExpelManager.priority(client.player.getUUID()) > 0) {
                     line.append(Component.translatable("instant-p2p.msg.expel_note"));
                 }
                 client.player.sendSystemMessage(line);
@@ -720,7 +727,7 @@ public class KfcudpClient implements ClientModInitializer {
         // 접속자 목록(UUID)보다 먼저 보내므로 0.1초 뒤 이름으로 목록을 찾아 UUID로 대조한다. 한 세션에 사람마다
         // 한 번만 — 나갔다 다시 들어와도 조용.
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-            if (!activeSessionIsWebrtcGuest || overlay
+            if (!activeSessionIsRoomGuest || overlay
                     || !(message.getContents() instanceof net.minecraft.network.chat.contents.TranslatableContents t)
                     || !t.getKey().startsWith("multiplayer.player.joined") || t.getArgs().length == 0) return;
             String name = t.getArgs()[0] instanceof Component c ? c.getString() : String.valueOf(t.getArgs()[0]);
@@ -751,8 +758,8 @@ public class KfcudpClient implements ClientModInitializer {
             warnedBlockedPlayers.clear();
             // 커스텀 방 접속자 세션이었으면, 다음에 뜰 바닐라 멀티플레이 화면을
             // RoomListScreen으로 바꿔치기하도록 표시해 둔다(AFTER_INIT에서 소비).
-            if (activeSessionIsWebrtcGuest) {
-                activeSessionIsWebrtcGuest = false;
+            if (activeSessionIsRoomGuest) {
+                activeSessionIsRoomGuest = false;
                 pendingRoomListRedirect = true;
             }
         });
@@ -767,8 +774,6 @@ public class KfcudpClient implements ClientModInitializer {
         });
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            WebRtcBridge.stop();
-            WebRtcBridge.stopHost();
             QuicBridge.stop();
             QuicBridge.stopHost();
         }, "kfcudp-shutdown"));
@@ -779,10 +784,11 @@ public class KfcudpClient implements ClientModInitializer {
 
     @Override
     public void onInitializeClient() {
-        LOG.info("[instant-p2p] WebRTC bridge mod initialized");
-        kfc.udp.client.webrtc.P2PNet.registerTypes();
-        kfc.udp.client.webrtc.ExpelManager.register();
-        kfc.udp.client.webrtc.RoomRoles.register();
+        LOG.debug("[instant-p2p] QUIC transport initialized");
+        kfc.udp.client.signaling.ModVersionCheck.refreshAsync(); // 구버전이면 방 목록 제목에 안내를 띄운다
+        kfc.udp.client.signaling.P2PNet.registerTypes();
+        kfc.udp.client.signaling.ExpelManager.register();
+        kfc.udp.client.signaling.RoomRoles.register();
 
         ScreenEvents.AFTER_INIT.register((client, screen, scaledWidth, scaledHeight) -> {
             // 창 크기 변경 등으로 같은 화면에 AFTER_INIT이 다시 불릴 수 있다 —
@@ -873,25 +879,25 @@ public class KfcudpClient implements ClientModInitializer {
             if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount++;
             if (activePublicRoom) {
-                WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
+                QuicBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
         ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             if (activeInviteCode == null || P2PBanManager.isHost(server, handler.player)) return;
             activeGuestCount = Math.max(0, activeGuestCount - 1);
             if (activePublicRoom) {
-                WebRtcBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
+                QuicBridge.updatePublicRoomPlayerCount(activeGuestCount + 1, activeMaxPlayers);
             }
         });
 
-        // webrtc.로 접속한 경우 월드 진입 시점에 내 연결이 직결인지 중계인지 알려준다.
-        // kcp./일반 서버 접속이면 활성 webrtc 세션이 없으니 null → 아무 것도 안 뜸.
-        // 동시에 이 세션이 webrtc 커스텀 방 접속자 세션이었다는 걸 기억해 둔다
+        // 커스텀 방(quic)으로 접속한 경우 월드 진입 시점에 직결인지 중계인지 알려준다.
+        // kcp./일반 서버 접속이면 활성 세션이 없으니 null → 아무 것도 안 뜸.
+        // 동시에 이 세션이 커스텀 방 접속자 세션이었다는 걸 기억해 둔다
         // (DISCONNECT 시점에 읽어서 pendingRoomListRedirect 세팅용).
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
-            Boolean relay = WebRtcBridge.getActiveConnectionUsesRelay();
+            Boolean relay = QuicBridge.getActiveConnectionUsesRelay();
             if (relay == null || client.player == null) return;
-            activeSessionIsWebrtcGuest = true;
+            activeSessionIsRoomGuest = true;
             client.player.sendMessage(Text.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"), false);
@@ -903,7 +909,7 @@ public class KfcudpClient implements ClientModInitializer {
                 if (DevBadge.hasPerk(client.player.getUuid())) line.append(Text.translatable("instant-p2p.msg.perk_note"));
                 // 등급자(개발자·서포터·방송인 전부, ExpelManager.priority>0) 전원에게 공통 안내 —
                 // 플레이어 차단 화면에서 강퇴·임시밴 권한이 있다는 걸 접속 즉시 알려준다.
-                if (kfc.udp.client.webrtc.ExpelManager.priority(client.player.getUuid()) > 0) {
+                if (kfc.udp.client.signaling.ExpelManager.priority(client.player.getUuid()) > 0) {
                     line.append(Text.translatable("instant-p2p.msg.expel_note"));
                 }
                 client.player.sendMessage(line, false);
@@ -923,7 +929,7 @@ public class KfcudpClient implements ClientModInitializer {
         // 접속자 목록(UUID)보다 먼저 보내므로 0.1초 뒤 이름으로 목록을 찾아 UUID로 대조한다. 한 세션에 사람마다
         // 한 번만 — 나갔다 다시 들어와도 조용.
         ClientReceiveMessageEvents.GAME.register((message, overlay) -> {
-            if (!activeSessionIsWebrtcGuest || overlay
+            if (!activeSessionIsRoomGuest || overlay
                     || !(message.getContent() instanceof net.minecraft.text.TranslatableTextContent t)
                     || !t.getKey().startsWith("multiplayer.player.joined") || t.getArgs().length == 0) return;
             String name = t.getArgs()[0] instanceof Text c ? c.getString() : String.valueOf(t.getArgs()[0]);
@@ -954,8 +960,8 @@ public class KfcudpClient implements ClientModInitializer {
             warnedBlockedPlayers.clear();
             // 커스텀 방 접속자 세션이었으면, 다음에 뜰 바닐라 멀티플레이 화면을
             // RoomListScreen으로 바꿔치기하도록 표시해 둔다(AFTER_INIT에서 소비).
-            if (activeSessionIsWebrtcGuest) {
-                activeSessionIsWebrtcGuest = false;
+            if (activeSessionIsRoomGuest) {
+                activeSessionIsRoomGuest = false;
                 pendingRoomListRedirect = true;
             }
         });
@@ -970,8 +976,6 @@ public class KfcudpClient implements ClientModInitializer {
         });
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-            WebRtcBridge.stop();
-            WebRtcBridge.stopHost();
             QuicBridge.stop();
             QuicBridge.stopHost();
         }, "kfcudp-shutdown"));
@@ -1097,19 +1101,14 @@ public class KfcudpClient implements ClientModInitializer {
         // 초대 코드 생성
         String code = generateCode();
 
-        // QUIC 전송을 같은 방 코드로 나란히 띄운다 — 접속자가 webrtc.CODE / quic.CODE 로
-        // 골라 붙어 비교할 수 있게. 실험 중인 경로라 실패해도 방 자체는 그대로 둔다.
         try {
             QuicBridge.startHost(code, "127.0.0.1:" + finalPort);
         } catch (Exception e) {
-            LOG.warn("[instant-p2p] QUIC host 시작 실패(WebRTC 는 그대로 진행): {}", e.getMessage());
-        }
-
-        try {
-            WebRtcBridge.startHost(code, "127.0.0.1:" + finalPort);
-        } catch (Exception e) {
             LOG.error("[instant-p2p] Failed to start host: {}", e.getMessage(), e);
-            kfcudp$tell(client, P2PBanManager.msgKey("instant-p2p.msg.host_failed"));
+            // 랑데부 서버가 방장 연결을 거절한 경우 — 401 정품 인증 안 됨, 403 차단된 계정.
+            String m = String.valueOf(e.getMessage());
+            kfcudp$tell(client, P2PBanManager.msgKey(m.contains(" 401") ? "instant-p2p.msg.host_need_premium"
+                    : m.contains(" 403") ? "instant-p2p.msg.host_banned" : "instant-p2p.msg.host_failed"));
             return;
         }
         // 방 제목을 비워뒀으면 "Room - 방장 닉네임" — 초대 코드는 목록·채팅에 드러나지 않게 쓰지 않는다.
@@ -1120,8 +1119,28 @@ public class KfcudpClient implements ClientModInitializer {
         // 기다렸다가 여기로 옴) — activeGuestCount 필드 선언부 주석 참고.
         activeGuestCount = 0;
         if (publicRoom) {
-            WebRtcBridge.publishPublicRoom(code, title, client.player.getName().getString(),
-                    kfcudp$uuid(client.player).toString(), activeGuestCount + 1, maxPlayers);
+            // 공개 방은 모장 계정 확인이 필요하다 — 봇으로 방을 양산하는 트롤을 막기 위해서다
+            // (MojangAuth 클래스 주석). 네트워크 왕복이라 별도 스레드에서 하고, 실패하면
+            // 방은 그대로 열어 두되 목록에는 올리지 않고 이유를 알려 준다.
+            final String pubTitle = title;
+            final String pubName = client.player.getName().getString();
+            final String pubUuid = kfcudp$uuid(client.player).toString();
+            final int pubMax = maxPlayers;
+            Thread authThread = new Thread(() -> {
+                boolean ok = kfc.udp.client.signaling.MojangAuth.ensureToken() != null
+                        || kfc.udp.client.signaling.MojangAuth.lastError() == null; // null = 서버가 인증을 안 씀
+                client.execute(() -> {
+                    if (ok) {
+                        QuicBridge.publishPublicRoom(code, pubTitle, pubName, pubUuid, 1, pubMax);
+                    } else {
+                        String why = kfc.udp.client.signaling.MojangAuth.lastError();
+                        kfcudp$tell(client, P2PBanManager.msgKey("instant-p2p.msg.public_auth_failed",
+                                why != null ? why : "?"));
+                    }
+                });
+            }, "instant-p2p-publish-auth");
+            authThread.setDaemon(true);
+            authThread.start();
         }
 
         activeInviteCode = code;
@@ -1129,7 +1148,7 @@ public class KfcudpClient implements ClientModInitializer {
         activeAllowCheats = allowCheats;
         activePublicRoom = publicRoom;
         activeTitle = title;
-        activeChannel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        activeChannel = kfc.udp.client.signaling.P2PConfig.getChannelKey();
         kfcudp$refreshTabList(server);
 
         // 초대 코드 자체는 채팅에 안 띄운다(화면 공유·방송으로 새지 않게) — 누르면 클립보드로만 복사된다.
@@ -1168,14 +1187,16 @@ public class KfcudpClient implements ClientModInitializer {
         kfcudp$applyGuestCommandAccess(server, allowCheats);
         kfcudp$setGuestGameMode(server, gameMode);
 
-        boolean allowBroadcastChanged = allowBroadcast != kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
-        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(allowBroadcast);
+        boolean allowBroadcastChanged = allowBroadcast != kfc.udp.client.signaling.P2PConfig.isAllowBroadcast();
+        kfc.udp.client.signaling.P2PConfig.setAllowBroadcast(allowBroadcast);
 
         server.execute(() -> server.execute(() -> {
             P2PBanManager.reregisterToDispatcher(server);
             P2PWhitelistManager.reregisterToDispatcher(server);
             for (ServerPlayer sp : server.getPlayerList().getPlayers()) {
-                server.getCommands().sendCommands(sp);
+                // 명령어 트리만 보내면 클라이언트가 아는 권한 레벨(게임 모드 전환기 등)은 옛 값으로 남는다 —
+                // /op 와 같은 경로로 레벨과 트리를 같이 보낸다.
+                server.getPlayerList().sendPlayerPermissionLevel(sp);
                 // forcedGameMode는 새로 들어오는 접속자에게만 적용되므로, 이미 접속
                 // 중인 게스트는 따로 즉시 바꿔줘야 한다. 방장 본인은 건드리지 않는다
                 // (호스트는 자기 세이브의 원래 게임모드를 그대로 유지).
@@ -1186,7 +1207,7 @@ public class KfcudpClient implements ClientModInitializer {
             // 방 상태(정원·방송 허용)가 바뀌면 접속자에게 다시 내려보낸다 — 이게 없으면 ESC 화면
             // 인원 표시와 방송인의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
             if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
-                kfc.udp.client.webrtc.RoomRoles.broadcast(server);
+                kfc.udp.client.signaling.RoomRoles.broadcast(server);
             }
         }));
 
@@ -1203,7 +1224,7 @@ public class KfcudpClient implements ClientModInitializer {
         // 채널도 제목/정원과 마찬가지로 "적용" 버튼 전용 경로로만 여기 들어오므로
         // 스팸 걱정 없이 바로 반영한다 — 예전엔 채널만 바뀐 경우를 안 쳐서, 초대 코드를
         // 재생성(방 재시작)해야만 새 채널이 실제 공지에 반영되는 것처럼 보였다.
-        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        String channel = kfc.udp.client.signaling.P2PConfig.getChannelKey();
         boolean publicChanged = publicRoom != activePublicRoom
                 || (publicRoom && !title.equals(activeTitle))
                 || (publicRoom && maxPlayers != oldMaxPlayers)
@@ -1218,12 +1239,12 @@ public class KfcudpClient implements ClientModInitializer {
                 // 메시지만 보낸다 — 여기서 먼저 내릴 필요가 없다(제목·정원만 바뀐 흔한 경우가 이렇게 된다).
                 // 여기서도 activeGuestCount를 쓴다 — 필드 선언부 주석 참고: GUI 스레드에서
                 // 서버 스레드가 만지는 플레이어 목록을 직접 스냅샷하는 건 안전하지 않다.
-                WebRtcBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
+                QuicBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
                         client.player.getUUID().toString(), activeGuestCount + 1, maxPlayers);
                 // 공개를 새로 켰을 때 방장에게 목록에 뭐로 보이는지 알린다 — 제목 변경은 아래에서 방 전원에게 알린다.
                 if (!activePublicRoom) kfcudp$sendPublicRoomNotice(client, title);
             } else {
-                WebRtcBridge.unpublishPublicRoom();
+                QuicBridge.unpublishPublicRoom();
             }
         }
 
@@ -1285,8 +1306,8 @@ public class KfcudpClient implements ClientModInitializer {
         activeMaxPlayers = maxPlayers;
         P2PBanManager.setRoomMaxPlayers(maxPlayers);
 
-        boolean allowBroadcastChanged = allowBroadcast != kfc.udp.client.webrtc.P2PConfig.isAllowBroadcast();
-        kfc.udp.client.webrtc.P2PConfig.setAllowBroadcast(allowBroadcast);
+        boolean allowBroadcastChanged = allowBroadcast != kfc.udp.client.signaling.P2PConfig.isAllowBroadcast();
+        kfc.udp.client.signaling.P2PConfig.setAllowBroadcast(allowBroadcast);
 
         server.getPlayerManager().setCheatsAllowed(allowCheats);
         ((kfc.udp.client.mixin.IntegratedServerAccessor) server)
@@ -1300,7 +1321,9 @@ public class KfcudpClient implements ClientModInitializer {
             P2PBanManager.reregisterToDispatcher(server);
             P2PWhitelistManager.reregisterToDispatcher(server);
             for (ServerPlayerEntity sp : server.getPlayerManager().getPlayerList()) {
-                server.getCommandManager().sendCommandTree(sp);
+                // 명령어 트리만 보내면 클라이언트가 아는 권한 레벨(게임 모드 전환기 등)은 옛 값으로 남는다 —
+                // /op 와 같은 경로로 레벨과 트리를 같이 보낸다.
+                server.getPlayerManager().sendCommandTree(sp);
                 // forcedGameMode는 새로 들어오는 접속자에게만 적용되므로, 이미 접속
                 // 중인 게스트는 따로 즉시 바꿔줘야 한다. 방장 본인은 건드리지 않는다
                 // (호스트는 자기 세이브의 원래 게임모드를 그대로 유지).
@@ -1311,7 +1334,7 @@ public class KfcudpClient implements ClientModInitializer {
             // 방 상태(정원·방송 허용)가 바뀌면 접속자에게 다시 내려보낸다 — 이게 없으면 ESC 화면
             // 인원 표시와 방송인의 강퇴 버튼 표시가 재접속해야만 맞춰진다.
             if (maxPlayers != oldMaxPlayers || allowBroadcastChanged) {
-                kfc.udp.client.webrtc.RoomRoles.broadcast(server);
+                kfc.udp.client.signaling.RoomRoles.broadcast(server);
             }
         }));
 
@@ -1328,7 +1351,7 @@ public class KfcudpClient implements ClientModInitializer {
         // 채널도 제목/정원과 마찬가지로 "적용" 버튼 전용 경로로만 여기 들어오므로
         // 스팸 걱정 없이 바로 반영한다 — 예전엔 채널만 바뀐 경우를 안 쳐서, 초대 코드를
         // 재생성(방 재시작)해야만 새 채널이 실제 공지에 반영되는 것처럼 보였다.
-        String channel = kfc.udp.client.webrtc.P2PConfig.getChannelKey();
+        String channel = kfc.udp.client.signaling.P2PConfig.getChannelKey();
         boolean publicChanged = publicRoom != activePublicRoom
                 || (publicRoom && !title.equals(activeTitle))
                 || (publicRoom && maxPlayers != oldMaxPlayers)
@@ -1343,12 +1366,12 @@ public class KfcudpClient implements ClientModInitializer {
                 // 메시지만 보낸다 — 여기서 먼저 내릴 필요가 없다(제목·정원만 바뀐 흔한 경우가 이렇게 된다).
                 // 여기서도 activeGuestCount를 쓴다 — 필드 선언부 주석 참고: GUI 스레드에서
                 // 서버 스레드가 만지는 플레이어 목록을 직접 스냅샷하는 건 안전하지 않다.
-                WebRtcBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
+                QuicBridge.publishPublicRoom(activeInviteCode, title, client.player.getName().getString(),
                         client.player.getUuid().toString(), activeGuestCount + 1, maxPlayers);
                 // 공개를 새로 켰을 때 방장에게 목록에 뭐로 보이는지 알린다 — 제목 변경은 아래에서 방 전원에게 알린다.
                 if (!activePublicRoom) kfcudp$sendPublicRoomNotice(client, title);
             } else {
-                WebRtcBridge.unpublishPublicRoom();
+                QuicBridge.unpublishPublicRoom();
             }
         }
 
@@ -1440,10 +1463,10 @@ public class KfcudpClient implements ClientModInitializer {
         if (!gameMenu.showsPauseMenu()) return;
 
         boolean isHost = client.isLocalServer();
-        // 접속자 쪽엔 Custom Room 버튼이 없으니, "우리 방에 webrtc로 들어와 있는
-        // 세션인지"는 활성 webrtc 연결 여부로 판별한다 — JOIN 메시지에서 쓰는
-        // 것과 동일한 신호(WebRtcBridge.getActiveConnectionUsesRelay()).
-        boolean isGuestSession = !isHost && WebRtcBridge.getActiveConnectionUsesRelay() != null;
+        // 접속자 쪽엔 Custom Room 버튼이 없으니, "커스텀 방에 접속자로 들어와 있는
+        // 세션인지"는 활성 quic 연결 여부로 판별한다 — JOIN 메시지에서 쓰는
+        // 것과 동일한 신호(QuicBridge.getActiveConnectionUsesRelay()).
+        boolean isGuestSession = !isHost && QuicBridge.getActiveConnectionUsesRelay() != null;
         if (!isHost && !isGuestSession) return;
 
         int btnW = 100;
@@ -1561,7 +1584,7 @@ public class KfcudpClient implements ClientModInitializer {
         if (!gameMenu.shouldShowMenu()) return;
 
         boolean isHost = client.isInSingleplayer();
-        boolean isGuestSession = !isHost && WebRtcBridge.getActiveConnectionUsesRelay() != null;
+        boolean isGuestSession = !isHost && QuicBridge.getActiveConnectionUsesRelay() != null;
         if (!isHost && !isGuestSession) return;
 
         int btnW = 100;
@@ -1727,12 +1750,12 @@ public class KfcudpClient implements ClientModInitializer {
     //?}
 
     /** 방을 완전히 닫는다(일시정지 화면의 "방 닫기" 버튼) — 게스트를 내보내고
-     * WebRTC 등록(시그널링/공개 목록)을 제거하는 것(cancelInvite가 이미 처리)에
+     * 시그널링 등록(로비/공개 목록)을 제거하는 것(cancelInvite가 이미 처리)에
      * 더해, 랜 서버 자체도 완전히 닫는다: 리스닝 채널을 닫아 새 접속을 막고,
      * "Open to LAN" 상태(isRemote/isPublished)를 리셋하고, 로컬망에 존재를
      * 계속 알리는 LanServerPinger 브로드캐스트도 멈춘다(세 개 다 따로 처리해야
      * 하는 이유는 IntegratedServerAccessor 클래스 주석 참고) — 그냥 두면 우리
-     * 초대/WebRTC 경로 말고도 같은 네트워크의 다른 사람이 바닐라 LAN 목록/직접
+     * 초대코드 경로 말고도 같은 네트워크의 다른 사람이 바닐라 LAN 목록/직접
      * 접속으로 여전히 들어올 수 있기 때문이다. 방 옵션은 전부 기본값으로
      * 되돌리되, 중계 통신 강제는 방 옵션이 아니라 전역 클라이언트 설정이라
      * 그대로 둔다(Config 값 유지). 월드 자체는 안 건드리므로 싱글플레이는
@@ -1770,7 +1793,7 @@ public class KfcudpClient implements ClientModInitializer {
         // 공개 목록에선 곧장 내린다 — 아래 1.5초 지연은 기존 터널로 Disconnect 패킷이 빠져나갈
         // 시간일 뿐인데, 예전엔 목록 제거까지 같이 늦어져서 그 사이 LAN이 이미 닫힌 방을
         // 누군가 눌러 접속에 실패했다.
-        WebRtcBridge.unpublishPublicRoom();
+        QuicBridge.unpublishPublicRoom();
         closeRoomGracefully(explicitServer, waitForClose);
     }
 
@@ -1793,7 +1816,7 @@ public class KfcudpClient implements ClientModInitializer {
 
     /**
      * 게스트를 먼저 정상적인 사유로 끊고(0x1B Disconnect), 그 패킷이 터널을
-     * 통과할 시간을 준 뒤에야 실제로 터널(WebRtcHost)을 종료한다.
+     * 통과할 시간을 준 뒤에야 실제로 터널(QuicHost)을 종료한다.
      * <p>
      * 터널을 바로 끊어버리면 조인자 쪽 Minecraft 클라이언트는 소켓이 그냥
      * 뚝 끊긴 걸로 보여서 "Internal Exception: connection reset" 같은 날것의
@@ -1829,23 +1852,21 @@ public class KfcudpClient implements ClientModInitializer {
         kfcudp$delayedStopHost(waitForClose);
     }
 
-    // 연달아 새 방을 열면 startCustomRoom → WebRtcBridge.startHost가 이미 이전
+    // 연달아 새 방을 열면 startCustomRoom → QuicBridge.startHost가 이미 이전
     // 인스턴스를 동기적으로 닫아 둔다 — 그 사이 새 방이 열리지 않았을 때만(토큰이
     // 여전히 현재 호스트일 때만) 실제로 멈춘다. waitForClose면("Saving level" 화면을
     // 이미 그려 둔 월드 종료 경로) 이 지연 자체가 호출자를 블로킹하고, 아니면(방
     // 재생성) 별도 스레드로 흘려보내 게임을 안 멈추게 한다.
     private static void kfcudp$delayedStopHost(boolean waitForClose) {
-        Object hostToken = WebRtcBridge.currentHostToken();
+        Object hostToken = QuicBridge.currentHostToken();
         if (waitForClose) {
             try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
-            WebRtcBridge.stopHostIfCurrent(hostToken);
-            QuicBridge.stopHost();
+            QuicBridge.stopHostIfCurrent(hostToken);
             return;
         }
         Thread t = new Thread(() -> {
             try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
-            WebRtcBridge.stopHostIfCurrent(hostToken);
-            QuicBridge.stopHost();
+            QuicBridge.stopHostIfCurrent(hostToken);
         }, "kfcudp-room-close");
         t.setDaemon(true);
         t.start();
@@ -1874,7 +1895,7 @@ public class KfcudpClient implements ClientModInitializer {
         joinCheckInFlight = true;
         Screen current = kfcudp$currentScreen(client);
         Thread t = new Thread(() -> {
-            java.util.List<String> blocked = kfc.udp.client.webrtc.RoomMembersProbe.blockedPlayerNames(code);
+            java.util.List<String> blocked = kfc.udp.client.signaling.RoomMembersProbe.blockedPlayerNames(code);
             client.execute(() -> {
                 joinCheckInFlight = false;
                 if (kfcudp$currentScreen(client) != current) return; // 확인하는 사이 화면을 벗어났으면 접속하지 않는다
@@ -1894,7 +1915,7 @@ public class KfcudpClient implements ClientModInitializer {
     // startConnecting/connect) 여기만 에라별 본문을 따로 둔다.
     //? if >=26.1 {
     /*private static void connectToRoom(Minecraft client, Screen parent, String code) {
-        String address = "webrtc." + code;
+        String address = "quic." + code;
         ServerAddress serverAddress = ServerAddress.parseString(address);
         ServerData serverInfo = new ServerData(
                 Component.translatable("instant-p2p.join_room.server_name").getString(), address, ServerData.Type.OTHER);
@@ -1902,7 +1923,7 @@ public class KfcudpClient implements ClientModInitializer {
     }
     *///?} else {
     private static void connectToRoom(MinecraftClient client, Screen parent, String code) {
-        String address = "webrtc." + code;
+        String address = "quic." + code;
         ServerAddress serverAddress = ServerAddress.parse(address);
         ServerInfo serverInfo = new ServerInfo(
                 Text.translatable("instant-p2p.join_room.server_name").getString(), address, ServerInfo.ServerType.OTHER);

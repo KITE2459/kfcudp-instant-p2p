@@ -1,7 +1,7 @@
 package kfc.udp.client.mixin;
 
 import com.mojang.authlib.GameProfile;
-import kfc.udp.client.webrtc.P2PBanManager;
+import kfc.udp.client.signaling.P2PBanManager;
 import net.minecraft.server.MinecraftServer;
 //? if >=26.1 {
 /*import net.minecraft.network.chat.Component;

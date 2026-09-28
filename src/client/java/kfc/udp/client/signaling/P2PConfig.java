@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -20,14 +20,13 @@ import java.util.List;
  * <p>
  * 서버 배치가 바뀌면 이 파일만 고치면 된다. 빌드 없이 JVM 프로퍼티로도 재정의 가능:
  * <pre>
- *   -Dkfcudp.signaling=ws://HOST:PORT
+ *   -Dkfcudp.signaling=wss://HOST   (로컬 테스트 서버면 ws://HOST:PORT)
  *   -Dkfcudp.stun=stun:HOST:3478
  *   -Dkfcudp.turn=turn:HOST:3478
  *   -Dkfcudp.turn.user=USER  -Dkfcudp.turn.pass=PASS
  * </pre>
  * 현재 배치 (오라클 클라우드 kite-private-cloud.kro.kr):
- * mc-signaling → *:8090(villas-signaling에서 갈라져 나온 실험용 사본 — mc-signaling/deploy-mc-signaling.sh
- * 참고, 8088의 villas-signaling은 그대로 둔 채 별도 포트로 떠 있다), coturn → *:3478(양쪽이 같이 쓴다).
+ * mc-signaling → 127.0.0.1:8090 을 Caddy 가 443(TLS)으로 공개, coturn → *:3478.
  */
 public final class P2PConfig {
 
@@ -55,10 +54,16 @@ public final class P2PConfig {
             .map(c -> c.getMetadata().getVersion().getFriendlyString())
             .orElse("unknown");
 
-    /** mc-signaling WebSocket 주소 — room_update 델타 메시지 최적화가 여기(8090)에만 있고
-     * 8088의 villas-signaling은 옛 프로토콜 그대로다(클래스 주석 참고). */
+    /**
+     * mc-signaling 주소 — <b>TLS(wss)</b>. 같은 서버의 Caddy 가 443 에서 받아 127.0.0.1:8090 으로 넘긴다
+     * ({@code signaling thing/deploy-caddy.sh}).
+     * <p>
+     * 평문(ws://…:8090)이면 인증서 지문·후보(공인 IP)·모장 토큰이 그대로 보여서, 통신 경로 중간에서
+     * 지문을 바꿔치기하면 QUIC 터널의 지문 대조가 무력해진다. {@link WebSocketClient} 는 wss 일 때
+     * 인증서의 도메인까지 확인한다. 평문 8090 은 밖에 열지 않는다(1.3 부터 구버전과 호환하지 않는다).
+     */
     public static final String SIGNALING_URL =
-            System.getProperty("kfcudp.signaling", "ws://kite-private-cloud.kro.kr:8090");
+            System.getProperty("kfcudp.signaling", "wss://kite-private-cloud.kro.kr");
 
     /** SIGNALING_URL의 HTTP 버전 — mc-signaling의 REST API(/api/v1/roles 등, WS 업그레이드가
      * 아닌 일반 GET)를 부를 때 쓴다. ws→http, wss→https만 바꾸고 호스트:포트는 그대로다(같은
@@ -68,19 +73,25 @@ public final class P2PConfig {
                     : SIGNALING_URL.startsWith("ws://") ? "http://" + SIGNALING_URL.substring(5)
                     : SIGNALING_URL;
 
-    /** coturn STUN (무인증) */
+    /**
+     * 1.4 전용 coturn(3490, 임시 계정 방식) — {@code signaling thing/deploy-coturn-p2p.sh}.
+     * 3478 의 기존 coturn 은 고정 계정을 쓰는 다른 클라이언트(8088)용으로 그대로 남아 있다.
+     * coturn 은 임시 계정 방식을 켜면 고정 계정을 전혀 받지 않아서 한 인스턴스로 둘 다 못 한다.
+     */
     public static final String STUN_URL =
-            System.getProperty("kfcudp.stun", "stun:kite-private-cloud.kro.kr:3478");
+            System.getProperty("kfcudp.stun", "stun:kite-private-cloud.kro.kr:3490");
 
-    /** coturn TURN (정적 계정 인증) */
+    /** 위와 같은 coturn. UDP 가 막힌 망이면 TCP 3490 으로 잡는다(TurnAllocation). */
     public static final String TURN_URL =
-            System.getProperty("kfcudp.turn", "turn:kite-private-cloud.kro.kr:3478");
+            System.getProperty("kfcudp.turn", "turn:kite-private-cloud.kro.kr:3490");
 
-    /** 실사용 검증된 coturn 정적 계정 */
-    public static final String TURN_USERNAME =
-            System.getProperty("kfcudp.turn.user", "minecraft");
-    public static final String TURN_CREDENTIAL =
-            System.getProperty("kfcudp.turn.pass", "minecraft");
+    /**
+     * TURN 계정 — <b>기본값이 없다</b>. 계정은 모장 인증을 거쳐 시그널링에서 받는다
+     * ({@code MojangAuth.turnCredentials}). 예전엔 고정 계정이 jar 에 박혀 있어서, jar 를 열어 본
+     * 누구나 이 서버의 coturn 을 UDP 프록시로 쓸 수 있었다. 이 두 값은 테스트용 덮어쓰기일 뿐이다.
+     */
+    public static final String TURN_USERNAME = System.getProperty("kfcudp.turn.user");
+    public static final String TURN_CREDENTIAL = System.getProperty("kfcudp.turn.pass");
 
     private static final Logger LOG = LoggerFactory.getLogger("instant-p2p-config");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
@@ -521,35 +532,6 @@ public final class P2PConfig {
             throw new IllegalStateException(e);
         }
     }
-
-    // ── 파이프 버퍼 한도 (지연 ↔ 처리량 트레이드오프) ─────────────────────────
-
-    /**
-     * <b>DataChannel 송신 버퍼 상한(바이트).</b> bufferedAmount가 이 값을 넘으면
-     * TCP→DC 송신 스레드가 대기한다(백프레셔).
-     * <p>
-     * 예전 기본값은 16MB였는데, 이건 처리량이 아니라 <b>지연</b>을 망가뜨린다.
-     * 청크 로딩으로 링크가 포화되면 이동·keepalive 같은 작은 패킷이 앞서 쌓인
-     * 수 MB 뒤에 줄을 선다 — 10Mbps 기준 16MB면 12초치 큐다. SCTP 자체 혼잡제어가
-     * 이미 in-flight를 관리하므로, 상한은 BDP를 조금 넘기는 선이면 충분하고
-     * 1MB로도 처리량 손해는 거의 없다.
-     * <p>되돌리려면 {@code -Dkfcudp.pipe.dchigh=16777216}.
-     */
-    public static final long DC_BUF_HIGH =
-            Long.getLong("kfcudp.pipe.dchigh", 1024 * 1024L);
-
-    /** 이 아래로 빠지면 송신 재개 (히스테리시스). */
-    public static final long DC_BUF_LOW =
-            Long.getLong("kfcudp.pipe.dclow", 256 * 1024L);
-
-    /**
-     * DC→TCP writer 큐 길이(64KB 청크 개수).
-     * 예전 512(=32MB)는 위 DC 버퍼와 합쳐 최대 48MB의 버퍼블로트를 만들었다.
-     * 64(=4MB)면 배칭 효과는 유지하면서 최악 큐 지연이 8배 줄어든다.
-     * <p>되돌리려면 {@code -Dkfcudp.pipe.queuechunks=512}.
-     */
-    public static final int PIPE_QUEUE_CHUNKS =
-            Integer.getInteger("kfcudp.pipe.queuechunks", 64);
 
     private P2PConfig() {}
 }

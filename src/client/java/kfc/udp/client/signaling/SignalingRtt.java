@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;

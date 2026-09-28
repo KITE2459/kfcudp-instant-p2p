@@ -1,5 +1,6 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
+import kfc.udp.client.quic.QuicBridge;
 import com.google.gson.*;
 import com.mojang.authlib.GameProfile;
 import com.mojang.brigadier.arguments.StringArgumentType;
@@ -87,13 +88,13 @@ public class P2PBanManager {
     private static final Map<String, JsonObject> bannedIps     = new LinkedHashMap<>();
 
     /**
-     * WebRTC 터널을 지나면 모든 조인자가 127.0.0.1 로 보이기 때문에
-     * MC 가 보는 로컬 포트 → 실제 원격 IP 매핑을 WebRtcHost 가 등록해 준다.
+     * 터널을 지나면 모든 조인자가 127.0.0.1 로 보이기 때문에
+     * MC 가 보는 로컬 포트 → 실제 원격 IP 매핑을 QuicHost 가 등록해 준다.
      */
     private static final Map<Integer, String> tunnelPortToIp = new ConcurrentHashMap<>();
     /** 로그인 시점에 확정된 UUID → 실제 원격 IP (ban-ip 명령에서 사용) */
     private static final Map<UUID, String>    uuidToRealIp   = new ConcurrentHashMap<>();
-    /** WebRtcHost가 DataChannel 연결 성사 시 등록 — 실제 IP → 직결/중계 여부 (참여 메시지 접미사용) */
+    /** QuicHost가 QUIC 연결 성사 시 등록 — 실제 IP → 직결/중계 여부 (참여 메시지 접미사용) */
     private static final Map<String, Boolean> connectionTypeByIp = new ConcurrentHashMap<>();
 
     /** 방 정원 게이트. KfcudpClient 가 방을 열 때 세팅, 닫을 때 0. */
@@ -455,7 +456,7 @@ public class P2PBanManager {
         }
         // 내가 지금 공개 방을 열고 있으면 새 밴 목록을 즉시 재공지 — 그래야 밴한
         // 상대에게 내 방이 곧장 안 보인다(재접속/코드 재생성을 기다리지 않고).
-        WebRtcBridge.republishPublicRoomIfActive();
+        QuicBridge.republishPublicRoomIfActive();
         kfc.udp.client.ChatHideSync.apply(uuid, true); // 바닐라 "채팅에서 숨기기"도 같이
     }
 
@@ -488,7 +489,7 @@ public class P2PBanManager {
             }
         }
         if (removedUuids.isEmpty()) return;
-        WebRtcBridge.republishPublicRoomIfActive();
+        QuicBridge.republishPublicRoomIfActive();
         removedUuids.forEach(uuid -> kfc.udp.client.ChatHideSync.apply(uuid, false)); // 바닐라 숨기기도 같이 해제
     }
 
@@ -505,7 +506,7 @@ public class P2PBanManager {
             }
         }
         if (!removed) return;
-        WebRtcBridge.republishPublicRoomIfActive();
+        QuicBridge.republishPublicRoomIfActive();
         kfc.udp.client.ChatHideSync.apply(uuid, false); // 바닐라 숨기기도 같이 해제
     }
 
@@ -553,7 +554,7 @@ public class P2PBanManager {
     }
 
     /** 지금 이 방(호스트 서버)에 접속해 있는 플레이어 — 방장 포함. 입장하려는 사람이 자기가 차단한 유저가
-     * 방에 있는지 접속을 시작하기 전에 확인할 수 있게 해시로 보내 준다(RoomMembersProbe, WebRtcHost.sendMembers). */
+     * 방에 있는지 접속을 시작하기 전에 확인할 수 있게 해시로 보내 준다(RoomMembersProbe, QuicHost.sendMembers). */
     private static final Set<UUID> onlinePlayers = ConcurrentHashMap.newKeySet();
 
     public static void playerJoined(UUID id) {
@@ -614,7 +615,7 @@ public class P2PBanManager {
     }
 
     // -------------------------------------------------------------------------
-    // 터널 포트 ↔ 실제 IP 매핑 (WebRtcHost 가 호출)
+    // 터널 포트 ↔ 실제 IP 매핑 (QuicHost 가 호출)
     // -------------------------------------------------------------------------
 
     public static void registerTunnelPort(int localPort, String realIp) {
@@ -625,7 +626,7 @@ public class P2PBanManager {
         tunnelPortToIp.remove(localPort);
     }
 
-    /** WebRTC 터널 뒤의 진짜 IP. 매핑이 없으면 소켓 주소 그대로. */
+    /** 터널 뒤의 진짜 IP. 매핑이 없으면 소켓 주소 그대로. */
     private static String resolveRealIp(SocketAddress address) {
         if (!(address instanceof InetSocketAddress isa)) return null;
         String mapped = tunnelPortToIp.get(isa.getPort());
@@ -642,12 +643,12 @@ public class P2PBanManager {
         if (realIp != null) connectionTypeByIp.put(realIp, usesRelay);
     }
 
-    /** IP로 직접 조회 — WebRtcHost의 재확인(recheck) 로그에서 이전 값과 비교할 때 사용. */
+    /** IP로 직접 조회 — QuicHost의 재확인(recheck) 로그에서 이전 값과 비교할 때 사용. */
     public static Boolean connectionTypeOfIp(String realIp) {
         return realIp != null ? connectionTypeByIp.get(realIp) : null;
     }
 
-    /** 참여 메시지에 (직결 통신)/(중계 통신) 접미사를 붙일 때 사용. null이면 webrtc 터널이 아니거나 아직 모름. */
+    /** 참여 메시지에 (직결 통신)/(중계 통신) 접미사를 붙일 때 사용. null이면 QUIC 터널이 아니거나 아직 모름. */
     public static Boolean connectionTypeOf(UUID uuid) {
         String ip = realIpOf(uuid);
         return ip != null ? connectionTypeByIp.get(ip) : null;

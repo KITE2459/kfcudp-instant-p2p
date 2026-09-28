@@ -1,4 +1,4 @@
-package kfc.udp.client.webrtc;
+package kfc.udp.client.signaling;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -31,7 +31,7 @@ import java.util.concurrent.Executors;
  * DevNameMixin/DevBadgeMixin이 이름 하나 그릴 때마다 {@link #isDev}/{@link #isSupporter}를
  * 부르지만(매 프레임 가능) 이건 그냥 메모리 Set.contains라 네트워크와 무관 — 실제 새로고침은
  * 주기적 타이머가 아니라 명시적 호출로만 일어난다 — 방을 열거나 들어갈 때
- * ({@code WebRtcBridge.startHost}/{@code start})의 {@link #refreshAsync()}, 그리고 방장이 접속
+ * ({@code QuicBridge.startHost}/{@code start})의 {@link #refreshAsync()}, 그리고 방장이 접속
  * 요청을 처리하기 직전의 {@link #refreshBlocking}({@code RoomRoles.ensureFreshForLogin})뿐이다.
  * 방을 안 켜고 있는 동안은 네트워크를 아예 안 탄다.
  * <p>
@@ -87,7 +87,7 @@ public final class Roles {
         return id != null && streamer.contains(id);
     }
 
-    /** instant-p2p 방을 열거나(WebRtcBridge.startHost) 들어갈 때(WebRtcBridge.start)만 부른다 —
+    /** instant-p2p 방을 열거나(QuicBridge.startHost) 들어갈 때(QuicBridge.start)만 부른다 —
      * 그 외엔 배지가 어차피 안 쓰이니 네트워크를 탈 이유가 없다. 백그라운드 스레드에서 돌고 즉시
      * 리턴하므로 호출부를 막지 않는다. */
     public static void refreshAsync() {
@@ -159,7 +159,7 @@ public final class Roles {
         supporter = newSupporter;
         streamer = newStreamer;
         if (changed) {
-            LOG.info("[roles] updated: dev={} supporter={} streamer={}", dev.size(), supporter.size(), streamer.size());
+            LOG.debug("[roles] updated: dev={} supporter={} streamer={}", dev.size(), supporter.size(), streamer.size());
         }
         return changed;
     }

@@ -1,6 +1,6 @@
 package kfc.udp.client.gui;
 
-import kfc.udp.client.webrtc.P2PBanManager;
+import kfc.udp.client.signaling.P2PBanManager;
 //? if >=26.1 {
 /*import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -160,7 +160,7 @@ public class BlockedPlayersScreen extends Screen {
         return me != null
                 && !kfc.udp.client.DevBadge.isHostPlayer(me)
                 && kfc.udp.client.KfcudpClient.isBroadcastAllowedHere()
-                && kfc.udp.client.webrtc.ExpelManager.priority(me) > 0;
+                && kfc.udp.client.signaling.ExpelManager.priority(me) > 0;
     }
 
     //? if >=26.1 {
@@ -339,13 +339,13 @@ public class BlockedPlayersScreen extends Screen {
      */
     private boolean isImmune(P2PBanManager.BannedEntry e) {
         return isHostEntry(e)
-                || myPriority() <= kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e));
+                || myPriority() <= kfc.udp.client.signaling.ExpelManager.priority(entryUuid(e));
     }
 
     /** 면역 표시의 아이콘 — 방장은 📶, 등급자는 이름 뒤에 붙는 것과 같은 배지(DevBadge.decorate). */
     private static String immuneGlyph(P2PBanManager.BannedEntry e) {
         if (isHostEntry(e)) return "📶";
-        return switch (kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e))) {
+        return switch (kfc.udp.client.signaling.ExpelManager.priority(entryUuid(e))) {
             case 3 -> "🛠";
             case 2 -> "💬";
             default -> "🎧";
@@ -355,7 +355,7 @@ public class BlockedPlayersScreen extends Screen {
     /** 면역 표시의 색 — DevBadge.decorate의 역할별 색(초록/하늘/금/빨강)과 똑같이 맞춘다. */
     private static int immuneColor(P2PBanManager.BannedEntry e) {
         if (isHostEntry(e)) return 0xFF55FF55;
-        return switch (kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e))) {
+        return switch (kfc.udp.client.signaling.ExpelManager.priority(entryUuid(e))) {
             case 3 -> 0xFF55FFFF;
             case 2 -> 0xFFFFAA00;
             default -> 0xFFFF5555;
@@ -378,7 +378,7 @@ public class BlockedPlayersScreen extends Screen {
     //?}
 
     private static String roleNameKey(P2PBanManager.BannedEntry e) {
-        return switch (kfc.udp.client.webrtc.ExpelManager.priority(entryUuid(e))) {
+        return switch (kfc.udp.client.signaling.ExpelManager.priority(entryUuid(e))) {
             case 3 -> "instant-p2p.role.dev";
             case 2 -> "instant-p2p.role.supporter";
             default -> "instant-p2p.role.streamer";
@@ -392,12 +392,12 @@ public class BlockedPlayersScreen extends Screen {
     //? if >=26.1 {
     /*private static int myPriority() {
         net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-        return mc.player != null ? kfc.udp.client.webrtc.ExpelManager.effectivePriority(mc.player.getUUID()) : 0;
+        return mc.player != null ? kfc.udp.client.signaling.ExpelManager.effectivePriority(mc.player.getUUID()) : 0;
     }
     *///?} else {
     private static int myPriority() {
         net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-        return mc.player != null ? kfc.udp.client.webrtc.ExpelManager.effectivePriority(mc.player.getUuid()) : 0;
+        return mc.player != null ? kfc.udp.client.signaling.ExpelManager.effectivePriority(mc.player.getUuid()) : 0;
     }
     //?}
 
@@ -447,7 +447,7 @@ public class BlockedPlayersScreen extends Screen {
             P2PBanManager.BannedEntry e = this.cellEntry[kickSlot];
             java.util.UUID targetUuid = java.util.UUID.fromString(e.uuid());
             // 킥은 차단과 달리 아무 것도 기록하지 않는다 — 확인 즉시 요청만 보낸다.
-            this.popup.open("instant-p2p.confirm.kick", displayName(e), () -> kfc.udp.client.webrtc.ExpelManager.requestKick(targetUuid));
+            this.popup.open("instant-p2p.confirm.kick", displayName(e), () -> kfc.udp.client.signaling.ExpelManager.requestKick(targetUuid));
             return true;
         }
         int slot = this.unblockButtonAt(mouseX, mouseY);
@@ -460,11 +460,11 @@ public class BlockedPlayersScreen extends Screen {
             java.util.UUID targetUuid = java.util.UUID.fromString(e.uuid());
             if (unblock) {
                 P2PBanManager.pardonPlayerByUuid(e.uuid());
-                kfc.udp.client.webrtc.ExpelManager.requestReadmit(targetUuid);
+                kfc.udp.client.signaling.ExpelManager.requestReadmit(targetUuid);
             } else {
                 P2PBanManager.banPlayer(e.uuid(), e.name(), "Blocked in game.");
                 kfc.udp.client.KfcudpClient.kickBlockedPlayer(e.uuid()); // 방장이면 지금 방에서도 내보낸다
-                kfc.udp.client.webrtc.ExpelManager.requestExpel(targetUuid, e.name()); // 개발자·서포터·방송인이면 즉시 추방 요청
+                kfc.udp.client.signaling.ExpelManager.requestExpel(targetUuid, e.name()); // 개발자·서포터·방송인이면 즉시 추방 요청
             }
         });
         return true;

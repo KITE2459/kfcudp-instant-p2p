@@ -1,6 +1,6 @@
 package kfc.udp.client.mixin;
 
-import kfc.udp.client.webrtc.P2PBanManager;
+import kfc.udp.client.signaling.P2PBanManager;
 //? if >=26.1 {
 /*import net.minecraft.network.Connection;
 import net.minecraft.network.chat.Component;
@@ -20,7 +20,7 @@ import org.spongepowered.asm.mixin.injection.Redirect;
 
 /**
  * 방장 화면에서 참여 메시지("X이(가) 게임에 참여했습니다") 뒤에 (직결 통신)/(중계 통신)
- * 접미사를 붙인다. webrtc 터널이 아닌 참여(방장 본인 등)는 접미사 없이 그대로 통과.
+ * 접미사를 붙인다. 터널을 지나지 않은 참여(방장 본인 등)는 접미사 없이 그대로 통과.
  */
 //? if >=26.1 {
 /*@Mixin(PlayerList.class)

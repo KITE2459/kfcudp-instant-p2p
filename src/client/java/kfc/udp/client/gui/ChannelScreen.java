@@ -1,7 +1,7 @@
 package kfc.udp.client.gui;
 
 import kfc.udp.client.KfcudpClient;
-import kfc.udp.client.webrtc.P2PConfig;
+import kfc.udp.client.signaling.P2PConfig;
 //? if >=26.1 {
 /*import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
@@ -37,8 +37,8 @@ import java.util.List;
 public class ChannelScreen extends Screen {
 
     private static final int PANEL_W = 260;
-    /** 위에서부터: 제목, 설명(2줄), 입력란, 채널 칸(2줄), 상한 안내, 규칙 버튼, 규칙 설명(2줄), 완료/취소. */
-    private static final int DESC_Y = 32, FIELD_Y = 60, CHIPS_Y = 88, MAX_HINT_Y = 124, RULE_Y = 140, RULE_DESC_Y = 164, BUTTONS_Y = 190;
+    /** 위에서부터: 제목, 설명(4줄 — 두 번째 문장이 한 줄에 안 들어간다), 입력란, 태그 칸(2줄), 상한 안내, 규칙 버튼, 규칙 설명(2줄), 완료/취소. */
+    private static final int DESC_Y = 32, FIELD_Y = 80, CHIPS_Y = 108, MAX_HINT_Y = 144, RULE_Y = 160, RULE_DESC_Y = 184, BUTTONS_Y = 210;
     private static final int LINE_H = 10;
     private static final int CHIP_H = 14, CHIP_PAD = 4, CHIP_GAP = 4;
     /** 채널 하나가 칸에 보이는 폭 한도(한글 11자·영문 15자쯤)와 전체 입력 길이 한도. */
