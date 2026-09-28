@@ -49,6 +49,16 @@ final class QuicIce {
     private static final long POLL_INTERVAL_MS = 5;
     /** NAT 바인딩 유지 간격. 흔한 UDP 타임아웃(30초)보다 넉넉히 짧게. */
     private static final long KEEPALIVE_MS = 10_000;
+    /**
+     * 접속자의 경로 감시 — 이 간격으로 지금 경로에 체크를 보내고, {@link #WEAK_MS} 동안 상대에게서 아무것도
+     * 못 받으면 다른 후보로 옮긴다({@link #startPathMonitor}). libwebrtc 는 안정된 경로에 2.5초마다 체크하고
+     * 2.5초 무수신이면 약해진 것으로 본다(WEAK_CONNECTION_RECEIVE_TIMEOUT). 카트 레이스처럼 몇 초 멈춤도
+     * 큰 게임이라 감시는 더 촘촘히 하고, 판정은 비슷하게 둔다.
+     */
+    private static final long MONITOR_MS = 1_000;
+    private static final long WEAK_MS = 3_000;
+    /** <b>테스트용</b> — 상대 후보를 이 주소들로 바꿔 넣는다(가짜 NAT 를 끼워 경로 변경을 시험). {@code -Dkfcudp.test.remotes=ip:port,ip:port} */
+    private static final String TEST_REMOTES = System.getProperty("kfcudp.test.remotes");
 
     /** 후보 하나 — 시그널링에 "ip port typ" 한 줄로 실려 간다. */
     record Candidate(String ip, int port, String type) {
@@ -123,6 +133,11 @@ final class QuicIce {
     /** 체크 → 응답 왕복 시간. QUIC 핸드셰이크의 initialRtt 로 넘겨 쓸모가 있다. */
     private volatile long rttMs = 0;
     private final Map<String, Long> sentAt = new ConcurrentHashMap<>();
+    /** 경로 확인·감시용 체크 — 트랜잭션 → (보낸 곳, 응답이 그 주소에서 오면 할 일). 홀펀칭 체크와 따로 둔다. */
+    private record Probe(InetSocketAddress to, Runnable onOk, long at) {}
+    private final Map<String, Probe> probes = new ConcurrentHashMap<>();
+    /** 새 주소 확인을 너무 자주 보내지 않게 — 주소 → 마지막으로 확인을 보낸 시각. */
+    private final Map<String, Long> moveTried = new ConcurrentHashMap<>();
 
     /**
      * 소켓 송·수신 버퍼 목표치({@link IceSocket#enlargeBuffers} 주석). 4MB 면 1252 바이트
@@ -349,6 +364,14 @@ final class QuicIce {
     /** 상대 후보를 추가한다(트리클이라 여러 번 불린다). */
     void addRemote(Candidate c) {
         if (c == null) return;
+        if (TEST_REMOTES != null && !"relay".equals(c.type())) { // 테스트: 받은 후보 대신 가짜 NAT 주소들을 넣는다(relay 는 그대로 — 중계로 갈아타기 시험)
+            for (String s : TEST_REMOTES.split(",")) {
+                String[] hp = s.trim().split(":");
+                Candidate t = new Candidate(hp[0], Integer.parseInt(hp[1]), "host");
+                if (!remote.contains(t)) remote.add(t);
+            }
+            return;
+        }
         if (SRFLX_ONLY && "host".equals(c.type())) return;  // 테스트 플래그 — 공인 주소로만 붙는다
         if (!remote.contains(c)) remote.add(c);
 
@@ -566,6 +589,12 @@ final class QuicIce {
         if (!Stun.isSuccess(buf, off)) return;
 
         String tx = key(Stun.transactionId(buf, off));
+        Probe pr = probes.remove(tx);
+        if (pr != null) {
+            // 보낸 그 주소에서 온 응답만 인정한다 — 다른 곳에서 온 응답으로 경로를 옮기면 가로채기가 된다.
+            if (addrKey(pr.to()).equals(addrKey(from))) pr.onOk().run();
+            return;
+        }
         Long sent = sentAt.remove(tx);
         if (sent != null) rttMs = Math.max(1, System.currentTimeMillis() - sent);
         InetSocketAddress target = pending.remove(tx);
@@ -631,6 +660,78 @@ final class QuicIce {
         loopThread = null;
     }
 
+    /** 경로 확인 체크를 보낸다 — 그 주소에서 응답이 오면 {@code onOk}. 5초 넘게 답 없는 건 버린다. */
+    private void probe(InetSocketAddress to, Runnable onOk) {
+        long now = System.currentTimeMillis();
+        probes.values().removeIf(p -> now - p.at() > 5_000);
+        try {
+            byte[] txId = Stun.newTransactionId();
+            probes.put(key(txId), new Probe(to, onOk, now));
+            socket.send(Stun.packet(Stun.bindingRequest(txId), to));
+        } catch (IOException e) {
+            LOG.debug("[ice] 경로 확인 전송 실패: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 아는 연결의 패킷이 새 주소에서 왔다 — 상대 NAT 가 포트를 바꿨거나 망이 바뀌었다. 그 주소로 체크를 보내
+     * <b>응답이 오면</b> 그때 보낼 곳을 옮긴다(libwebrtc 가 모르는 주소에서 온 체크로 prflx 후보를 만들어
+     * 확인한 뒤 갈아타는 것과 같다). 확인 없이 옮기면 연결 ID 를 본 누군가가 경로를 가로챌 수 있다.
+     */
+    void validateMove(InetSocketAddress logical, InetSocketAddress to) {
+        long now = System.currentTimeMillis();
+        String k = addrKey(to);
+        Long last = moveTried.get(k);
+        if (last != null && now - last < 500) return;
+        if (moveTried.size() > 256) moveTried.clear();
+        moveTried.put(k, now);
+        probe(to, () -> {
+            if (addrKey(socket.actual(logical)).equals(k)) return;
+            socket.moveTo(logical, to);
+            // 주소는 남기지 않는다 — 상대의 공인 IP 다.
+            LOG.info("[ice] 상대 주소가 바뀌어 새 주소로 옮겼다 — 연결은 그대로");
+        });
+    }
+
+    /**
+     * 접속자 쪽 경로 감시 — libwebrtc 의 연결 확인·페어 전환에 해당한다.
+     * <p>
+     * {@link #MONITOR_MS} 마다 지금 경로로 체크를 보낸다. 상대에게서 {@link #WEAK_MS} 동안 아무것도(QUIC 이든
+     * 체크 응답이든) 못 받으면 알고 있는 다른 후보(방장의 relay 주소 포함)를 모두 두드려 <b>먼저 답한 곳으로</b>
+     * 보낼 곳을 옮긴다. kwik 은 주소가 바뀐 걸 모른다 — 보내는 곳만 {@link IceSocket} 에서 바뀐다.
+     * 옮긴 뒤 {@code onMove}(QUIC PING)로 kwik 을 깨워 밀린 재전송이 새 경로로 바로 나가게 한다.
+     * <p>
+     * 방장 쪽은 감시하지 않는다 — 접속자가 새 경로로 보내면 방장은 {@link #validateMove} 로 따라온다.
+     */
+    void startPathMonitor(InetSocketAddress logical, Runnable onMove) {
+        String lk = addrKey(logical);
+        socket.lastRecv.put(lk, System.currentTimeMillis());
+        Thread t = new Thread(() -> {
+            while (!closed.get()) {
+                try { Thread.sleep(MONITOR_MS); } catch (InterruptedException e) { return; }
+                InetSocketAddress cur = socket.actual(logical);
+                probe(cur, () -> {}); // 응답이 오면 수신 쪽에서 lastRecv 가 갱신된다
+                if (System.currentTimeMillis() - socket.lastRecv.getOrDefault(lk, 0L) < WEAK_MS) continue;
+                LOG.debug("[ice] 경로가 약하다 — 다른 후보를 확인한다: {}", remote.stream().map(Candidate::type).toList());
+                for (Candidate c : remote) {
+                    if (relayOnly && "host".equals(c.type())) continue; // 중계 강제면 사설 주소로는 못 간다
+                    InetSocketAddress a = c.address();
+                    if (addrKey(a).equals(addrKey(cur))) continue;
+                    if (relayOnly && !socket.hasRelayChannel(a) && bindRelayFor(List.of(c)) == null) continue;
+                    probe(a, () -> {
+                        if (System.currentTimeMillis() - socket.lastRecv.getOrDefault(lk, 0L) < WEAK_MS) return;
+                        socket.moveTo(logical, a);
+                        LOG.info("[ice] 경로가 끊겨 다른 경로로 옮겼다 — 상대 후보 typ={}{}", c.type(),
+                                usesRelay(c) ? " (중계)" : "");
+                        onMove.run();
+                    });
+                }
+            }
+        }, "quic-ice-monitor");
+        t.setDaemon(true);
+        t.start();
+    }
+
     /** 확정된 경로로 주기적으로 체크를 보내 NAT 바인딩을 살려 둔다. */
     private void startKeepalive() {
         if (keepaliveThread != null) return;
@@ -688,13 +789,56 @@ final class QuicIce {
          */
         private final Set<String> viaRelayPeers = ConcurrentHashMap.newKeySet();
 
+        /**
+         * 경로가 바뀐 상대 — kwik 이 아는 주소(처음 주소) → 지금 실제로 보낼 주소. kwik 은 연결을 만들 때의
+         * 주소로만 보내므로({@code SenderImpl}), 상대가 옮겨 가도 kwik 에는 처음 주소로 보이게 하고 보낼 곳만
+         * 여기서 바꾼다. 반대 방향 표({@code reverse})로 새 주소에서 온 패킷을 처음 주소에서 온 것처럼 고친다.
+         */
+        private final Map<String, InetSocketAddress> alias = new ConcurrentHashMap<>();
+        private final Map<String, InetSocketAddress> reverse = new ConcurrentHashMap<>();
+        /** QUIC 연결 ID(받는 쪽 ID) → 그 연결의 상대(처음 주소). 새 주소에서 온 패킷이 누구 것인지 여기서 안다. */
+        private final Map<String, InetSocketAddress> cidOwner = new ConcurrentHashMap<>();
+        /** 상대(처음 주소) → 마지막으로 뭐든 받은 시각 — 경로 감시가 끊김을 판정한다. */
+        final Map<String, Long> lastRecv = new ConcurrentHashMap<>();
+        /** 우리 연결 ID 길이 — kwik 서버 기본값, 접속자는 QuicClient 가 같은 값으로 맞춘다. short header 에는 길이가 안 실린다. */
+        static final int CID_LENGTH = 8;
+
+        InetSocketAddress actual(InetSocketAddress logical) {
+            InetSocketAddress a = alias.get(addrKey(logical));
+            return a != null ? a : logical;
+        }
+
+        void moveTo(InetSocketAddress logical, InetSocketAddress to) {
+            String lk = addrKey(logical);
+            InetSocketAddress old = alias.remove(lk);
+            if (old != null) reverse.remove(addrKey(old));
+            if (!addrKey(to).equals(lk)) {
+                alias.put(lk, to);
+                reverse.put(addrKey(to), logical);
+            }
+            lastRecv.put(lk, System.currentTimeMillis());
+        }
+
+        /** QUIC 패킷의 받는 쪽 연결 ID(hex), QUIC 이 아니면 null. */
+        private static String dcid(byte[] b, int off, int len) {
+            if (len < 1 || (b[off] & 0x40) == 0) return null;            // fixed bit
+            if ((b[off] & 0x80) != 0) {                                   // long header: 길이가 실려 있다
+                if (len < 6) return null;
+                int n = b[off + 5] & 0xff;
+                if (n == 0 || n > 20 || len < 6 + n) return null;
+                return java.util.HexFormat.of().formatHex(b, off + 6, off + 6 + n);
+            }
+            if (len < 1 + CID_LENGTH) return null;                        // short header
+            return java.util.HexFormat.of().formatHex(b, off + 1, off + 1 + CID_LENGTH);
+        }
+
         void addRelayPeer(InetSocketAddress peer, int channel) {
             relayChannels.put(addrKey(peer), channel);
         }
 
         /** 이 상대에게 우리 allocation 을 거쳐 보내는지 — 상대별로 물어야 한다(클래스 주석). */
         boolean hasRelayChannel(InetSocketAddress peer) {
-            return turn != null && relayChannels.containsKey(addrKey(peer));
+            return turn != null && relayChannels.containsKey(addrKey(actual(peer)));
         }
 
         private int channelFor(InetSocketAddress to) {
@@ -742,6 +886,11 @@ final class QuicIce {
         @Override public void send(DatagramPacket p) throws IOException {
             TurnAllocation alloc = turn;
             InetSocketAddress to = (InetSocketAddress) p.getSocketAddress();
+            InetSocketAddress moved = alias.isEmpty() ? to : actual(to); // 경로가 바뀐 상대면 지금 주소로
+            if (moved != to) {
+                to = moved;
+                p = new DatagramPacket(p.getData(), p.getOffset(), p.getLength(), to);
+            }
             int channel = channelFor(to);
             if (channel >= 0 && alloc != null) {
                 byte[] framed = Turn.wrapChannelData(channel, p.getData(), p.getOffset(), p.getLength());
@@ -776,10 +925,28 @@ final class QuicIce {
                     if (!unwrapRelayed(p, alloc)) continue; // 우리가 다룰 게 아니면 버린다
                 }
 
+                InetSocketAddress src = (InetSocketAddress) p.getSocketAddress();
+                InetSocketAddress logical = reverse.isEmpty() ? null : reverse.get(addrKey(src));
                 if (Stun.looksLikeStun(p.getData(), p.getOffset(), p.getLength())) {
-                    ice.onStun(p);
+                    lastRecv.put(addrKey(logical != null ? logical : src), System.currentTimeMillis());
+                    ice.onStun(p); // 출처는 그대로 둔다 — 체크 응답은 실제 주소로 짝을 맞춘다
                     continue; // QUIC에는 넘기지 않는다
                 }
+                String cid = dcid(p.getData(), p.getOffset(), p.getLength());
+                if (logical == null && cid != null) {
+                    InetSocketAddress owner = cidOwner.get(cid);
+                    if (owner != null && !addrKey(owner).equals(addrKey(src))) {
+                        logical = owner;                    // 아는 연결이 새 주소에서 왔다
+                        ice.validateMove(owner, src);       // 확인되면 보낼 곳도 옮긴다
+                    }
+                }
+                if (logical != null) p.setSocketAddress(logical); // kwik 에는 처음 주소로 보인다
+                InetSocketAddress who = logical != null ? logical : src;
+                if (cid != null) {
+                    if (cidOwner.size() > 4096) cidOwner.clear(); // ponytail: 오래된 연결 ID 를 하나씩 치우는 대신 통째로 비운다
+                    cidOwner.putIfAbsent(cid, who);
+                }
+                lastRecv.put(addrKey(who), System.currentTimeMillis());
                 return;
             }
         }

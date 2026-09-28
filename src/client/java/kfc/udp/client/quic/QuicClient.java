@@ -196,6 +196,15 @@ public final class QuicClient {
      * 게임을 끄면 JVM 이 종료되지 못하고 마크 종료 감시가 15초 뒤 크래시 리포트를 남겼다
      * ("Client shutdown from post-main"). 여기선 데몬 스레드로 직접 보낸다.
      */
+    /** PING 한 번 — 경로를 옮긴 직후 밀린 재전송이 새 경로로 바로 나가게 kwik 을 깨운다. */
+    private static void pingNow(QuicClientConnection conn) {
+        try {
+            conn.getClass().getMethod("ping").invoke(conn);
+        } catch (Exception ignored) {
+            // 끊겼거나 kwik 에 ping() 이 없다 — 다음 전송 때 어차피 새 경로로 나간다
+        }
+    }
+
     private void startPing(QuicClientConnection conn) {
         // ping() 은 구현 클래스에만 공개돼 있다. 그 클래스를 직접 참조하면 부모 타입이 든 agent15 가
         // 컴파일 경로에 있어야 하는데 kwik POM 은 runtime 스코프라, 의존성을 늘리지 않고 리플렉션으로 부른다.
@@ -348,6 +357,8 @@ public final class QuicClient {
             try {
                 QuicClientConnection conn = handshake(agent, cand, expectedFp, lastTry);
                 this.path = cand;
+                // 게임 중 경로가 바뀌어도 이어지게 — 끊기면 다른 후보로 옮기고 PING 으로 kwik 을 깨운다(QuicIce 주석).
+                agent.startPathMonitor(cand.address(), () -> pingNow(conn));
                 long tDone = System.currentTimeMillis();
                 // 경로는 상대 후보 종류가 아니라 <b>실제로 중계를 타는지</b>다 — 내가 중계 강제면 상대의
                 // srflx 로 보내도 내 allocation 을 거친다.
@@ -394,6 +405,9 @@ public final class QuicClient {
                 // 홀펀칭에서 잰 왕복을 넘기되 <b>바닥을 둔다</b> — 실제보다 낮게 주면 손실 판정이
                 // 과민해져 불필요한 재전송이 늘어난다(KcpCore 의 RTO_MIN 과 같은 이유).
                 .initialRtt((int) Math.max(RTT_FLOOR_MS, agent.lastRttMs()))
+                // 연결 ID 길이를 고정한다 — 경로가 바뀐 패킷을 연결 ID 로 알아보는데(QuicIce.IceSocket),
+                // short header 에는 길이가 안 실려서 양쪽이 약속한 값이어야 한다(방장 kwik 기본값 8).
+                .connectionIdLength(QuicIce.IceSocket.CID_LENGTH)
                 .logger(KwikLog.quiet())                 // 필수(기본값 없음)
                 .build();
         conn.connect();

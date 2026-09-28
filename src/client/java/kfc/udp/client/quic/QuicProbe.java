@@ -98,8 +98,8 @@ public final class QuicProbe {
             return;
         }
 
-        if (!"join".equals(mode)) {
-            System.out.println("모드는 host 또는 join");
+        if (!"join".equals(mode) && !"soak".equals(mode)) {
+            System.out.println("모드는 host / join / soak");
             System.exit(1);
         }
 
@@ -107,6 +107,46 @@ public final class QuicProbe {
         QuicClient client = new QuicClient(room, localPort, DEFAULT_SIGNALING, DEFAULT_STUN,
                 DEFAULT_TURN, TURN_USER, TURN_PASS, RELAY_ONLY);
         client.start();
+
+        // soak: 연결을 N초 붙잡고 50ms 마다 주고받으며 "echo 가 안 온 가장 긴 공백"을 잰다 — 게임 중 경로가
+        // 바뀌어도(가짜 NAT 로 포트를 바꾸거나 끊음) 연결이 이어지는지, 몇 초 만에 되살아나는지 본다.
+        if ("soak".equals(mode)) {
+            int sec = args.length > 2 ? Integer.parseInt(args[2]) : 30;
+            try (Socket s = new Socket("127.0.0.1", localPort)) {
+                s.setTcpNoDelay(true);
+                long[] last = {System.currentTimeMillis()}, maxGap = {0}, got = {0};
+                Thread reader = new Thread(() -> {
+                    try {
+                        InputStream in = s.getInputStream();
+                        byte[] b = new byte[8];
+                        while (in.readNBytes(b, 0, 8) == 8) {
+                            long now = System.currentTimeMillis();
+                            if (got[0] > 0) maxGap[0] = Math.max(maxGap[0], now - last[0]);
+                            last[0] = now;
+                            got[0]++;
+                        }
+                    } catch (IOException ignored) {}
+                }, "probe-soak-read");
+                reader.setDaemon(true);
+                reader.start();
+                OutputStream out = s.getOutputStream();
+                long end = System.currentTimeMillis() + sec * 1000L;
+                for (long i = 0; System.currentTimeMillis() < end; i++) {
+                    out.write(java.nio.ByteBuffer.allocate(8).putLong(i).array());
+                    out.flush();
+                    Thread.sleep(50);
+                }
+                Thread.sleep(3000);
+                long silent = System.currentTimeMillis() - last[0];
+                boolean ok = got[0] > 0 && silent < 3500;
+                System.out.println();
+                System.out.println("받은 echo " + got[0] + "개, 가장 긴 공백 " + maxGap[0] + "ms, 끝난 뒤 무응답 " + silent + "ms");
+                System.out.println(ok ? "=== 연결 유지 ===" : "=== 끊김 ===");
+                System.exit(ok ? 0 : 1);
+            } finally {
+                client.close();
+            }
+        }
 
         // 로컬 리스너에 붙는 순간 QuicClient 가 협상을 시작한다 — 마크가 하는 일과 같다.
         try (Socket s = new Socket("127.0.0.1", localPort)) {
