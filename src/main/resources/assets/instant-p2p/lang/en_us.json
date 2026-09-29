@@ -142,7 +142,7 @@
   "instant-p2p.msg.prev_invite_expired": "§cThe previous invite has expired",
   "instant-p2p.msg.host_failed": "§cFailed to start host",
   "instant-p2p.msg.host_need_premium": "§cOnly verified (premium) accounts can open a room",
-  "instant-p2p.msg.host_banned": "§cThis account is banned from opening rooms",
+  "instant-p2p.msg.host_banned": "§cThis account or network is banned from opening rooms",
   "instant-p2p.msg.connect_failed": "§cFailed to connect: %s",
   "instant-p2p.msg.host_not_found": "§cHost not found - check the invite code and whether the host is online",
   "instant-p2p.msg.ice_failed": "§cServer maintenance §f(STUN/TURN failed)",

@@ -278,11 +278,30 @@ public final class QuicClient {
 
     // ── ICE → QUIC ───────────────────────────────────────────────────────────
 
+    /**
+     * 접속 시도 하나. <b>시도가 어떻게 끝나든 그 시도의 agent(중계 자리 포함)는 여기서 닫는다.</b>
+     * <p>
+     * 예전엔 두 군데가 새고 있었다 — 시도가 예외(방 없음·응답 없음·차단 등)로 끝나면 agent 를 안 닫았고, 다음 시도가
+     * {@code ice = agent} 로 덮어쓰면 앞 것은 아무도 닫을 수 없었다. 「중계 통신 강제」로 접속하다 실패하면 이미 잡은
+     * 중계 자리가 남아, 갱신 스레드가 게임이 꺼질 때까지 서버에 붙들고 있었다(가짜 중계 서버로 재현: 실패 5번 → 자리 5개).
+     * 계정당 8개 한도라 그렇게 쌓이면 이후 방을 열 때 486(할당 한도)이 났다.
+     */
     private QuicClientConnection connectToHost() throws Exception {
-        // 단계별 소요를 남긴다 — "접속이 느리다" 를 추측이 아니라 숫자로 좁히려면 이게 필요하다.
-        long t0 = System.currentTimeMillis();
+        QuicIce prev = ice;
+        if (prev != null) prev.close(); // 앞 시도(연결이 끊겼거나 실패한)의 자리를 남기지 않는다
         QuicIce agent = new QuicIce(stunUrl, relayOnly);
         ice = agent;
+        try {
+            return connectWith(agent);
+        } catch (Exception e) {
+            agent.close();
+            throw e;
+        }
+    }
+
+    private QuicClientConnection connectWith(QuicIce agent) throws Exception {
+        // 단계별 소요를 남긴다 — "접속이 느리다" 를 추측이 아니라 숫자로 좁히려면 이게 필요하다.
+        long t0 = System.currentTimeMillis();
         // 중계 강제일 때만 접속자도 allocation 을 잡는다 — 그래야 방장에게 내 IP 대신 coturn
         // 주소만 알려줄 수 있다. 평소엔 방장의 relay 후보로 보내면 되므로 잡지 않는다(coturn 쿼터 절약).
         if (relayOnly) agent.enableTurn(turnUrl, turnUser, turnPass);
@@ -482,7 +501,13 @@ public final class QuicClient {
         };
         try {
             pairSession = pair;
-            pair.connect();
+            try {
+                pair.connect();
+            } catch (IOException e) {
+                // 서버가 이 계정·IP 를 밴했다(403) — "handshake failed: HTTP/1.1 403" 대신 이유를 알려 준다.
+                if (String.valueOf(e.getMessage()).contains(" 403")) throw new IOException("이 계정 또는 네트워크는 차단되어 접속할 수 없습니다");
+                throw e;
+            }
             String fp;
             try {
                 fp = hostFp.get(PEER_WAIT_MS, TimeUnit.MILLISECONDS);

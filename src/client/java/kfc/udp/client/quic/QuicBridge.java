@@ -116,7 +116,14 @@ public final class QuicBridge {
                 P2PConfig.TURN_URL, turn != null ? turn[0] : null, turn != null ? turn[1] : null,
                 GAME_HOOKS);   // 「중계 통신 강제」는 접속자마다 GAME_HOOKS.relayOnlyNow() 로 읽는다
         host = h;
-        h.start();
+        try {
+            h.start();
+        } catch (Exception e) {
+            // 시작이 도중에 실패하면(시그널링 거절·차단 등) 이미 잡은 중계 자리를 놓는다 — 안 그러면 다음에 방을 열거나
+            // 게임을 끌 때까지 갱신되며 남는다.
+            h.close();
+            throw e;
+        }
     }
 
     public static void stopHost() {
