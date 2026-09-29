@@ -623,26 +623,6 @@ public class RoomListScreen extends Screen {
     private List<PublicRoomBrowser.RoomEntry> displayList = List.of();
 
     /** 보여줄 목록 — 구성이 바뀔 때만 새 리스트를 만들어서, 참조가 같으면 내용도 같다(필터 캐시가 이걸 믿는다). */
-    /**
-     * 화면 제목 — 내 모드가 배포본보다 낮을 때만 뒤에 안내를 붙인다(ModVersionCheck).
-     * 최신이거나 확인이 안 되면 제목 그대로다.
-     */
-    //? if >=26.1 {
-    /*private net.minecraft.network.chat.Component titleWithVersion() {
-        if (!kfc.udp.client.signaling.ModVersionCheck.isOutdated()) return this.title;
-        return net.minecraft.network.chat.Component.empty().append(this.title).append(" ")
-                .append(net.minecraft.network.chat.Component.translatable("instant-p2p.version.outdated",
-                        kfc.udp.client.signaling.ModVersionCheck.latestVersion()));
-    }
-    *///?} else {
-    private net.minecraft.text.Text titleWithVersion() {
-        if (!kfc.udp.client.signaling.ModVersionCheck.isOutdated()) return this.title;
-        return net.minecraft.text.Text.empty().append(this.title).append(" ")
-                .append(net.minecraft.text.Text.translatable("instant-p2p.version.outdated",
-                        kfc.udp.client.signaling.ModVersionCheck.latestVersion()));
-    }
-    //?}
-
     private List<PublicRoomBrowser.RoomEntry> displayRooms() {
         List<PublicRoomBrowser.RoomEntry> live = this.browser.getCurrentRooms();
         if (live == this.liveSource) return this.displayList;
@@ -1230,7 +1210,7 @@ public class RoomListScreen extends Screen {
         int realX = mouseX, realY = mouseY;
         if (this.popup.isOpen()) { mouseX = -1; mouseY = -1; } // 팝업 뒤 위젯·툴팁이 호버되지 않게
         super.extractRenderState(context, mouseX, mouseY, deltaTicks);
-        context.centeredText(this.font, this.titleWithVersion(), this.width / 2, TITLE_Y, 0xFFFFFFFF);
+        context.centeredText(this.font, this.title, this.width / 2, TITLE_Y, 0xFFFFFFFF);
         // 기존 마크 멀티플레이 화면의 상단/목록/하단 3분할 구분선을 그대로 참조 —
         // 검색·빠른시작 / 방 목록 / 초대코드 섹션을 가로줄로 나눠 보여준다. 두 구분선
         // 사이는 배경을 살짝 어둡게(MIDDLE_SECTION_BG) 칠해 목록 섹션이 구분되게 한다.
@@ -1300,7 +1280,7 @@ public class RoomListScreen extends Screen {
         int realX = mouseX, realY = mouseY;
         if (this.popup.isOpen()) { mouseX = -1; mouseY = -1; } // 팝업 뒤 위젯·툴팁이 호버되지 않게
         super.render(context, mouseX, mouseY, deltaTicks);
-        context.drawCenteredTextWithShadow(this.textRenderer, this.titleWithVersion(), this.width / 2, TITLE_Y, 0xFFFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, TITLE_Y, 0xFFFFFFFF);
         // 기존 마크 멀티플레이 화면의 상단/목록/하단 3분할 구분선을 그대로 참조 —
         // 검색·빠른시작 / 방 목록 / 초대코드 섹션을 가로줄로 나눠 보여준다. 두 구분선
         // 사이는 배경을 살짝 어둡게(MIDDLE_SECTION_BG) 칠해 목록 섹션이 구분되게 한다.
@@ -1371,7 +1351,7 @@ public class RoomListScreen extends Screen {
         int realX = mouseX, realY = mouseY;
         if (this.popup.isOpen()) { mouseX = -1; mouseY = -1; } // 팝업 뒤 위젯·툴팁이 호버되지 않게
         super.render(context, mouseX, mouseY, deltaTicks);
-        context.drawCenteredTextWithShadow(this.textRenderer, this.titleWithVersion(), this.width / 2, TITLE_Y, 0xFFFFFFFF);
+        context.drawCenteredTextWithShadow(this.textRenderer, this.title, this.width / 2, TITLE_Y, 0xFFFFFFFF);
         // 기존 마크 멀티플레이 화면의 상단/목록/하단 3분할 구분선을 그대로 참조 —
         // 검색·빠른시작 / 방 목록 / 초대코드 섹션을 가로줄로 나눠 보여준다. 두 구분선
         // 사이는 배경을 살짝 어둡게(MIDDLE_SECTION_BG) 칠해 목록 섹션이 구분되게 한다.

@@ -48,9 +48,16 @@ public final class ModVersionCheck {
         return notice;
     }
 
-    /** 게임 시작 때 한 번 부른다(네트워크라 별도 스레드). 실패해도 조용히 넘어간다. */
-    public static void refreshAsync() {
-        Thread t = new Thread(ModVersionCheck::refresh, "instant-p2p-version-check");
+    /**
+     * <b>지금</b> 서버에 물어보고 끝나면 {@code then} — 방을 열 때·들어갈 때 부른다(roles.json 처럼). 게임을 켤 때
+     * 한 번만 물으면, 켠 채로 서버의 version.json 을 올려도 안내가 안 떴다. 네트워크라 별도 스레드에서 돌고,
+     * 실패해도 조용히 넘어간다(그러면 안내 없이 then 만 부른다).
+     */
+    public static void checkAsync(Runnable then) {
+        Thread t = new Thread(() -> {
+            refresh();
+            then.run();
+        }, "instant-p2p-version-check");
         t.setDaemon(true);
         t.start();
     }
@@ -65,7 +72,10 @@ public final class ModVersionCheck {
             if (res.statusCode() != 200) return;
 
             String current = VillasMsg.field(res.body(), "current");
-            if (current == null || current.isBlank()) return; // 서버에 설정이 없다 = 기능 꺼짐
+            if (current == null || current.isBlank()) { // 서버에 설정이 없다 = 기능 꺼짐
+                outdated = false;
+                return;
+            }
 
             latest = current;
             String n = VillasMsg.field(res.body(), "notice");

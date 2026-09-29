@@ -343,7 +343,7 @@ public final class QuicHost {
         // 둘을 OR 로 묶어 방장까지 중계로 밀었더니 relay→relay 2홉이 되어 오히려 느려졌다
         // (실측 622ms → 7878ms). 그래서 분리한다.
         final boolean relayNow = hooks.relayOnlyNow();
-        List<QuicIce.Candidate> mine = QuicIce.advertised(candidates, relayNow, clientRelayForced);
+        List<QuicIce.Candidate> mine = QuicIce.advertised(agent.withCurrentRelay(candidates), relayNow, clientRelayForced);
         if (mine.isEmpty()) {
             // 중계 강제인데 relay 후보가 없다(중계 계정을 못 받음 — 정품 인증 안 된 계정 등). 실주소를 대신
             // 내놓을 수는 없으니 접속자에게 바로 알린다. 예전엔 후보 0개로 접속자가 30초를 기다리다 실패했다.

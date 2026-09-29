@@ -393,6 +393,18 @@ public class KfcudpClient implements ClientModInitializer {
         return player.getUUID();
     }
 
+    // 내 모드가 배포본보다 낮으면 채팅 안내(서버 version.json 의 notice 가 있으면 다음 줄에), 아니면 null.
+    // (이 구역은 Stonecutter 가 주석으로 감싸므로 블록 주석을 쓰면 안 된다)
+    private static net.minecraft.network.chat.Component kfcudp$outdatedMessage() {
+        if (!kfc.udp.client.signaling.ModVersionCheck.isOutdated()) return null;
+        net.minecraft.network.chat.MutableComponent m = net.minecraft.network.chat.Component.translatable(
+                "instant-p2p.msg.outdated", kfc.udp.client.signaling.P2PConfig.MOD_VERSION,
+                kfc.udp.client.signaling.ModVersionCheck.latestVersion());
+        String n = kfc.udp.client.signaling.ModVersionCheck.notice();
+        if (!n.isBlank()) m.append("\n§7" + n);
+        return m;
+    }
+
     private static net.minecraft.network.chat.Component kfcudp$inviteMessage(String code) {
         return net.minecraft.network.chat.Component.empty()
                 .append(net.minecraft.network.chat.Component.translatable("instant-p2p.msg.invite_prefix"))
@@ -452,6 +464,16 @@ public class KfcudpClient implements ClientModInitializer {
 
     private static java.util.UUID kfcudp$uuid(net.minecraft.entity.player.PlayerEntity player) {
         return player.getUuid();
+    }
+
+    /** 내 모드가 배포본보다 낮으면 채팅 안내(서버 version.json 의 notice 가 있으면 다음 줄에), 아니면 null. */
+    private static Text kfcudp$outdatedMessage() {
+        if (!kfc.udp.client.signaling.ModVersionCheck.isOutdated()) return null;
+        net.minecraft.text.MutableText m = Text.translatable("instant-p2p.msg.outdated",
+                kfc.udp.client.signaling.P2PConfig.MOD_VERSION, kfc.udp.client.signaling.ModVersionCheck.latestVersion());
+        String n = kfc.udp.client.signaling.ModVersionCheck.notice();
+        if (!n.isBlank()) m.append("\n§7" + n);
+        return m;
     }
 
     private static Text kfcudp$inviteMessage(String code) {
@@ -582,7 +604,6 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.debug("[instant-p2p] QUIC transport initialized");
-        kfc.udp.client.signaling.ModVersionCheck.refreshAsync(); // 구버전이면 방 목록 제목에 안내를 띄운다
         kfc.udp.client.signaling.P2PNet.registerTypes();
         kfc.udp.client.signaling.ExpelManager.register();
         kfc.udp.client.signaling.RoomRoles.register();
@@ -699,6 +720,11 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendSystemMessage(Component.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"));
+            // 과거 버전이면 알린다 — 서버에 지금 물어보고(ModVersionCheck.checkAsync) 답이 오면 채팅에.
+            kfc.udp.client.signaling.ModVersionCheck.checkAsync(() -> client.execute(() -> {
+                var outdated = kfcudp$outdatedMessage();
+                if (outdated != null && client.player != null) client.player.sendSystemMessage(outdated);
+            }));
             // 제작자·서포터·방송인이면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
             String roleKey = DevBadge.roleMessageKey(client.player.getUUID());
             if (roleKey != null) {
@@ -785,7 +811,6 @@ public class KfcudpClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         LOG.debug("[instant-p2p] QUIC transport initialized");
-        kfc.udp.client.signaling.ModVersionCheck.refreshAsync(); // 구버전이면 방 목록 제목에 안내를 띄운다
         kfc.udp.client.signaling.P2PNet.registerTypes();
         kfc.udp.client.signaling.ExpelManager.register();
         kfc.udp.client.signaling.RoomRoles.register();
@@ -901,6 +926,11 @@ public class KfcudpClient implements ClientModInitializer {
             client.player.sendMessage(Text.translatable(relay
                     ? "instant-p2p.msg.my_connection_relay"
                     : "instant-p2p.msg.my_connection_direct"), false);
+            // 과거 버전이면 알린다 — 서버에 지금 물어보고(ModVersionCheck.checkAsync) 답이 오면 채팅에.
+            kfc.udp.client.signaling.ModVersionCheck.checkAsync(() -> client.execute(() -> {
+                var outdated = kfcudp$outdatedMessage();
+                if (outdated != null && client.player != null) client.player.sendMessage(outdated, false);
+            }));
             // 제작자·서포터·방송인이면 바로 아래에 본인 안내를 한 줄 더 — 나한테만 보인다.
             String roleKey = DevBadge.roleMessageKey(client.player.getUuid());
             if (roleKey != null) {
@@ -1153,6 +1183,11 @@ public class KfcudpClient implements ClientModInitializer {
 
         // 초대 코드 자체는 채팅에 안 띄운다(화면 공유·방송으로 새지 않게) — 누르면 클립보드로만 복사된다.
         kfcudp$tell(client, kfcudp$inviteMessage(code));
+        // 과거 버전이면 알린다 — 서버에 지금 물어보고(ModVersionCheck.checkAsync) 답이 오면 채팅에.
+        kfc.udp.client.signaling.ModVersionCheck.checkAsync(() -> client.execute(() -> {
+            var outdated = kfcudp$outdatedMessage();
+            if (outdated != null) kfcudp$tell(client, outdated);
+        }));
         if (publicRoom) kfcudp$sendPublicRoomNotice(client, title);
 
         kfcudp$closeScreenAndGrab(client);

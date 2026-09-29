@@ -92,6 +92,7 @@ public final class QuicBridge {
         QuicClient c = new QuicClient(roomId, port, P2PConfig.SIGNALING_URL, P2PConfig.STUN_URL,
                 turn != null ? P2PConfig.TURN_URL : null, turn != null ? turn[0] : null, turn != null ? turn[1] : null,
                 P2PConfig.isRelayOnly());   // 「중계 통신 강제」 체크박스 값
+        c.authToken = MojangAuth.tokenOrNull(); // 위 turnCredentials 가 토큰을 이미 받아 둔다
         client = c;
         c.start();
         return port;

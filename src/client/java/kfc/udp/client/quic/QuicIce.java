@@ -361,6 +361,20 @@ final class QuicIce {
         return all;
     }
 
+    /**
+     * 후보 목록의 relay 를 <b>지금</b> allocation 주소로 바꿔 돌려준다 — 중계 서버가 재시작돼 allocation 을
+     * 새로 잡으면(TurnAllocation.reallocate) 방을 열 때 모은 relay 주소는 죽은 주소다.
+     */
+    List<Candidate> withCurrentRelay(List<Candidate> base) {
+        TurnAllocation alloc = turn;
+        InetSocketAddress r = alloc != null ? alloc.relayedAddress() : null;
+        if (r == null) return base;
+        Candidate now = new Candidate(r.getAddress().getHostAddress(), r.getPort(), "relay");
+        List<Candidate> out = new ArrayList<>();
+        for (Candidate c : base) out.add("relay".equals(c.type()) ? now : c);
+        return out;
+    }
+
     /** 상대 후보를 추가한다(트리클이라 여러 번 불린다). */
     void addRemote(Candidate c) {
         if (c == null) return;

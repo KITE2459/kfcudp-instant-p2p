@@ -46,6 +46,8 @@ final class TurnAllocation {
      * 가장 짧은 권한 수명의 절반보다 짧게 잡아 셋 다 여유를 둔다.
      */
     private static final long REFRESH_MS = 120_000;
+    /** allocation 이 살아 있는지 확인하는 간격 — 서버가 잃었으면(437) 바로 다시 잡는다(startRefresher 주석). */
+    private static final long CHECK_MS = 10_000;
     /** 요청 하나를 기다리는 총 시간(재전송 포함). coturn 은 첫 서명 요청의 키 조회를 비동기로 해서 답이 늦을 수 있다. */
     private static final int RTT_TIMEOUT_MS = 5_000;
     /** 첫 재전송까지의 시간 — 이후 두 배씩(200, 400, 800…). pion/turn 의 defaultRTO 와 같다. */
@@ -347,6 +349,7 @@ final class TurnAllocation {
             } catch (IOException e) {
                 return null;
             }
+            if (r != null && code(r) == 437) onMismatch();
             if (r == null || Turn.isSuccess(r, 0) || code(r) != 438) return r;
             String nonce = Turn.nonce(r, 0, r.length);
             if (nonce == null) return r;
@@ -476,6 +479,63 @@ final class TurnAllocation {
         return java.util.HexFormat.of().formatHex(txId);
     }
 
+    private final AtomicBoolean reallocating = new AtomicBoolean();
+    private volatile long lastRealloc;
+
+    /**
+     * 어떤 요청이든 437(Allocation Mismatch — 서버에 우리 allocation 이 없다)을 받으면 부른다. 한 번이면 확실하다
+     * (RFC 5766 §7.2). 예전엔 갱신 주기(2분, 뒤엔 10초)가 돌아올 때까지 기다려서, coturn 이 재시작된 사이
+     * 방장의 홀펀칭이 채널을 붙이려다 437 을 수십 번 받고도(실측 5초에 40회) 그 접속자를 놓쳤다.
+     * 동시에 여러 요청이 437 을 받아도 한 번만 다시 잡는다.
+     */
+    private void onMismatch() {
+        if (closed.get() || System.currentTimeMillis() - lastRealloc < 2_000) return;
+        if (!reallocating.compareAndSet(false, true)) return;
+        try {
+            reallocate();
+        } finally {
+            lastRealloc = System.currentTimeMillis();
+            reallocating.set(false);
+        }
+    }
+
+    /** 서버가 allocation 을 잃었을 때 같은 소켓·계정으로 다시 잡고, 채널·권한을 <b>그 자리에서</b> 다시 건다. */
+    private boolean reallocate() {
+        byte[] ok = signed((tx, c) -> Turn.allocate(tx, c, LIFETIME_SEC));
+        InetSocketAddress r = ok != null && Turn.isSuccess(ok, 0)
+                ? Turn.relayedAddress(ok, 0, ok.length, Stun.transactionId(ok, 0)) : null;
+        if (r == null) {
+            LOG.warn("[turn] 중계 할당을 다시 잡지 못했다 code={} — {}초 뒤 다시 시도", code(ok), CHECK_MS / 1000);
+            return false;
+        }
+        relayed = r;
+        LOG.info("[turn] 중계 서버가 할당을 잃어 새로 잡았다 — relayed port={}", r.getPort());
+        refreshBindings(); // 새 allocation 에는 채널·권한이 하나도 없다 — 그대로 두면 ChannelData 가 버려진다
+        return true;
+    }
+
+    /**
+     * 채널 바인딩·권한을 다시 보낸다. 같은 ChannelBind 를 다시 보내면 채널(600초)과 그 권한(300초)이 같이
+     * 갱신되고(RFC 5766 §11), 없으면 새로 만든다. allocation Refresh 로는 갱신되지 않는다.
+     */
+    private void refreshBindings() {
+        for (Map.Entry<String, Integer> e : channels.entrySet()) {
+            InetSocketAddress peer = addresses.get(e.getKey());
+            if (peer == null) continue;
+            int ch = e.getValue();
+            byte[] b = signed((tx, c) -> Turn.channelBind(tx, c, ch, peer));
+            if (b == null || !Turn.isSuccess(b, 0)) {
+                LOG.warn("[turn] 채널 갱신 실패 code={}", code(b));
+            }
+        }
+        // 채널 없이 권한만 건 상대 — pion/turn 처럼 CreatePermission 을 다시 보낸다.
+        for (String k : permitted) {
+            if (channels.containsKey(k)) continue;
+            InetSocketAddress peer = addresses.get(k);
+            if (peer != null) signed((tx, c) -> Turn.createPermission(tx, c, peer));
+        }
+    }
+
     /**
      * allocation·권한·채널 바인딩을 계속 갱신한다. 하나라도 만료되면 중계가 <b>조용히</b> 끊긴다.
      * <p>
@@ -483,38 +543,29 @@ final class TurnAllocation {
      * "시간 초과"로 튕겼다 — 채널 바인딩 수명이 600초인데(RFC 5766 §11.2) allocation Refresh 로는
      * 갱신되지 않기 때문이다. 같은 ChannelBind 를 다시 보내면 갱신되고, 그게 권한도 같이
      * 갱신해 준다(§11).
+     * <p>
+     * allocation Refresh 는 {@link #CHECK_MS} 마다 보낸다 — 서버가 allocation 을 잃었는지(437) 빨리 알려고다.
+     * 예전엔 {@link #REFRESH_MS}(2분)마다라, coturn 이 재시작되면 방이 다시 들어올 수 있게 되기까지 최대 2분이
+     * 걸렸다. 다른 요청(채널 바인딩 등)이 먼저 437 을 받으면 그 자리에서 다시 잡는다({@link #onMismatch}).
      */
     private void startRefresher() {
         Thread t = new Thread(() -> {
+            long lastFull = System.currentTimeMillis();
             while (!closed.get()) {
-                try { Thread.sleep(REFRESH_MS); } catch (InterruptedException e) { return; }
+                try { Thread.sleep(CHECK_MS); } catch (InterruptedException e) { return; }
                 if (closed.get()) return;
 
                 // 응답을 기다린다 — 그래야 438 을 보고 nonce 를 바꿀 수 있다(signed 주석).
                 // 예전엔 보내고 끝이라, nonce 가 만료된 뒤로는 갱신이 전부 조용히 실패했다.
-                byte[] r = signed((tx, c) -> Turn.refresh(tx, c, LIFETIME_SEC));
+                byte[] r = signed((tx, c) -> Turn.refresh(tx, c, LIFETIME_SEC)); // 437 이면 signed 가 다시 잡는다
                 if (r == null || !Turn.isSuccess(r, 0)) {
                     LOG.warn("[turn] allocation 갱신 실패 code={}", code(r));
+                    // 무응답(서버가 막 재시작 중 등)도 다시 잡아 본다 — 437 은 signed 가 이미 처리했다.
+                    if (r == null) onMismatch();
                 }
-
-                // 채널 바인딩 갱신 — 같은 ChannelBind 를 다시 보내면 채널(600초)과 그 권한(300초)이
-                // 같이 갱신된다(RFC 5766 §11). allocation Refresh 로는 갱신되지 않는다.
-                for (Map.Entry<String, Integer> e : channels.entrySet()) {
-                    InetSocketAddress peer = addresses.get(e.getKey());
-                    if (peer == null) continue;
-                    int ch = e.getValue();
-                    byte[] b = signed((tx, c) -> Turn.channelBind(tx, c, ch, peer));
-                    if (b == null || !Turn.isSuccess(b, 0)) {
-                        LOG.warn("[turn] 채널 갱신 실패 code={}", code(b));
-                    }
-                }
-
-                // 채널 없이 권한만 건 상대 — pion/turn 처럼 CreatePermission 을 다시 보낸다.
-                for (String k : permitted) {
-                    if (channels.containsKey(k)) continue;
-                    InetSocketAddress peer = addresses.get(k);
-                    if (peer != null) signed((tx, c) -> Turn.createPermission(tx, c, peer));
-                }
+                if (System.currentTimeMillis() - lastFull < REFRESH_MS) continue;
+                lastFull = System.currentTimeMillis();
+                refreshBindings();
             }
         }, "quic-turn-refresh");
         t.setDaemon(true);

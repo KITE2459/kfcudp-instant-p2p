@@ -40,7 +40,7 @@
   "instant-p2p.custom_room.apply_title": "Apply Changes",
   "instant-p2p.custom_room.back": "Back",
   "instant-p2p.msg.public_auth_failed": "§cCould not list the room publicly §7(%s)\n§7The room is open — the invite code still works",
-  "instant-p2p.version.outdated": "§eOutdated mod §7(latest %s)",
+  "instant-p2p.msg.outdated": "§e[instant-p2p] Outdated version §7(%s → latest %s) §ePlease update",
   "instant-p2p.room_list.title": "Room List",
   "instant-p2p.room_list.public_off": "§7The public room list is closed — invite codes still work",
   "instant-p2p.room_list.empty": "No public rooms available",

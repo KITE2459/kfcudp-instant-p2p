@@ -90,6 +90,8 @@ public final class QuicClient {
     private volatile QuicIce.Candidate path;
     /** 열려 있는 랑데부 연결 — 중계 폴백에서 후보를 추가로 흘려보낼 때 쓴다. */
     private volatile WebSocketClient pairSession;
+    /** 정품 토큰(있으면) — 랑데부 접속에 실어 서버의 접속 기록에 검증된 UUID 가 남게 한다(없어도 접속은 된다). */
+    volatile String authToken;
 
     /** URL 을 넘겨받는 이유는 {@link QuicHost} 생성자 주석과 같다(게임 밖에서도 돌아야 한다). */
     public QuicClient(String roomId, int localPort, String signalingUrl, String stunUrl,
@@ -437,7 +439,8 @@ public final class QuicClient {
         java.util.concurrent.atomic.AtomicInteger hostCandidates = new java.util.concurrent.atomic.AtomicInteger();
         // relay=1 이면 방장이 곧장 중계로 간다(QuicHost.onJoin 주석).
         WebSocketClient pair = new WebSocketClient(
-                signalingUrl + "/rv/" + roomId + "/join?relay=" + (relayOnly ? 1 : 0)) {
+                signalingUrl + "/rv/" + roomId + "/join?relay=" + (relayOnly ? 1 : 0)
+                        + (authToken != null ? "&token=" + java.net.URLEncoder.encode(authToken, java.nio.charset.StandardCharsets.UTF_8) : "")) {
             // 서버가 방장에게 join 을 먼저 알린 뒤 우리 메시지를 넘기므로 바로 보내도 된다.
             @Override public void onConnected() {
                 for (QuicIce.Candidate c : mine) send(VillasMsg.candidate(c.line(), "0"));
