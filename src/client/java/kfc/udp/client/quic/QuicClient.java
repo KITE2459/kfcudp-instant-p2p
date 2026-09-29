@@ -90,6 +90,8 @@ public final class QuicClient {
     private volatile QuicIce.Candidate path;
     /** 열려 있는 랑데부 연결 — 중계 폴백에서 후보를 추가로 흘려보낼 때 쓴다. */
     private volatile WebSocketClient pairSession;
+    /** 방장이 협상 때 준 접속 표 — 모든 스트림 맨 앞에 싣는다(QuicHost.tickets 주석). */
+    private volatile byte[] ticket;
     /** 정품 토큰(있으면) — 랑데부 접속에 실어 서버의 접속 기록에 검증된 UUID 가 남게 한다(없어도 접속은 된다). */
     volatile String authToken;
 
@@ -254,6 +256,7 @@ public final class QuicClient {
         try {
             QuicClientConnection conn = ensureConnected();
             QuicStream stream = conn.createStream(true);
+            stream.getOutputStream().write(ticket); // 표 없는 스트림은 방장이 연결째 끊는다
             QuicPump.wire(tcp, stream.getInputStream(), stream.getOutputStream(), "client", this::closeSoon);
         } catch (Exception e) {
             LOG.warn("[quic-client] 연결 실패: {}", e.getMessage() != null ? e.getMessage() : e.toString());
@@ -491,7 +494,15 @@ public final class QuicClient {
                 throw new IOException("방장이 응답하지 않습니다 (잠시 뒤 다시 시도해 보세요)");
             }
             if (fp == null || fp.isEmpty()) throw new IOException("방장 지문을 받지 못했습니다");
-            return fp;
+            // "<지문> <접속 표>" — 표는 방장이 이 접속자에게만 준 일회용 값이다.
+            String[] parts = fp.split(" ");
+            try {
+                if (parts.length != 2 || parts[1].length() != QuicHost.TICKET_BYTES * 2) throw new IllegalArgumentException();
+                ticket = java.util.HexFormat.of().parseHex(parts[1]);
+            } catch (IllegalArgumentException e) {
+                throw new IOException("방장 접속 표를 받지 못했습니다 (방장이 옛 버전일 수 있습니다)");
+            }
+            return parts[0];
         } finally {
             // 랑데부 연결은 punch 가 끝난 뒤에 닫는다 — 늦게 오는 후보를 놓치지 않게.
             Thread t = new Thread(() -> {
